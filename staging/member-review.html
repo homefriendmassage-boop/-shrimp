@@ -31,7 +31,7 @@ async function load(){
 }
 $('reload').onclick=load;
 (async()=>{try{if(!shop)throw Error('ไม่พบ shop ID');
-await liff.init({liffId:APP_CONFIG.LIFF_ID_ADMIN});
+await liff.init({liffId:APP_CONFIG.LIFF_ID_PLAYER});
 if(!liff.isLoggedIn()){liff.login({redirectUri:location.href});return}
 if(!liff.getIDToken())throw Error('LIFF ต้องเปิด scope openid');
 await load()}catch(e){$('message').textContent=e.message}})();
