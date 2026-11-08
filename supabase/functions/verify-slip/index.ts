@@ -32,10 +32,19 @@ async function verifyLine(idToken: string, action: string) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null,{headers:CORS});
   if (req.method !== "POST") return fail("METHOD_NOT_ALLOWED",405);
+  const contentType = (req.headers.get("content-type") || "").toLowerCase();
+  if (!contentType.startsWith("multipart/form-data")) {
+    return fail("UNSUPPORTED_CONTENT_TYPE",415);
+  }
   if (!Deno.env.get("THUNDER_API_KEY")) return fail("THUNDER_NOT_CONFIGURED",503);
   const auth = req.headers.get("Authorization")?.replace(/^Bearer\s+/i,"") || "";
   try {
-    const body = await req.formData();
+    let body: FormData;
+    try {
+      body = await req.formData();
+    } catch {
+      return fail("INVALID_FORM_DATA",400);
+    }
     const action = safeText(body.get("action"));
     if (!["verify","list"].includes(action)) return fail("ACTION_INVALID");
     const uid = await verifyLine(auth,action);
