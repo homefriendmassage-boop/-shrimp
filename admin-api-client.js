@@ -1,0 +1,44 @@
+// Admin-only transport. LINE ID tokens are verified by admin-api on every request.
+function createAdminApiClient(config, getShopId) {
+  async function call(payload) {
+    const token = liff.getIDToken();
+    if (!token) throw new Error('LINE_AUTH_INVALID');
+    let response;
+    try {
+      response = await fetch(config.SUPABASE_URL + '/functions/v1/admin-api', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: config.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ ...payload, shop_id: getShopId() }),
+        signal: AbortSignal.timeout(20000)
+      });
+    } catch (_) { throw new Error('ADMIN_API_UNAVAILABLE'); }
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result || !result.ok) throw new Error(result?.code || 'ADMIN_API_HTTP_' + response.status);
+    return result;
+  }
+  function from(table) {
+    const request = { action: 'query', table, operation: 'select', columns: '*', filters: [], orders: [] };
+    let pending;
+    const query = {
+      select(columns = '*') { request.columns = columns; request.returning = true; return query; },
+      update(values) { request.operation = 'update'; request.values = values; return query; },
+      insert(values) { request.operation = 'insert'; request.values = values; return query; },
+      delete() { request.operation = 'delete'; return query; },
+      order(column, options = {}) { request.orders.push({ column, ascending: options.ascending !== false }); return query; },
+      limit(count) { request.limit = count; return query; },
+      single() { request.single = true; return query; },
+      then(resolve, reject) {
+        pending ||= call(request).then(result => ({ data: result.data, error: null })).catch(error => {
+          if (typeof showAdminApiError === 'function') showAdminApiError(error.message);
+          throw error;
+        });
+        return pending.then(resolve, reject);
+      }
+    };
+    for (const op of ['eq', 'neq', 'gte', 'lte', 'like', 'in']) {
+      query[op] = (column, value) => { request.filters.push({ op, column, value }); return query; };
+    }
+    return query;
+  }
+  return { from, access: () => call({ action: 'access' }) };
+}
