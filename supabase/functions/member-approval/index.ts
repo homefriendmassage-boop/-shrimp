@@ -52,7 +52,7 @@ Deno.serve(async(req)=>{
   try {input=await req.json();if(!input||typeof input!=="object"||Array.isArray(input))return error("INVALID_JSON");}
   catch{return error("INVALID_JSON");}
   const action=input.action;
-  if(!["apply","status","queue","decide"].includes(String(action)))return error("INVALID_ACTION");
+  if(!["apply","status","queue","decide","shop"].includes(String(action)))return error("INVALID_ACTION");
   const shopId=typeof input.shop_id==="string"?input.shop_id.trim():"";
   if(!/^[\w-]{1,80}$/.test(shopId))return error("SHOP_INVALID");
   const token=(req.headers.get("authorization")||"").replace(/^Bearer\s+/i,"");
@@ -67,9 +67,14 @@ Deno.serve(async(req)=>{
     const db=createClient(dbUrl,key,{
       auth:{persistSession:false,autoRefreshToken:false}
     });
-    const {data:shop, error:shopError}=await db.from("shops").select("shop_id").eq("shop_id",shopId).maybeSingle();
+    const {data:shop, error:shopError}=await db.from("shops").select("*").eq("shop_id",shopId).maybeSingle();
     if(shopError)return error("DATABASE_ERROR",500);
     if(!shop)return error("SHOP_NOT_AVAILABLE",404);
+    if(action==="shop"){
+      const names=["shop_name","name","business_name","store_name","display_name","title"];
+      const label=names.map(k=>shop[k]).find(v=>typeof v==="string"&&v.trim().length>0);
+      return reply({ok:true,shop_name:typeof label==="string"?label.trim():null});
+    }
     if(isAdmin){
       const {data:staff,error:staffError}=await db.from("users").select("role,status").eq("uid",uid).eq("shop_id",shopId).maybeSingle();
       if(staffError)return error("DATABASE_ERROR",500);
