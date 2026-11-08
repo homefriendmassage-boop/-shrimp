@@ -14,7 +14,7 @@ async function request(action){
  $('result').textContent='กำลังดำเนินการ…';$('apply').disabled=true;$('check').disabled=true;
  try{
   const body={action,shop_id:$('shop').value};if(action==='apply')body.display_name=$('name').value.trim();
-  const r=await fetch(APP_CONFIG.SUPABASE_URL+'/functions/v1/member-approval',{
+  const r=await fetch('https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval',{
    method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+liff.getIDToken(),apikey:APP_CONFIG.SUPABASE_ANON_KEY},body:JSON.stringify(body)
   });
   const j=await r.json();if(!r.ok||!j.ok)throw Error(j.code||r.status);
