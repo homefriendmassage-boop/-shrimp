@@ -176,6 +176,12 @@
       <p style="color: var(--text-muted); margin-top: 10px;">หน้านี้สงวนไว้สำหรับพนักงานเท่านั้น</p>
     </div>
 
+    <!-- ผู้ดูแลสมาชิกทั่วไปโดยเฉพาะ: แสดงในหน้า Admin เดิมโดยไม่เปิดสิทธิ์จัดการบ่อ -->
+    <div id="membershipOnlyView" class="card hidden no-print">
+      <div class="card-title"><i class="fa-solid fa-user-check"></i> อนุมัติสมาชิกทั่วไป</div>
+      <div class="membership-queue"></div>
+    </div>
+
     <!-- View 1: ควบคุมบ่อ -->
     <div id="adminContentView" class="hidden no-print">
       <div class="card" id="cardRoundControl">
@@ -313,6 +319,10 @@
 
     <!-- View 2: คิวรอดำเนินการ -->
     <div id="pendingContentView" class="hidden no-print">
+      <div class="card" id="membershipQueueInPending" style="display:none">
+        <div class="card-title"><i class="fa-solid fa-user-check"></i> คำขอสมาชิกทั่วไป รออนุมัติ</div>
+        <div class="membership-queue"></div>
+      </div>
       <div class="card">
         <div class="card-title" style="color: var(--yellow-main);"><i class="fa-solid fa-bell"></i> คิวฝาก-ถอน รอดำเนินการ</div>
         <div id="pendingListContainer" style="display: flex; flex-direction: column; gap: 15px;">
@@ -471,6 +481,8 @@
           currentOpId = profile.userId; 
           currentAdminName = profile.displayName;
           await checkAdminAccess(currentOpId);
+          // เรียกคิวสมาชิกทั่วไปเฉพาะเมื่อ LINE Login สำเร็จ
+          await refreshGeneralMemberQueue();
 
           let hashData = window.location.hash; 
           if (hashData && hashData.length > 1) {
@@ -545,7 +557,8 @@
         } else if (tab === 'pending') {
             document.getElementById('tabPending').classList.add('active');
             document.getElementById('pendingContentView').classList.remove('hidden');
-            loadPendingRequests(); 
+            loadPendingRequests();
+            refreshGeneralMemberQueue();
         } else if (tab === 'report') {
             document.getElementById('tabReport').classList.add('active');
             document.getElementById('reportContentView').classList.remove('hidden');
@@ -711,6 +724,69 @@
         else alert(`อัปเดตสิทธิ์สำเร็จ`); 
         
         document.getElementById('userInfoContainer').style.display = 'none'; document.getElementById('txtSearchUser').value = ''; 
+    }
+
+    // สมาชิกทั่วไป: คิวอนุมัติที่อยู่ภายใน Admin Panel เดิม
+    // ป้องกันสิทธิ์ด้วย LINE ID Token และ Edge Function; ไม่เขียนลง users/เครดิต
+    const MEMBER_APPROVAL_ENDPOINT = 'https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval';
+    let generalMemberQueueBusy = false;
+    async function requestGeneralMembership(body) {
+      const token = liff.getIDToken();
+      if (!token) throw Error('LINE_AUTH_INVALID');
+      const response = await fetch(MEMBER_APPROVAL_ENDPOINT, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json', Authorization:'Bearer '+token, apikey:APP_CONFIG.SUPABASE_ANON_KEY},
+        body: JSON.stringify({...body,shop_id:currentShopId})
+      });
+      const json = await response.json();
+      if (!response.ok || !json.ok) throw Error(json.code||'HTTP_'+response.status);
+      return json;
+    }
+    async function refreshGeneralMemberQueue() {
+      if(generalMemberQueueBusy)return;
+      generalMemberQueueBusy=true;
+      try {
+        const json=await requestGeneralMembership({action:'queue'});
+        const legacyAdminVisible=document.getElementById('adminTabs').style.display==='flex';
+        document.getElementById('membershipQueueInPending').style.display=legacyAdminVisible?'block':'none';
+        document.getElementById('membershipOnlyView').classList.toggle('hidden',legacyAdminVisible);
+        if(!legacyAdminVisible){
+          document.getElementById('accessDeniedView').classList.add('hidden');
+          document.getElementById('opProfile').textContent='ผู้ดูแลสมาชิกทั่วไป';
+        }
+        const pending=(json.entries||[]).filter(row=>row.state==='Pending');
+        for(const target of document.querySelectorAll('.membership-queue')){
+          target.replaceChildren();
+          const message=document.createElement('p');
+          message.textContent=pending.length?'รออนุมัติ '+pending.length+' รายการ':'ไม่มีสมาชิกใหม่รออนุมัติ';
+          message.style.color='var(--text-muted)';
+          target.appendChild(message);
+          for(const item of pending){
+            const card=document.createElement('div');
+            card.style.cssText='border:1px solid var(--card-border);background:#0f111a;border-radius:12px;padding:14px;margin:10px 0';
+            const name=document.createElement('div');name.style.fontWeight='600';
+            name.textContent=(item.display_name||'สมาชิก')+' · '+(item.member_id||'เลขสมาชิกไม่พร้อม');
+            const date=document.createElement('small');date.textContent=new Date(item.requested_at).toLocaleString('th-TH');date.style.color='var(--text-muted)';
+            const controls=document.createElement('div');controls.style.cssText='display:flex;gap:8px;margin-top:12px';
+            for(const decision of ['Approved','Rejected']){
+              const btn=document.createElement('button');btn.className='btn '+(decision==='Approved'?'btn-green':'btn-red');
+              btn.textContent=decision==='Approved'?'อนุมัติ':'ปฏิเสธ';
+              btn.onclick=()=>decideGeneralMember(item.id,decision);
+              controls.appendChild(btn);
+            }
+            card.append(name,date,controls);target.appendChild(card);
+          }
+        }
+      }catch(e){
+        // หากไม่มีสิทธิ์สมาชิกทั่วไป ต้องไม่เปิดส่วนจัดการบ่อหรือทำให้หน้าเดิมพัง
+        if(e instanceof Error && !['ADMIN_REQUIRED','LINE_AUTH_INVALID'].includes(e.message))
+          console.warn('General membership queue:',e.message);
+      }finally{generalMemberQueueBusy=false}
+    }
+    async function decideGeneralMember(id,decision){
+      if(!confirm('ยืนยัน'+(decision==='Approved'?'อนุมัติ':'ปฏิเสธ')+'สมาชิกทั่วไป?'))return;
+      try{await requestGeneralMembership({action:'decide',id,decision});await refreshGeneralMemberQueue();}
+      catch(e){alert('ไม่สำเร็จ: '+(e instanceof Error?e.message:'UNKNOWN_ERROR'))}
     }
 
     // ==========================================
