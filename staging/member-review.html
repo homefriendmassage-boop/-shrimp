@@ -21,7 +21,7 @@ async function load(){
   for(const e of j.entries){
    const card=document.createElement('section');card.className='card';
    const title=document.createElement('h3');title.textContent=(e.display_name||'ไม่ระบุชื่อ')+' · '+e.state;card.appendChild(title);
-   const info=document.createElement('small');info.textContent='เลขคำขอ '+e.id+' | '+new Date(e.requested_at).toLocaleString('th-TH');card.appendChild(info);
+   const info=document.createElement('small');info.textContent='เลขสมาชิก '+(e.member_id||'-')+' | เลขคำขอ '+e.id+' | '+new Date(e.requested_at).toLocaleString('th-TH');card.appendChild(info);
    if(e.state==='Pending')for(const [decision,label,cls] of [['Approved','อนุมัติ',''],['Rejected','ปฏิเสธ','danger']]){
     const btn=document.createElement('button');btn.textContent=label;btn.className=cls;btn.onclick=()=>decide(e.id,decision);card.appendChild(btn)
    }
