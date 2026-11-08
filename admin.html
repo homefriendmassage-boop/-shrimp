@@ -439,15 +439,23 @@
 
   <script>
     const _supabase = supabase.createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_ANON_KEY);
+    
+    let currentShopId = "SHOP_001"; // ค่าเริ่มต้นสำหรับร้านค้า
     let currentOpId = "", currentAdminName = "", creditMode = "private", currentUserRole = "Customer", selectedUserIdForManage = ""; 
     let targetEndTimeMs = null, isRoundOpen = false;
     let pendingFinalizeData = null; // เก็บข้อมูลรอบที่กำลังรออนุมัติส่วนต่าง
 
     async function notifyGAS(action, payloadData) {
-      try { fetch(APP_CONFIG.GAS_URL, { method: 'POST', body: JSON.stringify({ action: action, ...payloadData }), headers: { 'Content-Type': 'text/plain;charset=utf-8' } }); } catch (e) {}
+      // ยกเลิกการเรียก GAS ชั่วคราว หรือถ้าต้องการใช้ก็เปิดส่วนนี้ไว้
+      try { fetch(APP_CONFIG.GAS_URL, { method: 'POST', body: JSON.stringify({ action: action, shopId: currentShopId, ...payloadData }), headers: { 'Content-Type': 'text/plain;charset=utf-8' } }); } catch (e) {}
     }
 
     async function initializeApp() {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('shop')) {
+          currentShopId = urlParams.get('shop');
+      }
+
       let d = new Date();
       let year = d.getFullYear(); let month = String(d.getMonth() + 1).padStart(2, '0'); let day = String(d.getDate()).padStart(2, '0');
       let localDateStr = `${year}-${month}-${day}`;
@@ -486,7 +494,7 @@
 
     async function checkAdminAccess(uid) {
       try {
-        const { data: user } = await _supabase.from('users').select('role, status, member_id, commission_balance').eq('uid', uid).single();
+        const { data: user } = await _supabase.from('users').select('role, status, member_id, commission_balance').eq('uid', uid).eq('shop_id', currentShopId).single();
         if (user) currentUserRole = user.role;
         
         if (currentUserRole === 'Customer' || currentUserRole === 'Inactive' || currentUserRole === 'Promoter' || !user) {
@@ -551,7 +559,7 @@
     let currentBackers = [];
 
     async function openBackerTeamModal() {
-        const { data: backers } = await _supabase.from('users').select('*').eq('role', 'Backer').order('created_at', { ascending: true });
+        const { data: backers } = await _supabase.from('users').select('*').eq('shop_id', currentShopId).eq('role', 'Backer').order('created_at', { ascending: true });
         currentBackers = backers || [];
         if (currentBackers.length > 3) currentBackers = currentBackers.slice(0, 3); 
         renderBackerTeamUI();
@@ -646,9 +654,9 @@
 
         if (s1 < 0) return alert('ผลรวมสัดส่วนต้องไม่เกิน 100% กรุณาแก้ไขตัวเลขให้ถูกต้องครับ');
         try {
-            if (currentBackers[0]) await _supabase.from('users').update({ backer_share: s1, backer_water_fee: f1 }).eq('uid', currentBackers[0].uid);
-            if (currentBackers[1]) await _supabase.from('users').update({ backer_share: s2, backer_water_fee: f2 }).eq('uid', currentBackers[1].uid);
-            if (currentBackers[2]) await _supabase.from('users').update({ backer_share: s3, backer_water_fee: f3 }).eq('uid', currentBackers[2].uid);
+            if (currentBackers[0]) await _supabase.from('users').update({ backer_share: s1, backer_water_fee: f1 }).eq('shop_id', currentShopId).eq('uid', currentBackers[0].uid);
+            if (currentBackers[1]) await _supabase.from('users').update({ backer_share: s2, backer_water_fee: f2 }).eq('shop_id', currentShopId).eq('uid', currentBackers[1].uid);
+            if (currentBackers[2]) await _supabase.from('users').update({ backer_share: s3, backer_water_fee: f3 }).eq('shop_id', currentShopId).eq('uid', currentBackers[2].uid);
             alert('บันทึกสัดส่วนทีมรับจบเรียบร้อยแล้ว!');
             closeBackerTeamModal();
         } catch (e) { alert("ข้อผิดพลาดในการบันทึก: " + e.message); }
@@ -662,7 +670,7 @@
     async function searchUser() { 
         let mId = document.getElementById('txtSearchUser').value.trim(); if(!mId) return; 
         try { 
-            const { data: u } = await _supabase.from('users').select('*').eq('member_id', mId).single(); 
+            const { data: u } = await _supabase.from('users').select('*').eq('shop_id', currentShopId).eq('member_id', mId).single(); 
             if(u) { 
                 selectedUserIdForManage = u.uid; 
                 document.getElementById('uManagePic').src = u.profile_pic || 'https://via.placeholder.com/150'; 
@@ -687,7 +695,7 @@
         } catch (e) { alert("เกิดข้อผิดพลาดในการค้นหา"); } 
     }
     
-    async function updateUserStatus(ns) { if(!selectedUserIdForManage) return; await _supabase.from('users').update({ status: ns }).eq('uid', selectedUserIdForManage); alert(`อัปเดตสถานะสำเร็จ`); document.getElementById('userInfoContainer').style.display = 'none'; document.getElementById('txtSearchUser').value = ''; }
+    async function updateUserStatus(ns) { if(!selectedUserIdForManage) return; await _supabase.from('users').update({ status: ns }).eq('shop_id', currentShopId).eq('uid', selectedUserIdForManage); alert(`อัปเดตสถานะสำเร็จ`); document.getElementById('userInfoContainer').style.display = 'none'; document.getElementById('txtSearchUser').value = ''; }
     
     async function updateUserRole() { 
         if(!selectedUserIdForManage) return; 
@@ -695,7 +703,7 @@
         let updateData = { role: nr };
         if(nr === 'Backer') { updateData.backer_share = 0; updateData.backer_water_fee = 10; }
         
-        const { error } = await _supabase.from('users').update(updateData).eq('uid', selectedUserIdForManage); 
+        const { error } = await _supabase.from('users').update(updateData).eq('shop_id', currentShopId).eq('uid', selectedUserIdForManage); 
         if(error) return alert("อัปเดตสิทธิ์ล้มเหลว: " + error.message);
         
         if(nr === 'Backer') alert(`อัปเดตเป็นพาร์ทเนอร์รับจบเรียบร้อย!\n\nกรุณากดปุ่ม "จัดทีมคนรับจบ" ด้านบนเพื่อแบ่งสัดส่วน % ให้ถูกต้องครับ`); 
@@ -710,7 +718,7 @@
     // ==========================================
     async function loadPendingRequests() {
        try {
-         const { data: reqs, error } = await _supabase.from('topup_requests').select('*').eq('status', 'Pending').order('created_at', { ascending: true });
+         const { data: reqs, error } = await _supabase.from('topup_requests').select('*').eq('shop_id', currentShopId).eq('status', 'Pending').order('created_at', { ascending: true });
          if (error) { console.error("Error fetching pending requests:", error); return; }
 
          const badge = document.getElementById('badgePending');
@@ -759,11 +767,15 @@
         if(reason === null) return; 
         try {
             if (type === 'ถอนค่าคอม') {
-                const { data: u } = await _supabase.from('users').select('commission_balance').eq('uid', uid).single();
-                if(u) await _supabase.from('users').update({ commission_balance: u.commission_balance + amount }).eq('uid', uid);
+                const { data: u } = await _supabase.from('users').select('commission_balance').eq('shop_id', currentShopId).eq('uid', uid).single();
+                if(u) await _supabase.from('users').update({ commission_balance: u.commission_balance + amount }).eq('shop_id', currentShopId).eq('uid', uid);
             }
-            await _supabase.from('topup_requests').update({ status: 'Rejected', admin_name: currentAdminName }).eq('id', id);
-            notifyGAS('rejectTopup', { uid: uid, type: type, amount: amount, reason: reason });
+            await _supabase.from('topup_requests').update({ status: 'Rejected', admin_name: currentAdminName }).eq('shop_id', currentShopId).eq('id', id);
+            
+            // ยกเลิกใช้ GAS แจ้งปฏิเสธ เพื่อรองรับ Multi-tenant
+            // ระบบควรอัปเดต Trigger ให้รองรับการปฏิเสธ หรือส่ง Line ด้วยวิธีอื่น
+            // notifyGAS('rejectTopup', { uid: uid, type: type, amount: amount, reason: reason });
+            
             alert("ปฏิเสธรายการแล้ว"); loadPendingRequests();
         } catch (e) { alert("ข้อผิดพลาด: " + e.message); }
     }
@@ -784,14 +796,14 @@
       let prefix = `R-${yy}${mm}${dd}-`; let startD = new Date(selDate); startD.setHours(0,0,0,0); let endD = new Date(selDate); endD.setHours(23,59,59,999);
       
       try {
-        const { data: rounds } = await _supabase.from('rounds').select('*').like('round_id', `${prefix}%`).order('round_id', { ascending: false });
+        const { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).like('round_id', `${prefix}%`).order('round_id', { ascending: false });
         let gGross = 0, gPayout = 0, gCancel = 0, gNet = 0; let cntEven = 0, cntOdd = 0, cntTotalRounds = rounds ? rounds.length : 0;
         
         listDiv.innerHTML = '';
         if(rounds && rounds.length > 0) {
           for(let r of rounds) {
             if(r.result === 'คู่') cntEven++; if(r.result === 'คี่') cntOdd++;
-            const { data: bets } = await _supabase.from('bets').select('amount, payout, status').eq('round_id', r.round_id);
+            const { data: bets } = await _supabase.from('bets').select('amount, payout, status').eq('shop_id', currentShopId).eq('round_id', r.round_id);
             let rTotBet = 0, rTotPay = 0;
             if(bets) {
               bets.forEach(b => {
@@ -800,7 +812,7 @@
               });
             }
             
-            const { data: bLogs } = await _supabase.from('backer_logs').select('pnl_amount').eq('round_id', r.round_id);
+            const { data: bLogs } = await _supabase.from('backer_logs').select('pnl_amount').eq('shop_id', currentShopId).eq('round_id', r.round_id);
             let rBackerPnlTotal = 0;
             if (bLogs) { bLogs.forEach(bl => rBackerPnlTotal += Number(bl.pnl_amount)); }
             let rNet = (rTotBet - rTotPay) - rBackerPnlTotal; gNet += rNet; 
@@ -812,7 +824,7 @@
           }
         } else { listDiv.innerHTML = '<div style="text-align:center; color: var(--text-muted); padding: 15px;">ยังไม่มีการออกรอบในวันที่เลือก</div>'; }
 
-        const { data: tx } = await _supabase.from('transactions').select('*').gte('created_at', startD.toISOString()).lte('created_at', endD.toISOString());
+        const { data: tx } = await _supabase.from('transactions').select('*').eq('shop_id', currentShopId).gte('created_at', startD.toISOString()).lte('created_at', endD.toISOString());
         let tDep = 0, tWd = 0; let countDep = 0, countWd = 0;
         if(tx) {
             tx.forEach(t => {
@@ -821,7 +833,7 @@
             });
         }
 
-        const { data: allBLogs } = await _supabase.from('backer_logs').select('*').gte('created_at', startD.toISOString()).lte('created_at', endD.toISOString());
+        const { data: allBLogs } = await _supabase.from('backer_logs').select('*').eq('shop_id', currentShopId).gte('created_at', startD.toISOString()).lte('created_at', endD.toISOString());
         let backerMap = {};
         if (allBLogs) {
             allBLogs.forEach(bl => {
@@ -830,7 +842,7 @@
             });
         }
         
-        const { data: backerUsers } = await _supabase.from('users').select('uid, display_name, backer_water_fee').eq('role', 'Backer');
+        const { data: backerUsers } = await _supabase.from('users').select('uid, display_name, backer_water_fee').eq('shop_id', currentShopId).eq('role', 'Backer');
         let backerSummaries = [];
         if (backerUsers) {
             backerUsers.forEach(bu => {
@@ -907,8 +919,8 @@
 
     async function fetchAdminDashboard() {
       try {
-        let { data: rounds } = await _supabase.from('rounds').select('*').in('status', ['Open', 'Closed']).order('round_id', { ascending: false }).limit(1);
-        if(!rounds || rounds.length === 0) { let { data: endedRounds } = await _supabase.from('rounds').select('*').eq('status', 'Ended').order('round_id', { ascending: false }).limit(1); rounds = endedRounds; }
+        let { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).in('status', ['Open', 'Closed']).order('round_id', { ascending: false }).limit(1);
+        if(!rounds || rounds.length === 0) { let { data: endedRounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).eq('status', 'Ended').order('round_id', { ascending: false }).limit(1); rounds = endedRounds; }
 
         if(rounds && rounds.length > 0) {
           let r = rounds[0];
@@ -943,7 +955,7 @@
               document.getElementById('resolverStatusMsg').style.display = 'none';
           }
 
-          const { data: bets } = await _supabase.from('bets').select('*').eq('round_id', r.round_id).neq('status', 'Cancelled').order('bet_id', { ascending: false });
+          const { data: bets } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('round_id', r.round_id).neq('status', 'Cancelled').order('bet_id', { ascending: false });
           let ea=0, oa=0; let et=new Set(), ot=new Set(); let fl = document.getElementById('liveBetsFeedList'); fl.innerHTML = '';
           if(bets && bets.length > 0) {
             bets.forEach(b => {
@@ -965,19 +977,20 @@
         if(!confirm('ยืนยันการเปิดรอบใหม่?')) return;
         document.getElementById('btnOpenRound').innerText = 'กำลังเปิด...';
         try {
-          const { data: lr } = await _supabase.from('rounds').select('status, round_id').order('round_id', { ascending: false }).limit(1);
+          const { data: lr } = await _supabase.from('rounds').select('status, round_id').eq('shop_id', currentShopId).order('round_id', { ascending: false }).limit(1);
           if (lr && lr.length > 0 && lr[0].status !== 'Ended') throw new Error("รอบเก่ายังไม่ตัดผล! โปรดใส่ผลกุ้งก่อน");
           let d = new Date(); let prefix = `R-${d.getFullYear().toString().substring(2)}${(d.getMonth()+1).toString().padStart(2,'0')}${d.getDate().toString().padStart(2,'0')}`;
           let nn = 1; if (lr && lr.length > 0 && lr[0].round_id.startsWith(prefix)) nn = parseInt(lr[0].round_id.split('-')[2]) + 1;
           let rndName = `${prefix}-${nn}`;
-          const { data: set } = await _supabase.from('system_settings').select('round_duration').eq('id', 1).single();
+          const { data: set } = await _supabase.from('system_settings').select('round_duration').eq('shop_id', currentShopId).single();
           let duration = set ? set.round_duration : 15;
-          await _supabase.from('rounds').insert([{ round_id: rndName, status: 'Open', end_time_ms: new Date().getTime() + (duration * 60000), resolver_type: 'none' }]);
+          await _supabase.from('rounds').insert([{ shop_id: currentShopId, round_id: rndName, status: 'Open', end_time_ms: new Date().getTime() + (duration * 60000), resolver_type: 'none' }]);
           
-          let todayStr = new Date().toISOString().split('T')[0];
-          const { data: activeBets } = await _supabase.from('bets').select('uid').gte('created_at', todayStr + 'T00:00:00Z');
-          let activeUids = []; if (activeBets) activeUids = Array.from(new Set(activeBets.map(b => b.uid)));
-          notifyGAS('notifyRoundStatusToUsers', { status: 'Open', roundId: rndName, duration: duration, targetUids: activeUids });
+          // ระบบเดิมส่ง Line ด้วย GAS (อาจต้องทำ Edge function หรือ Trigger แจ้งเปิดรอบในอนาคต)
+          // let todayStr = new Date().toISOString().split('T')[0];
+          // const { data: activeBets } = await _supabase.from('bets').select('uid').gte('created_at', todayStr + 'T00:00:00Z');
+          // let activeUids = []; if (activeBets) activeUids = Array.from(new Set(activeBets.map(b => b.uid)));
+          // notifyGAS('notifyRoundStatusToUsers', { status: 'Open', roundId: rndName, duration: duration, targetUids: activeUids });
           
           document.getElementById('resolverStatusMsg').style.display = 'none';
           alert(`เปิดรอบ ${rndName} สำเร็จ!`);
@@ -993,19 +1006,19 @@
         isRoundOpen = false;
 
         try {
-            const { data: lr } = await _supabase.from('rounds').select('round_id, status, resolver_type').order('round_id', { ascending: false }).limit(1);
+            const { data: lr } = await _supabase.from('rounds').select('round_id, status, resolver_type').eq('shop_id', currentShopId).order('round_id', { ascending: false }).limit(1);
             if (!lr || lr.length === 0 || lr[0].status === 'Ended') throw new Error("ไม่พบรอบที่กำลังเปิดรับแทง");
             
             const roundId = lr[0].round_id;
             
             // อัปเดตสถานะบ่อเป็น Closed ทันที เพื่อไม่ให้คนแทงเพิ่มได้อีก
-            await _supabase.from('rounds').update({ status: 'Closed' }).eq('round_id', roundId);
+            await _supabase.from('rounds').update({ status: 'Closed' }).eq('shop_id', currentShopId).eq('round_id', roundId);
             
-            // ส่งแจ้งเตือนปิดรับแทงไป LINE ลูกค้า
-            let todayStr = new Date().toISOString().split('T')[0];
-            const { data: activeBets } = await _supabase.from('bets').select('uid').gte('created_at', todayStr + 'T00:00:00Z');
-            let activeUids = []; if (activeBets) activeUids = Array.from(new Set(activeBets.map(b => b.uid)));
-            notifyGAS('notifyRoundStatusToUsers', { status: 'Closed', roundId: roundId, targetUids: activeUids });
+            // ยกเลิกใช้ GAS
+            // let todayStr = new Date().toISOString().split('T')[0];
+            // const { data: activeBets } = await _supabase.from('bets').select('uid').gte('created_at', todayStr + 'T00:00:00Z');
+            // let activeUids = []; if (activeBets) activeUids = Array.from(new Set(activeBets.map(b => b.uid)));
+            // notifyGAS('notifyRoundStatusToUsers', { status: 'Closed', roundId: roundId, targetUids: activeUids });
 
             if (lr[0].resolver_type !== 'none' && lr[0].resolver_type !== null) {
                 fetchAdminDashboard();
@@ -1013,7 +1026,7 @@
             }
 
             // คำนวณส่วนต่างทันทีที่ปิดรอบ (ยังไม่ได้ชั่งกุ้ง)
-            const { data: bets } = await _supabase.from('bets').select('amount, bet_type').eq('round_id', roundId).neq('status', 'Cancelled');
+            const { data: bets } = await _supabase.from('bets').select('amount, bet_type').eq('shop_id', currentShopId).eq('round_id', roundId).neq('status', 'Cancelled');
             let totalEven = 0, totalOdd = 0;
             if (bets && bets.length > 0) {
                 bets.forEach(b => { if (b.bet_type === 'คู่') totalEven += b.amount; if (b.bet_type === 'คี่') totalOdd += b.amount; });
@@ -1032,7 +1045,7 @@
                 document.getElementById('gapResolutionModal').classList.remove('hidden');
             } else {
                 // ถ้ายอดบาลานซ์เป๊ะ ข้ามการยืนยันไปเลย
-                await _supabase.from('rounds').update({ resolver_type: 'none' }).eq('round_id', roundId);
+                await _supabase.from('rounds').update({ resolver_type: 'none' }).eq('shop_id', currentShopId).eq('round_id', roundId);
                 fetchAdminDashboard();
             }
 
@@ -1045,7 +1058,7 @@
             document.getElementById('btnGapBacker').disabled = true; document.getElementById('btnGapShop').disabled = true;
             
             let roundId = pendingFinalizeData.roundId;
-            await _supabase.from('rounds').update({ resolver_type: resolverType }).eq('round_id', roundId);
+            await _supabase.from('rounds').update({ resolver_type: resolverType }).eq('shop_id', currentShopId).eq('round_id', roundId);
             
             document.getElementById('gapResolutionModal').classList.add('hidden');
             alert("บันทึกข้อมูลการรับจบเรียบร้อยแล้ว!\nกรุณานำกุ้งไปชั่ง และกรอกน้ำหนักเพื่อตัดผลครับ");
@@ -1061,13 +1074,8 @@
             let roundId = pendingFinalizeData.roundId;
             // เพิ่มเวลาให้อีก 1 นาทีกันหมดเวลาทันที
             let newEndTime = new Date().getTime() + (60000 * 1);
-            await _supabase.from('rounds').update({ status: 'Open', end_time_ms: newEndTime, resolver_type: 'none' }).eq('round_id', roundId);
+            await _supabase.from('rounds').update({ status: 'Open', end_time_ms: newEndTime, resolver_type: 'none' }).eq('shop_id', currentShopId).eq('round_id', roundId);
             
-            let todayStr = new Date().toISOString().split('T')[0];
-            const { data: activeBets } = await _supabase.from('bets').select('uid').gte('created_at', todayStr + 'T00:00:00Z');
-            let activeUids = []; if (activeBets) activeUids = Array.from(new Set(activeBets.map(b => b.uid)));
-            notifyGAS('notifyRoundStatusToUsers', { status: 'Open', roundId: roundId, duration: 1, targetUids: activeUids });
-
             document.getElementById('gapResolutionModal').classList.add('hidden');
             pendingFinalizeData = null;
             isRoundOpen = true;
@@ -1084,7 +1092,7 @@
 
       btn.disabled = true; btn.innerText = 'ประมวลผล...';
       try {
-        const { data: lr } = await _supabase.from('rounds').select('round_id, status, resolver_type').order('round_id', { ascending: false }).limit(1);
+        const { data: lr } = await _supabase.from('rounds').select('round_id, status, resolver_type').eq('shop_id', currentShopId).order('round_id', { ascending: false }).limit(1);
         if(!lr || lr.length === 0 || lr[0].status === 'Ended') throw new Error("ไม่พบรอบที่ต้องตัดผล หรือรอบถูกตัดผลไปแล้ว");
         
         // บล็อกไม่ให้ใส่น้ำหนักกุ้ง ถ้ายังไม่เลือกคนรับจบ!
@@ -1094,10 +1102,10 @@
         const roundId = lr[0].round_id; const res = (w % 2 === 0) ? 'คู่' : 'คี่';
         const resolverType = lr[0].resolver_type;
         
-        const { data: set } = await _supabase.from('system_settings').select('water_margin, comm_rate').eq('id', 1).single();
+        const { data: set } = await _supabase.from('system_settings').select('water_margin, comm_rate').eq('shop_id', currentShopId).single();
         const margin = set ? set.water_margin : 0.05; const commRate = set ? set.comm_rate : 0.01;
 
-        const { data: bets, error: betsError } = await _supabase.from('bets').select('*').eq('round_id', roundId).neq('status', 'Cancelled');
+        const { data: bets, error: betsError } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('round_id', roundId).neq('status', 'Cancelled');
         if (betsError) throw new Error("ดึงข้อมูลบิลไม่ได้: " + betsError.message);
 
         let totalEven = 0, totalOdd = 0;
@@ -1110,7 +1118,7 @@
         
         // ถ้าแอดมินเลือก 'backer' ระบบจะคิดเงินคนรับจบ
         if (resolverType === 'backer' && gapAmount > 0 && gapSide !== 'none') {
-            const { data: backers } = await _supabase.from('users').select('*').eq('role', 'Backer');
+            const { data: backers } = await _supabase.from('users').select('*').eq('shop_id', currentShopId).eq('role', 'Backer');
             if (backers && backers.length > 0) {
                 for (let backer of backers) {
                     let share = backer.backer_share || 0; if (share <= 0) continue;
@@ -1123,10 +1131,10 @@
                     let newWalletBal = (backer.backer_wallet || 0) + pnl;
                     
                     // ดักจับ Error ตอนอัปเดตกระเป๋า Backer
-                    const { error: updErr } = await _supabase.from('users').update({ backer_wallet: newWalletBal }).eq('uid', backer.uid);
+                    const { error: updErr } = await _supabase.from('users').update({ backer_wallet: newWalletBal }).eq('shop_id', currentShopId).eq('uid', backer.uid);
                     if(updErr) throw new Error(`ไม่สามารถอัปเดตเงินคนรับจบ (${backer.display_name}) ได้ โปรดตรวจสอบฐานข้อมูล: ` + updErr.message);
 
-                    await _supabase.from('backer_logs').insert([{ round_id: roundId, uid: backer.uid, member_id: backer.member_id, share_percent: share, gap_amount: myGap, result_status: isWin ? 'Win' : 'Lose', pnl_amount: pnl, water_fee_deducted: feePaid, wallet_balance_after: newWalletBal }]);
+                    await _supabase.from('backer_logs').insert([{ shop_id: currentShopId, round_id: roundId, uid: backer.uid, member_id: backer.member_id, share_percent: share, gap_amount: myGap, result_status: isWin ? 'Win' : 'Lose', pnl_amount: pnl, water_fee_deducted: feePaid, wallet_balance_after: newWalletBal }]);
                     backerNotifies.push({ uid: backer.uid, pnl: pnl, walletBalance: newWalletBal });
                 }
             }
@@ -1140,34 +1148,33 @@
             if (bet.bet_type === res) {
               winCount++; let profit = bet.amount * (1 - margin); let payout = bet.amount + profit;
               
-              const { error: betUpdErr } = await _supabase.from('bets').update({ status: 'Win', payout: payout }).eq('bet_id', bet.bet_id);
+              const { error: betUpdErr } = await _supabase.from('bets').update({ status: 'Win', payout: payout }).eq('shop_id', currentShopId).eq('bet_id', bet.bet_id);
               if (betUpdErr) throw new Error("อัปเดตบิลล้มเหลว: " + betUpdErr.message);
 
               if (bet.play_mode === 'table') {
-                  const { data: tData } = await _supabase.from('tables').select('credit').eq('table_no', bet.table_no).single();
-                  if(tData) await _supabase.from('tables').update({ credit: tData.credit + payout }).eq('table_no', bet.table_no);
+                  const { data: tData } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', bet.table_no).single();
+                  if(tData) await _supabase.from('tables').update({ credit: tData.credit + payout }).eq('shop_id', currentShopId).eq('table_no', bet.table_no);
               } else {
-                  const { data: uData } = await _supabase.from('users').select('credit_balance, referrer_uid').eq('uid', bet.uid).single();
+                  const { data: uData } = await _supabase.from('users').select('credit_balance, referrer_uid').eq('shop_id', currentShopId).eq('uid', bet.uid).single();
                   if(uData) {
-                      await _supabase.from('users').update({ credit_balance: uData.credit_balance + payout }).eq('uid', bet.uid);
+                      await _supabase.from('users').update({ credit_balance: uData.credit_balance + payout }).eq('shop_id', currentShopId).eq('uid', bet.uid);
                       if (uData.referrer_uid && uData.referrer_uid !== '-') {
                          let commAmount = bet.amount * commRate;
-                         const { data: refUser } = await _supabase.from('users').select('commission_balance, uid').eq('member_id', uData.referrer_uid).single();
-                         if(refUser) await _supabase.from('users').update({ commission_balance: (refUser.commission_balance || 0) + commAmount }).eq('uid', refUser.uid);
+                         const { data: refUser } = await _supabase.from('users').select('commission_balance, uid').eq('shop_id', currentShopId).eq('member_id', uData.referrer_uid).single();
+                         if(refUser) await _supabase.from('users').update({ commission_balance: (refUser.commission_balance || 0) + commAmount }).eq('shop_id', currentShopId).eq('uid', refUser.uid);
                       }
                   }
               }
-            } else { await _supabase.from('bets').update({ status: 'Lose', payout: 0 }).eq('bet_id', bet.bet_id); }
+            } else { await _supabase.from('bets').update({ status: 'Lose', payout: 0 }).eq('shop_id', currentShopId).eq('bet_id', bet.bet_id); }
           }
         }
         
-        await _supabase.from('rounds').update({ status: 'Ended', weight: w, result: res }).eq('round_id', roundId);
+        await _supabase.from('rounds').update({ status: 'Ended', weight: w, result: res }).eq('shop_id', currentShopId).eq('round_id', roundId);
         let d = new Date(); let tzOffset = d.getTimezoneOffset() * 60000; let localISOTime = (new Date(d - tzOffset)).toISOString().slice(0, -1); let todayStr = localISOTime.split('T')[0];
-        const { data: activeBets } = await _supabase.from('bets').select('uid').gte('created_at', todayStr + 'T00:00:00');
-        if (activeBets) { activeBets.forEach(b => { if(b.uid) targetUids.add(b.uid); }); }
         
-        if(targetUids.size > 0) notifyGAS('notifyUsersResult', { roundId: roundId, weight: w, result: res, winCount: winCount, targetUids: Array.from(targetUids) });
-        if (backerNotifies.length > 0) { notifyGAS('notifyBackerRoundResult', { roundId: roundId, weight: w, result: res, backerUids: backerNotifies }); }
+        // ยกเลิกใช้ GAS
+        // if(targetUids.size > 0) notifyGAS('notifyUsersResult', { roundId: roundId, weight: w, result: res, winCount: winCount, targetUids: Array.from(targetUids) });
+        // if (backerNotifies.length > 0) { notifyGAS('notifyBackerRoundResult', { roundId: roundId, weight: w, result: res, backerUids: backerNotifies }); }
         
         alert(`ตัดผลสำเร็จ! ผลคือ: ${res} (ชนะ ${winCount} บิล)`); document.getElementById('txtShrimpWeight').value = '';
       } catch (e) { alert("เกิดข้อผิดพลาดในการตัดผล: " + e.message); } 
@@ -1203,19 +1210,19 @@
       
       try {
         if(creditMode === 'table') {
-          const { data: t, error: tableError } = await _supabase.from('tables').select('credit').eq('table_no', String(tId)).single();
+          const { data: t, error: tableError } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', String(tId)).single();
           if(tableError || !t) throw new Error("ไม่พบเบอร์โต๊ะนี้ในระบบ กรุณาตรวจสอบให้แน่ใจว่าได้กด 'เพิ่มโต๊ะ' เบอร์นี้ในระบบแล้ว");
           
           let newBal = type === 'deposit' ? t.credit + amount : t.credit - amount;
           if (newBal < 0) throw new Error("ยอดเงินในโต๊ะไม่พอให้ถอน");
           
-          const { error: updTableErr } = await _supabase.from('tables').update({ credit: newBal }).eq('table_no', String(tId));
+          const { error: updTableErr } = await _supabase.from('tables').update({ credit: newBal }).eq('shop_id', currentShopId).eq('table_no', String(tId));
           if(updTableErr) throw new Error("อัปเดตเงินโต๊ะล้มเหลว: " + updTableErr.message);
 
-          await _supabase.from('transactions').insert([{ target_id: 'โต๊ะ ' + tId, type: type, amount: amount, admin_name: currentAdminName, target_type: 'table' }]);
+          await _supabase.from('transactions').insert([{ shop_id: currentShopId, target_id: 'โต๊ะ ' + tId, type: type, amount: amount, admin_name: currentAdminName, target_type: 'table' }]);
           alert(`สำเร็จ!\nโต๊ะ: ${tId}\nเครดิตคงเหลือ: ฿${newBal.toLocaleString()}`);
         } else {
-          const { data: u, error: userError } = await _supabase.from('users').select('uid, credit_balance, status, total_deposit, role, backer_wallet').eq('member_id', tId).single();
+          const { data: u, error: userError } = await _supabase.from('users').select('uid, credit_balance, status, total_deposit, role, backer_wallet').eq('shop_id', currentShopId).eq('member_id', tId).single();
           if(userError || !u) throw new Error("ไม่พบรหัสสมาชิกนี้ในระบบ (โปรดใส่รหัสแบบเต็ม เช่น M0001)");
           if(u.status !== 'Active') throw new Error(`ไม่สามารถทำรายการได้! บัญชีลูกค้ารหัส ${tId} ถูกระงับ`);
           
@@ -1223,28 +1230,30 @@
               let newBackerBal = type === 'deposit' ? (u.backer_wallet || 0) + amount : (u.backer_wallet || 0) - amount;
               if (newBackerBal < 0) throw new Error("ยอดกระเป๋าเงินคนรับจบไม่พอให้ถอน");
               
-              const { error: updErr } = await _supabase.from('users').update({ backer_wallet: newBackerBal }).eq('uid', u.uid);
+              const { error: updErr } = await _supabase.from('users').update({ backer_wallet: newBackerBal }).eq('shop_id', currentShopId).eq('uid', u.uid);
               if (updErr) throw new Error("อัปเดตยอดเงินคนรับจบไม่สำเร็จ กรุณาเช็คฐานข้อมูล: " + updErr.message);
 
-              notifyGAS('adminTopupComplete', { adminName: currentAdminName, type: type, targetUid: u.uid, targetMemberId: tId, amount: amount, newBalance: newBackerBal });
+              // ยกเลิกการใช้ GAS ส่งข้อความ
+              // notifyGAS('adminTopupComplete', { adminName: currentAdminName, type: type, targetUid: u.uid, targetMemberId: tId, amount: amount, newBalance: newBackerBal });
           } else {
               let newBal = type === 'deposit' ? u.credit_balance + amount : u.credit_balance - amount;
               if (newBal < 0) throw new Error("ยอดเครดิตลูกค้าไม่พอให้ถอน");
               let updateData = { credit_balance: newBal };
               if (type === 'deposit') updateData.total_deposit = (u.total_deposit || 0) + amount; 
               
-              const { error: updErr } = await _supabase.from('users').update(updateData).eq('uid', u.uid);
+              const { error: updErr } = await _supabase.from('users').update(updateData).eq('shop_id', currentShopId).eq('uid', u.uid);
               if (updErr) throw new Error("อัปเดตเครดิตลูกค้าไม่สำเร็จ: " + updErr.message);
 
-              notifyGAS('adminTopupComplete', { adminName: currentAdminName, type: type, targetUid: u.uid, targetMemberId: tId, amount: amount, newBalance: newBal });
+              // ยกเลิกการใช้ GAS ส่งข้อความ
+              // notifyGAS('adminTopupComplete', { adminName: currentAdminName, type: type, targetUid: u.uid, targetMemberId: tId, amount: amount, newBalance: newBal });
           }
-          await _supabase.from('transactions').insert([{ target_id: tId, type: type, amount: amount, admin_name: currentAdminName, target_type: 'user' }]);
+          await _supabase.from('transactions').insert([{ shop_id: currentShopId, target_id: tId, type: type, amount: amount, admin_name: currentAdminName, target_type: 'user' }]);
           
           if(pendingReqId) {
-             await _supabase.from('topup_requests').update({ status: 'Approved', admin_name: currentAdminName }).eq('id', pendingReqId);
+             await _supabase.from('topup_requests').update({ status: 'Approved', admin_name: currentAdminName }).eq('shop_id', currentShopId).eq('id', pendingReqId);
              document.getElementById('txtPendingRequestId').value = ""; 
           }
-          alert(`สำเร็จ! อัปเดตยอดและส่งแจ้งเตือนให้เรียบร้อยแล้ว`);
+          alert(`สำเร็จ! อัปเดตยอดเรียบร้อยแล้ว`);
         }
         
         document.getElementById('txtTargetId').value = "";
@@ -1256,23 +1265,32 @@
     async function cancelBet() {
       let bId = document.getElementById('txtBetId').value.trim(); if(!confirm("ยืนยันยกเลิกและคืนเครดิต?")) return;
       try {
-         const { data: bet } = await _supabase.from('bets').select('*').eq('bet_id', bId).single();
+         const { data: bet } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('bet_id', bId).single();
          if(!bet || bet.status !== 'Active') return alert("บิลไม่ถูกต้อง");
-         await _supabase.from('bets').update({ status: 'Cancelled' }).eq('bet_id', bId);
-         if (bet.play_mode === 'table') { const { data: t } = await _supabase.from('tables').select('credit').eq('table_no', bet.table_no).single(); await _supabase.from('tables').update({ credit: t.credit + bet.amount }).eq('table_no', bet.table_no); } 
-         else { const { data: u } = await _supabase.from('users').select('credit_balance').eq('uid', bet.uid).single(); await _supabase.from('users').update({ credit_balance: u.credit_balance + bet.amount }).eq('uid', bet.uid); }
+         await _supabase.from('bets').update({ status: 'Cancelled' }).eq('shop_id', currentShopId).eq('bet_id', bId);
+         if (bet.play_mode === 'table') { const { data: t } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', bet.table_no).single(); await _supabase.from('tables').update({ credit: t.credit + bet.amount }).eq('shop_id', currentShopId).eq('table_no', bet.table_no); } 
+         else { const { data: u } = await _supabase.from('users').select('credit_balance').eq('shop_id', currentShopId).eq('uid', bet.uid).single(); await _supabase.from('users').update({ credit_balance: u.credit_balance + bet.amount }).eq('shop_id', currentShopId).eq('uid', bet.uid); }
          alert("ยกเลิกบิลสำเร็จ"); document.getElementById('txtBetId').value = ""; 
          if(document.getElementById('tabReport').classList.contains('active')) generateReport();
       } catch(e) { alert("ยกเลิกไม่สำเร็จ"); }
     }
 
-    async function loadTableList() { const l = document.getElementById('tableListContainer'); const { data: t } = await _supabase.from('tables').select('*').order('created_at', { ascending: true }); l.innerHTML = ''; if(!t || t.length === 0) { l.innerHTML = '<div style="text-align:center; color: var(--text-muted);">ยังไม่มีโต๊ะในระบบ</div>'; return; } t.forEach(tb => { let cd = document.createElement('div'); cd.style.cssText = "background: #0f111a; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;"; cd.innerHTML = `<div><div style="font-weight: 600; font-size: 1rem; color: white;">โต๊ะ ${tb.table_no}</div><div style="font-size: 0.8rem; color: var(--green-main);">เครดิต: ฿${tb.credit.toLocaleString()}</div></div><div style="display:flex; gap:5px;"><button class="btn btn-blue" style="padding: 6px 10px; font-size: 0.85rem;" onclick="showQrCode('${tb.table_no}')"><i class="fa-solid fa-qrcode"></i> QR</button><button class="btn btn-red" style="padding: 6px 10px; font-size: 0.85rem;" onclick="deleteTable('${tb.table_no}')"><i class="fa-solid fa-trash"></i></button></div>`; l.appendChild(cd); }); }
-    async function addNewTable() { let tNo = document.getElementById('txtNewTable').value.trim(); if(!tNo) return; try { await _supabase.from('tables').insert([{ table_no: tNo, credit: 0 }]); alert('เพิ่มโต๊ะสำเร็จ'); document.getElementById('txtNewTable').value = ''; loadTableList(); } catch(e) { alert("เพิ่มไม่ได้ อาจมีชื่อโต๊ะนี้แล้วในระบบ"); } }
-    async function deleteTable(tNo) { if(confirm(`ยืนยันลบโต๊ะ ${tNo}?`)){ await _supabase.from('tables').delete().eq('table_no', tNo); loadTableList(); } }
-    function showQrCode(tNo) { document.getElementById('qrTableNoDisplay').innerText = tNo; let cleanLiff = APP_CONFIG.LIFF_ID_PLAYER.split('?')[0]; let qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`https://liff.line.me/${cleanLiff}?table=${tNo}&d=${new Date().toISOString().split('T')[0]}`)}`; document.getElementById('qrImage').src = qrUrl; document.getElementById('qrModal').classList.remove('hidden'); }
+    async function loadTableList() { const l = document.getElementById('tableListContainer'); const { data: t } = await _supabase.from('tables').select('*').eq('shop_id', currentShopId).order('created_at', { ascending: true }); l.innerHTML = ''; if(!t || t.length === 0) { l.innerHTML = '<div style="text-align:center; color: var(--text-muted);">ยังไม่มีโต๊ะในระบบ</div>'; return; } t.forEach(tb => { let cd = document.createElement('div'); cd.style.cssText = "background: #0f111a; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;"; cd.innerHTML = `<div><div style="font-weight: 600; font-size: 1rem; color: white;">โต๊ะ ${tb.table_no}</div><div style="font-size: 0.8rem; color: var(--green-main);">เครดิต: ฿${tb.credit.toLocaleString()}</div></div><div style="display:flex; gap:5px;"><button class="btn btn-blue" style="padding: 6px 10px; font-size: 0.85rem;" onclick="showQrCode('${tb.table_no}')"><i class="fa-solid fa-qrcode"></i> QR</button><button class="btn btn-red" style="padding: 6px 10px; font-size: 0.85rem;" onclick="deleteTable('${tb.table_no}')"><i class="fa-solid fa-trash"></i></button></div>`; l.appendChild(cd); }); }
+    async function addNewTable() { let tNo = document.getElementById('txtNewTable').value.trim(); if(!tNo) return; try { await _supabase.from('tables').insert([{ shop_id: currentShopId, table_no: tNo, credit: 0 }]); alert('เพิ่มโต๊ะสำเร็จ'); document.getElementById('txtNewTable').value = ''; loadTableList(); } catch(e) { alert("เพิ่มไม่ได้ อาจมีชื่อโต๊ะนี้แล้วในระบบ"); } }
+    async function deleteTable(tNo) { if(confirm(`ยืนยันลบโต๊ะ ${tNo}?`)){ await _supabase.from('tables').delete().eq('shop_id', currentShopId).eq('table_no', tNo); loadTableList(); } }
+    
+    function showQrCode(tNo) { 
+        document.getElementById('qrTableNoDisplay').innerText = tNo; 
+        let cleanLiff = APP_CONFIG.LIFF_ID_PLAYER.split('?')[0]; 
+        let qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`https://liff.line.me/${cleanLiff}?shop=${currentShopId}&table=${tNo}&d=${new Date().toISOString().split('T')[0]}`)}`; 
+        document.getElementById('qrImage').src = qrUrl; 
+        document.getElementById('qrModal').classList.remove('hidden'); 
+    }
+    
     function closeQrModal() { document.getElementById('qrModal').classList.add('hidden'); }
-    async function loadSettings() { const { data: s } = await _supabase.from('system_settings').select('*').eq('id', 1).single(); if(s) { document.getElementById('settingWaterMargin').value=s.water_margin; document.getElementById('settingRoundDuration').value=s.round_duration; document.getElementById('settingCommRate').value=s.comm_rate||0.01; document.getElementById('settingMinBet').value=s.min_bet||20; document.getElementById('settingMaxBet').value=s.max_bet||5000; } }
-    async function saveSettings() { await _supabase.from('system_settings').update({ water_margin: parseFloat(document.getElementById('settingWaterMargin').value), round_duration: parseInt(document.getElementById('settingRoundDuration').value), comm_rate: parseFloat(document.getElementById('settingCommRate').value), min_bet: parseFloat(document.getElementById('settingMinBet').value), max_bet: parseFloat(document.getElementById('settingMaxBet').value) }).eq('id', 1); alert("บันทึกการตั้งค่าสำเร็จ"); toggleSettings(); }
+    
+    async function loadSettings() { const { data: s } = await _supabase.from('system_settings').select('*').eq('shop_id', currentShopId).single(); if(s) { document.getElementById('settingWaterMargin').value=s.water_margin; document.getElementById('settingRoundDuration').value=s.round_duration; document.getElementById('settingCommRate').value=s.comm_rate||0.01; document.getElementById('settingMinBet').value=s.min_bet||20; document.getElementById('settingMaxBet').value=s.max_bet||5000; } }
+    async function saveSettings() { await _supabase.from('system_settings').update({ water_margin: parseFloat(document.getElementById('settingWaterMargin').value), round_duration: parseInt(document.getElementById('settingRoundDuration').value), comm_rate: parseFloat(document.getElementById('settingCommRate').value), min_bet: parseFloat(document.getElementById('settingMinBet').value), max_bet: parseFloat(document.getElementById('settingMaxBet').value) }).eq('shop_id', currentShopId); alert("บันทึกการตั้งค่าสำเร็จ"); toggleSettings(); }
     function toggleSettings() { const c = document.getElementById('settingsContent'); const i = document.getElementById('settingsIcon'); if(c.classList.contains('open')){ c.classList.remove('open'); i.className="fa-solid fa-chevron-down"; } else{ c.classList.add('open'); i.className="fa-solid fa-chevron-up"; } }
 
     initializeApp();
