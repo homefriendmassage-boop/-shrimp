@@ -1,0 +1,2 @@
+[functions.admin-api]
+verify_jwt = false
