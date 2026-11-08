@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slip Verification — STAGING PROTOTYPE</title>
+<style>
+:root{font-family:system-ui,"Segoe UI",sans-serif;color-scheme:dark}
+body{background:#10131b;color:#f3f5fc;max-width:940px;margin:0 auto;padding:28px 16px}
+.banner{background:#553817;border:1px solid #b8893c;padding:12px 16px;border-radius:10px;font-weight:700}
+h1{font-size:1.65rem} .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:22px}
+.card{background:#1d2230;border:1px solid #394356;border-radius:16px;padding:18px}
+label{display:block;margin:14px 0 5px;font-size:.95rem;color:#cbd5e1}
+input{background:#0f1522;color:#fff;border:1px solid #64748b;border-radius:8px;padding:11px;width:100%;box-sizing:border-box}
+input[type=file]{padding:12px}button{background:#20814d;border:0;color:white;padding:12px 16px;border-radius:9px;font-weight:700;cursor:pointer;margin-top:13px}
+button:disabled{background:#425264;cursor:not-allowed}
+img{max-height:340px;max-width:100%;object-fit:contain;border-radius:10px}
+.preview{min-height:160px;display:flex;align-items:center;justify-content:center;background:#0b111d;border-radius:12px;margin-top:15px;padding:10px}
+#status{padding:13px;background:#0b111d;border-radius:9px;white-space:pre-wrap;line-height:1.7}
+small{color:#a7b0c2} ul{line-height:1.8}@media(max-width:700px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="banner">STAGING UI ONLY — ไม่มีการเรียก Thunder / ไม่มีการบันทึก Supabase / ไม่มีการเปลี่ยนเครดิต</div>
+<h1>ตัวอย่างหน้าตรวจสอบสลิป</h1>
+<p>หน้าทดลองแยกจากระบบจริง เพื่อทดสอบการเลือกรูป การตรวจชนิดไฟล์ และการแสดงภาพก่อนพัฒนา API ฝั่งเซิร์ฟเวอร์</p>
+<div class="grid">
+<section class="card"><h2>ส่งสลิปเพื่อขอตรวจสอบ</h2>
+<label for="amount">ยอดที่แจ้ง (บาท)</label><input id="amount" type="number" min="0.01" step="0.01" placeholder="เช่น 250.00">
+<label for="slip">รูปสลิป (JPG / PNG / GIF / WebP ไม่เกิน 4 MB)</label>
+<input id="slip" type="file" accept="image/jpeg,image/png,image/gif,image/webp">
+<div id="preview" class="preview">ยังไม่ได้เลือกรูปสลิป</div>
+<button id="check" disabled>จำลองส่งคำขอตรวจสอบ</button>
+<p><small>ภาพจะถูกแสดงในเบราว์เซอร์เท่านั้น ไม่มีการอัปโหลด</small></p></section>
+<section class="card"><h2>ผลการทดสอบ</h2><div id="status" role="status" aria-live="polite">รอเลือกรูปและกรอกยอด</div>
+<h3>ระบบจริงจะตรวจ</h3><ul><li>ตรวจผล API จาก Thunder</li><li>ยอดตามคำขอและบัญชีผู้รับ</li><li>สถานะตรวจพบสลิปซ้ำ</li><li>จัดเก็บรูปแบบ Private และบันทึก Audit Log</li><li>ส่งกรณีผิดปกติให้เจ้าหน้าที่ตรวจสอบ</li></ul>
+<small>ผลตัวอย่างไม่ใช่การรับรองว่ามีการโอนเงินจริง</small></section>
+</div>
+<script>
+const input=document.getElementById('slip'), amount=document.getElementById('amount'), button=document.getElementById('check'), preview=document.getElementById('preview'), status=document.getElementById('status');
+const allowed=new Set(['image/jpeg','image/png','image/gif','image/webp']);
+let url;
+function update(){
+ if(url){URL.revokeObjectURL(url);url=undefined;}
+ preview.replaceChildren(); button.disabled=true;
+ const f=input.files?.[0];
+ if(!f){preview.textContent='ยังไม่ได้เลือกรูปสลิป';return;}
+ if(!allowed.has(f.type)||f.size>4194304||f.size===0){preview.textContent='ไฟล์ไม่ถูกต้อง: กรุณาใช้รูปที่รองรับ ขนาดไม่เกิน 4 MB';status.textContent='ยังไม่ส่งคำขอ: ไฟล์ไม่ผ่านการตรวจ';return;}
+ url=URL.createObjectURL(f);
+ const img=document.createElement('img');img.src=url;img.alt='ภาพตัวอย่างสลิปที่เลือก';preview.appendChild(img);
+ button.disabled=!(Number(amount.value)>0&&Number.isFinite(Number(amount.value)));
+ status.textContent='เลือกรูปแล้ว: '+f.name+'\nขนาด: '+(f.size/1024).toFixed(1)+' KB\nยังไม่ได้ตรวจสลิปจริง';
+}
+input.addEventListener('change',update);amount.addEventListener('input',update);
+button.addEventListener('click',()=>{
+ const value=Number(amount.value);
+ if(button.disabled||!Number.isFinite(value)||value<=0)return;
+ status.textContent='DRY RUN สำเร็จ\nยอดที่แจ้ง: '+value.toFixed(2)+' บาท\nตรวจรูปในเบราว์เซอร์แล้ว\nไม่ได้เรียก Thunder API\nไม่ได้บันทึกข้อมูล\nไม่ได้เพิ่มหรือตัดเครดิต';
+});
+window.addEventListener('pagehide',()=>{if(url)URL.revokeObjectURL(url)});
+</script>
+</body></html>
