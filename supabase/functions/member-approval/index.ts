@@ -105,7 +105,7 @@ Deno.serve(async(req)=>{
     }
     const displayName=typeof input.display_name==="string"?input.display_name.trim().slice(0,80):"";
     const {data,error:upsertError}=await db.from("membership_applications")
-      .upsert({shop_id:shopId,line_uid:uid,display_name,state:"Pending"},
+      .upsert({shop_id:shopId,line_uid:uid,display_name:displayName,state:"Pending"},
         {onConflict:"shop_id,line_uid",ignoreDuplicates:true})
       .select("id,member_id,state").maybeSingle();
     if(upsertError)return error("DATABASE_ERROR",500);
