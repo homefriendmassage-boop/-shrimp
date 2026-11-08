@@ -6,7 +6,7 @@
 <script>
 const $=x=>document.getElementById(x), shop=new URLSearchParams(location.search).get('shop')||'';
 async function call(body){
- const r=await fetch(APP_CONFIG.SUPABASE_URL+'/functions/v1/member-approval',{
+ const r=await fetch('https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval',{
   method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+liff.getIDToken(),apikey:APP_CONFIG.SUPABASE_ANON_KEY},
   body:JSON.stringify({...body,shop_id:shop})});
  const j=await r.json();if(!r.ok||!j.ok)throw Error(j.code||r.status);return j;
