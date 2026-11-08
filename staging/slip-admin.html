@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ผลตรวจสลิป — Admin</title><script src="../config.js"></script><script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>body{font-family:system-ui,sans-serif;background:#0e1420;color:#fff;padding:22px;max-width:900px;margin:auto}
+button{background:#2563eb;color:white;border:0;padding:12px;border-radius:8px;cursor:pointer}
+.item{background:#202a3a;padding:15px;margin:14px 0;border-radius:14px;overflow-wrap:anywhere}
+img{max-width:100%;max-height:450px;object-fit:contain;border-radius:10px}
+small{color:#c4cde0}#message{line-height:1.6}</style></head>
+<body><h1>รายการตรวจสลิป</h1><p>แสดงผลตรวจเอกสารเท่านั้น ไม่มีปุ่มอนุมัติหรือปรับยอดเครดิต</p><button id="reload">โหลดรายการ</button><p id="message" role="status"></p><div id="items"></div>
+<script>
+const $=id=>document.getElementById(id);
+const shop=new URLSearchParams(location.search).get('shop');
+async function init(){
+ try{await liff.init({liffId:APP_CONFIG.LIFF_ID_ADMIN});if(!liff.isLoggedIn()){liff.login({redirectUri:location.href});return}
+ if(!liff.getIDToken())throw Error('ต้องเปิด openid scope');await load();}
+ catch(e){$('message').textContent=e.message}
+}
+async function load(){
+ if(!shop){$('message').textContent='ไม่มี shop_id ใน URL';return}
+ $('message').textContent='กำลังโหลด…';$('items').replaceChildren();
+ try{
+  const form=new FormData();form.append('action','list');form.append('shop_id',shop);
+  const response=await fetch(APP_CONFIG.SUPABASE_URL+'/functions/v1/verify-slip',{method:'POST',headers:{Authorization:'Bearer '+liff.getIDToken(),apikey:APP_CONFIG.SUPABASE_ANON_KEY},body:form});
+  const json=await response.json();if(!response.ok||!json.ok)throw Error(json.code||'รายการโหลดไม่ได้');
+  $('message').textContent='พบ '+json.entries.length+' รายการล่าสุด';
+  for(const e of json.entries){
+   const card=document.createElement('article');card.className='item';
+   const heading=document.createElement('h3');heading.textContent='รายการ '+e.id+' · '+e.status;card.appendChild(heading);
+   const info=document.createElement('p');info.textContent='ยอดแจ้ง '+e.claimed_amount+' บาท | ยอดในสลิป '+(e.slip_amount??'-')+' บาท | ตรวจบัญชีผู้รับ: '+(e.receiver_matched?'ตรง':'ยังไม่ยืนยัน')+' | สลิปซ้ำ: '+(e.is_duplicate?'ใช่':'ไม่พบ');card.appendChild(info);
+   const detail=document.createElement('small');detail.textContent='อ้างอิง: '+(e.transaction_ref||'-')+' | '+(e.error_code||'')+' | '+e.created_at;card.appendChild(detail);
+   if(e.image_url){const img=document.createElement('img');img.src=e.image_url;img.alt='หลักฐานสลิปของรายการ '+e.id;img.loading='lazy';card.appendChild(img)}
+   $('items').appendChild(card);
+  }
+ }catch(e){$('message').textContent='ไม่สามารถโหลดรายการ: '+e.message}
+}
+$('reload').onclick=load;init();
+</script></body></html>
