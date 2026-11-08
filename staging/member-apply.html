@@ -20,7 +20,7 @@ async function request(action){
   const j=await r.json();if(!r.ok||!j.ok)throw Error(j.code||r.status);
   const state=j.application?.state||'NotApplied';
   const names={Pending:'รอแอดมินอนุมัติ',Approved:'อนุมัติสมาชิกทั่วไปแล้ว',Rejected:'ไม่ผ่านการอนุมัติ',NotApplied:'ยังไม่ได้สมัคร'};
-  $('result').textContent=(names[state]||state)+(j.application?.id?'\nเลขคำขอ: '+j.application.id:'');
+  $('result').textContent=(names[state]||state)+(j.application?.member_id?'\nเลขสมาชิก: '+j.application.member_id:'')+(j.application?.id?'\nเลขคำขอ: '+j.application.id:'');
  }catch(e){$('result').textContent='ข้อผิดพลาด: '+e.message}
  finally{$('apply').disabled=!logged;$('check').disabled=!logged}
 }
