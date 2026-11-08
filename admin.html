@@ -176,6 +176,14 @@
       <p style="color: var(--text-muted); margin-top: 10px;">หน้านี้สงวนไว้สำหรับพนักงานเท่านั้น</p>
     </div>
 
+    <!-- แผงสมาชิกทั่วไป: สิทธิ์แยกจาก Admin Panel เดิม -->
+    <section id="generalMembershipPanel" class="card hidden no-print">
+      <div class="card-title"><i class="fa-solid fa-user-check"></i> อนุมัติสมาชิกทั่วไป</div>
+      <p id="generalMembershipStatus" style="color:var(--text-muted)" role="status">กำลังโหลดคำขอ…</p>
+      <button type="button" class="btn btn-outline" style="width:100%;margin-bottom:12px" onclick="loadGeneralMembershipRequests()">รีเฟรชรายชื่อสมาชิก</button>
+      <div id="generalMembershipList"></div>
+    </section>
+
     <!-- View 1: ควบคุมบ่อ -->
     <div id="adminContentView" class="hidden no-print">
       <div class="card" id="cardRoundControl">
@@ -471,6 +479,7 @@
           currentOpId = profile.userId; 
           currentAdminName = profile.displayName;
           await checkAdminAccess(currentOpId);
+          await loadGeneralMembershipRequests();
 
           let hashData = window.location.hash; 
           if (hashData && hashData.length > 1) {
@@ -528,6 +537,78 @@
           setInterval(loadPendingRequests, 4000); 
         }
       } catch (error) {}
+    }
+
+    // สิทธิ์อนุมัติสมาชิกทั่วไป (แยกจาก users.role ของระบบเดิม)
+    // ไม่ใช้การแก้สิทธิ์ในเบราว์เซอร์; Edge Function ตรวจ LINE และ membership_admins
+    const GENERAL_MEMBERSHIP_API='https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval';
+    let memberReviewBusy=false;
+    async function generalMembershipCall(payload){
+      const token=liff.getIDToken();
+      if(!token)throw Error('LINE_AUTH_INVALID');
+      const response=await fetch(GENERAL_MEMBERSHIP_API,{
+        method:'POST',
+        headers:{'Content-Type':'application/json',Authorization:'Bearer '+token,apikey:APP_CONFIG.SUPABASE_ANON_KEY},
+        body:JSON.stringify({...payload,shop_id:currentShopId})
+      });
+      const data=await response.json();
+      if(!response.ok||!data.ok)throw Error(data.code||'HTTP_'+response.status);
+      return data;
+    }
+    async function loadGeneralMembershipRequests(){
+      if(memberReviewBusy)return;
+      memberReviewBusy=true;
+      const panel=document.getElementById('generalMembershipPanel');
+      const message=document.getElementById('generalMembershipStatus');
+      const list=document.getElementById('generalMembershipList');
+      try{
+        const data=await generalMembershipCall({action:'queue'});
+        panel.classList.remove('hidden');
+        // reviewer-only account sees membership section, never legacy Admin control tabs
+        if(document.getElementById('adminTabs').style.display!=='flex'){
+          document.getElementById('accessDeniedView').classList.add('hidden');
+          document.getElementById('opProfile').textContent='ผู้ดูแลสมาชิกทั่วไป';
+        }
+        list.replaceChildren();
+        const pending=(data.entries||[]).filter(x=>x.state==='Pending');
+        message.textContent=pending.length?'มีคำขอใหม่ '+pending.length+' รายการ':'ไม่มีคำขอสมาชิกใหม่';
+        pending.forEach(item=>{
+          const card=document.createElement('div');
+          card.style.cssText='background:#0f111a;border:1px solid var(--card-border);border-radius:12px;padding:14px;margin:12px 0';
+          const name=document.createElement('div');
+          name.style.fontWeight='600';
+          name.textContent=(item.display_name||'สมาชิก')+' · '+(item.member_id||'ไม่พบเลขสมาชิก');
+          const when=document.createElement('div');
+          when.style.cssText='font-size:.8rem;color:var(--text-muted);margin-top:4px';
+          when.textContent=new Date(item.requested_at).toLocaleString('th-TH');
+          const buttons=document.createElement('div');
+          buttons.style.cssText='display:flex;gap:8px;margin-top:10px';
+          for(const decision of ['Approved','Rejected']){
+            const btn=document.createElement('button');
+            btn.type='button';
+            btn.className='btn '+(decision==='Approved'?'btn-green':'btn-red');
+            btn.textContent=decision==='Approved'?'อนุมัติ':'ปฏิเสธ';
+            btn.onclick=()=>decideGeneralMembership(item.id,decision);
+            buttons.appendChild(btn);
+          }
+          card.append(name,when,buttons);
+          list.appendChild(card);
+        });
+      }catch(e){
+        const reason=e instanceof Error?e.message:'UNKNOWN_ERROR';
+        if(!['ADMIN_REQUIRED','LINE_AUTH_INVALID'].includes(reason)){
+          // legacy Admin Panel continues unaffected if membership service is down
+          console.warn('General member queue not available:',reason);
+          if(!panel.classList.contains('hidden'))message.textContent='โหลดคำขอสมาชิกไม่สำเร็จ: '+reason;
+        }
+      }finally{memberReviewBusy=false}
+    }
+    async function decideGeneralMembership(id,decision){
+      if(!confirm('ยืนยัน'+(decision==='Approved'?'อนุมัติ':'ปฏิเสธ')+'สมาชิกทั่วไป?'))return;
+      try{
+        await generalMembershipCall({action:'decide',id,decision});
+        await loadGeneralMembershipRequests();
+      }catch(e){alert('ทำรายการไม่สำเร็จ: '+(e instanceof Error?e.message:'UNKNOWN_ERROR'))}
     }
 
     function switchAdminTab(tab) {
