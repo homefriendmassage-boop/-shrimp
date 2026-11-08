@@ -46,14 +46,14 @@ Deno.serve(async(req)=>{
     });
     const {data:shop, error:shopError}=await db.from("shops").select("shop_id,status").eq("shop_id",shopId).maybeSingle();
     if(shopError)return error("DATABASE_ERROR",500);
-    if(!shop||shop.status!=="active")return error("SHOP_NOT_AVAILABLE",404);
+    if(!shop)return error("SHOP_NOT_AVAILABLE",404);
     if(isAdmin){
       const {data:staff,error:staffError}=await db.from("users").select("role,status").eq("uid",uid).eq("shop_id",shopId).maybeSingle();
       if(staffError)return error("DATABASE_ERROR",500);
       if(!staff||staff.status!=="Active"||!["Admin","Superadmin"].includes(staff.role))return error("ADMIN_REQUIRED",403);
       if(action==="queue"){
         const {data, error:queueError}=await db.from("membership_applications")
-          .select("id,display_name,state,requested_at,decided_at,reason")
+          .select("id,member_id,display_name,state,requested_at,decided_at,reason")
           .eq("shop_id",shopId).order("requested_at",{ascending:false}).limit(100);
         if(queueError)return error("DATABASE_ERROR",500);
         return reply({ok:true,entries:data??[]});
@@ -64,14 +64,14 @@ Deno.serve(async(req)=>{
       const {data, error:writeError}=await db.from("membership_applications")
         .update({state:decision,decided_by:uid,decided_at:new Date().toISOString()})
         .eq("id",id).eq("shop_id",shopId).eq("state","Pending")
-        .select("id,state").maybeSingle();
+        .select("id,member_id,state").maybeSingle();
       if(writeError)return error("DATABASE_ERROR",500);
       if(!data)return error("ALREADY_PROCESSED",409);
       return reply({ok:true,application:data});
     }
     if(action==="status"){
       const {data,error:readError}=await db.from("membership_applications")
-        .select("id,state,requested_at,decided_at").eq("shop_id",shopId).eq("line_uid",uid).maybeSingle();
+        .select("id,member_id,state,requested_at,decided_at").eq("shop_id",shopId).eq("line_uid",uid).maybeSingle();
       if(readError)return error("DATABASE_ERROR",500);
       return reply({ok:true,application:data??null});
     }
@@ -79,11 +79,11 @@ Deno.serve(async(req)=>{
     const {data,error:upsertError}=await db.from("membership_applications")
       .upsert({shop_id:shopId,line_uid:uid,display_name,state:"Pending"},
         {onConflict:"shop_id,line_uid",ignoreDuplicates:true})
-      .select("id,state").maybeSingle();
+      .select("id,member_id,state").maybeSingle();
     if(upsertError)return error("DATABASE_ERROR",500);
     // If conflict, retrieve state without resetting an existing decision.
     if(!data){
-      const read=await db.from("membership_applications").select("id,state").eq("shop_id",shopId).eq("line_uid",uid).maybeSingle();
+      const read=await db.from("membership_applications").select("id,member_id,state").eq("shop_id",shopId).eq("line_uid",uid).maybeSingle();
       if(read.error)return error("DATABASE_ERROR",500);
       return reply({ok:true,application:read.data});
     }
