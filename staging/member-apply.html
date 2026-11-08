@@ -9,12 +9,18 @@
 <div id="result" role="status">กำลังเข้าสู่ระบบ LINE…</div></div>
 <script>
 const $=x=>document.getElementById(x);let logged=false;
+async function fetchWithDeadline(url,options,ms=12000){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),ms);
+  try{return await fetch(url,{...options,signal:controller.signal})}
+  finally{clearTimeout(timer)}
+}
 const shopId=new URLSearchParams(location.search).get('shop')||'';
 async function request(action){
  $('result').textContent='กำลังตรวจสอบสมาชิก…';$('apply').disabled=true;
  try{
   const body={action,shop_id:shopId};if(action==='apply')body.display_name=$('name').value.trim();
-  const r=await fetch('https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval',{
+  const r=await fetchWithDeadline('https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval',{
    method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+liff.getIDToken(),apikey:APP_CONFIG.SUPABASE_ANON_KEY},body:JSON.stringify(body)
   });
   const j=await r.json();if(!r.ok||!j.ok)throw Error(j.code||r.status);
@@ -29,7 +35,7 @@ async function request(action){
   $('name').parentElement.hidden=state!=='NotApplied';
   const names={Pending:'รอแอดมินอนุมัติ',Approved:'อนุมัติสมาชิกทั่วไปแล้ว',Rejected:'ไม่ผ่านการอนุมัติ',NotApplied:'ยังไม่ได้สมัคร'};
   $('result').textContent=(names[state]||state)+(j.application?.member_id?'\nเลขสมาชิก: '+j.application.member_id:'')+(j.application?.id?'\nเลขคำขอ: '+j.application.id:'');
- }catch(e){$('result').textContent='ข้อผิดพลาด: '+e.message}
+ }catch(e){$('result').textContent='ตรวจสอบสมาชิกไม่สำเร็จ: '+(e.name==='AbortError'?'เซิร์ฟเวอร์ตอบช้า กรุณาเปิดหน้าใหม่':e.message)}
  finally{$('apply').disabled=!logged}
 }
 $('apply').onclick=()=>request('apply');
@@ -40,7 +46,7 @@ $('apply').onclick=()=>request('apply');
  if(!liff.getIDToken())throw Error('LIFF ต้องเปิด scope openid');
  const p=await liff.getProfile();$('name').value=p.displayName||'';
  logged=true;
- const shopResponse=await fetch('https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval',{
+ const shopResponse=await fetchWithDeadline('https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval',{
   method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+liff.getIDToken(),apikey:APP_CONFIG.SUPABASE_ANON_KEY},
   body:JSON.stringify({action:'shop',shop_id:shopId})
  });
@@ -49,5 +55,5 @@ $('apply').onclick=()=>request('apply');
  if(!shopData.shop_name)throw Error('ยังไม่ได้กำหนดชื่อร้านในระบบ กรุณาติดต่อผู้ดูแล');
  $('shopName').textContent=shopData.shop_name;
  request('status')
-}catch(e){$('result').textContent='เปิดใช้งานไม่ได้: '+e.message}})();
+}catch(e){$('result').textContent='เปิดใช้งานไม่ได้: '+(e.name==='AbortError'?'เซิร์ฟเวอร์ตอบช้า กรุณาเปิดหน้าใหม่':e.message)}})();
 </script></body></html>
