@@ -44,7 +44,7 @@ Deno.serve(async(req)=>{
     const db=createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,{
       auth:{persistSession:false,autoRefreshToken:false}
     });
-    const {data:shop, error:shopError}=await db.from("shops").select("shop_id,status").eq("shop_id",shopId).maybeSingle();
+    const {data:shop, error:shopError}=await db.from("shops").select("shop_id").eq("shop_id",shopId).maybeSingle();
     if(shopError)return error("DATABASE_ERROR",500);
     if(!shop)return error("SHOP_NOT_AVAILABLE",404);
     if(isAdmin){
