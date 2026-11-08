@@ -1,6 +1,6 @@
 // supabase/functions/verify-slip/index.ts
 // Deploy with verify_jwt=false: LINE ID tokens are authenticated with LINE on the server.
-// Secrets: THUNDER_API_KEY, LINE_CHANNEL_ID, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+// Secrets: THUNDER_API_KEY, LINE_CHANNEL_ID_PLAYER, LINE_CHANNEL_ID_ADMIN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 import { createClient } from "npm:@supabase/supabase-js@2";
 const MAX_SIZE = 4_194_304;
 const MIME = new Set(["image/png","image/jpeg","image/gif","image/webp"]);
@@ -18,8 +18,8 @@ function client() {
     auth: { autoRefreshToken: false, persistSession: false }
   });
 }
-async function verifyLine(idToken: string) {
-  const channelId = Deno.env.get("LINE_CHANNEL_ID");
+async function verifyLine(idToken: string, action: string) {
+  const channelId = Deno.env.get(action === "list" ? "LINE_CHANNEL_ID_ADMIN" : "LINE_CHANNEL_ID_PLAYER");
   if (!channelId || !idToken) return null;
   const params = new URLSearchParams({id_token:idToken,client_id:channelId});
   const result = await fetch("https://api.line.me/oauth2/v2.1/verify", {
@@ -36,10 +36,11 @@ Deno.serve(async (req) => {
   const auth = req.headers.get("Authorization")?.replace(/^Bearer\s+/i,"") || "";
   try {
     const body = await req.formData();
-    const uid = await verifyLine(auth);
+    const action = safeText(body.get("action"));
+    if (!["verify","list"].includes(action)) return fail("ACTION_INVALID");
+    const uid = await verifyLine(auth,action);
     if (!uid) return fail("LINE_AUTH_INVALID",401);
     const shopId = safeText(body.get("shop_id"));
-    const action = safeText(body.get("action"));
     if (!shopId) return fail("SHOP_REQUIRED");
     const db = client();
     const {data:user,error:userError} = await db.from("users").select("uid,shop_id,role,status")
