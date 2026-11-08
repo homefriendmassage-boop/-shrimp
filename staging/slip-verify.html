@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ตรวจหลักฐานการโอน — บ่อตกกุ้ง</title><script src="../config.js"></script>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+body{font-family:system-ui,sans-serif;background:#0e1420;color:#f4f6fc;padding:24px;max-width:740px;margin:auto}
+main{background:#202b3b;border-radius:16px;padding:22px}label{display:block;margin-top:18px}input{box-sizing:border-box;width:100%;padding:12px;margin-top:7px;border-radius:10px;border:1px solid #718096;background:#121d2a;color:white}
+button{background:#198653;color:white;border:0;padding:13px 22px;border-radius:9px;font-weight:600;margin:16px 0;cursor:pointer}
+button:disabled{background:#525f6d}img{width:100%;max-height:380px;object-fit:contain;border-radius:12px;margin-top:10px}
+p{line-height:1.7}.notice{padding:12px;background:#45351d;border-radius:10px}#result{white-space:pre-wrap;line-height:1.8}
+</style></head><body>
+<h1>ตรวจสอบรูปสลิป</h1>
+<p class="notice">บริการตรวจเอกสารเท่านั้น: การตรวจรูปผ่านไม่ได้เป็นการยืนยันเงินเข้าบัญชีหรือเปลี่ยนยอดเครดิต</p>
+<main>
+<label>รหัสร้าน (shop_id)<input id="shop" readonly></label>
+<label>ยอดโอนที่ต้องการตรวจ (บาท)<input id="amount" type="number" min="0.01" step="0.01" placeholder="100.00"></label>
+<label>เลือกรูปสลิป (สูงสุด 4 MB)<input id="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+<div id="preview"></div>
+<button id="submit" disabled>ตรวจสอบด้วย Thunder</button>
+<div id="result" role="status" aria-live="polite">กำลังตรวจสอบสถานะ LINE…</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const endpoint=()=>APP_CONFIG.SUPABASE_URL+"/functions/v1/verify-slip";
+const validTypes=new Set(['image/png','image/jpeg','image/webp','image/gif']);
+let ready=false,previewUrl=null;
+const params=new URLSearchParams(location.search);$('shop').value=params.get('shop')||'';
+function refresh(){
+ const file=$('image').files?.[0];if(previewUrl){URL.revokeObjectURL(previewUrl);previewUrl=null}
+ $('preview').replaceChildren();
+ if(file&&validTypes.has(file.type)&&file.size<=4194304&&file.size>0){
+  previewUrl=URL.createObjectURL(file);const img=document.createElement('img');img.src=previewUrl;img.alt='ภาพตัวอย่างหลักฐานการโอน';$('preview').appendChild(img)
+ }
+ $('submit').disabled=!ready||!$('shop').value||!file||!previewUrl||!(Number($('amount').value)>0);
+}
+$('image').addEventListener('change',refresh);$('amount').addEventListener('input',refresh);
+async function initialize(){
+ try{
+  await liff.init({liffId:APP_CONFIG.LIFF_ID_PLAYER});
+  if(!liff.isLoggedIn()){liff.login({redirectUri:location.href});return}
+  if(!liff.getIDToken())throw Error('LINE ID token ไม่พร้อม กรุณาตรวจ scope openid');
+  ready=true;$('result').textContent='พร้อมส่งตรวจสอบ';refresh();
+ }catch(e){$('result').textContent='ไม่สามารถเข้าสู่ระบบ: '+e.message}
+}
+$('submit').addEventListener('click',async()=>{
+ if($('submit').disabled)return;
+ const file=$('image').files[0],amount=Number($('amount').value);
+ if(!file||!validTypes.has(file.type)||file.size>4194304||file.size<=0||!Number.isFinite(amount)||amount<=0)return;
+ $('submit').disabled=true;$('result').textContent='กำลังตรวจสอบ…';
+ try{
+  const form=new FormData();form.append('action','verify');form.append('shop_id',$('shop').value);form.append('amount',String(amount));form.append('image',file);
+  const resp=await fetch(endpoint(),{method:'POST',headers:{Authorization:'Bearer '+liff.getIDToken(),apikey:APP_CONFIG.SUPABASE_ANON_KEY},body:form});
+  const data=await resp.json();if(!resp.ok||!data.ok)throw Error(data.code||'HTTP '+resp.status);
+  const desc={Verified:'ตรวจสอบเอกสารผ่าน (ไม่ใช่การยืนยันเงินเข้าบัญชี)',Rejected:'ไม่ผ่านการตรวจสอบ',ReviewRequired:'ต้องให้เจ้าหน้าที่ตรวจสอบเพิ่มเติม'};
+  $('result').textContent='ผลตรวจ: '+(desc[data.status]||data.status)+'\nเลขอ้างอิงการตรวจ: '+data.id+'\n'+(data.code||'');
+ }catch(e){$('result').textContent='ตรวจสอบไม่สำเร็จ: '+e.message}finally{refresh()}
+});
+window.addEventListener('pagehide',()=>{if(previewUrl)URL.revokeObjectURL(previewUrl)});
+initialize();
+</script></body></html>
