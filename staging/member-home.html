@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>สมาชิกทั่วไป — บ่อตกกุ้ง</title><script src="../config.js"></script><script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>body{background:#101820;color:#eff6ff;font:16px system-ui,sans-serif;max-width:560px;margin:36px auto;padding:18px}.card{border-radius:18px;border:1px solid #394f63;background:#1b2b3b;padding:24px}h1{font-size:1.65rem}.label{color:#a9c0d5;font-size:.9rem}.number{font-size:2rem;font-weight:700;letter-spacing:.02em;margin:8px 0 20px}.approved{color:#50d5a5;font-weight:700}a,button{display:inline-block;background:#177c58;border:0;border-radius:10px;color:#fff;text-decoration:none;padding:12px 17px;font-weight:600;cursor:pointer;margin-top:16px}#message{line-height:1.7}</style></head>
+<body><main class="card"><h1>สมาชิกทั่วไป</h1><p id="message" role="status">กำลังตรวจสอบสมาชิกกับ LINE…</p>
+<div id="approved" hidden><div class="label">ร้านที่สมัคร</div><h2 id="shopName"></h2><div class="label">เลขสมาชิก</div>
+<div id="memberNo" class="number"></div><div class="approved">✓ อนุมัติสมาชิกทั่วไปแล้ว</div><p>ยินดีต้อนรับกลับครับ ไม่ต้องสมัครหรือขออนุมัติซ้ำ</p></div>
+<a id="signup" hidden href="#">กลับไปตรวจสถานะสมาชิก</a></main>
+<script>
+const $=id=>document.getElementById(id);const shop=new URLSearchParams(location.search).get('shop')||'';
+const endpoint='https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval';
+async function call(action){
+ const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+liff.getIDToken(),'apikey':APP_CONFIG.SUPABASE_ANON_KEY},body:JSON.stringify({action,shop_id:shop})});
+ const j=await r.json();if(!r.ok||!j.ok)throw Error(j.code||'HTTP '+r.status);return j;
+}
+(async()=>{try{
+ if(!shop)throw Error('ลิงก์ไม่ระบุร้าน');
+ await liff.init({liffId:APP_CONFIG.LIFF_ID_PLAYER});
+ if(!liff.isLoggedIn()){liff.login({redirectUri:location.href});return}
+ if(!liff.getIDToken())throw Error('LINE ID token ไม่พร้อม');
+ const [info,status]=await Promise.all([call('shop'),call('status')]);
+ if(status.application?.state!=='Approved'){
+   $('message').textContent='ยังไม่ได้รับอนุมัติสมาชิกทั่วไป';
+   $('signup').href='member-apply.html?shop='+encodeURIComponent(shop);
+   $('signup').hidden=false;return;
+ }
+ $('shopName').textContent=info.shop_name||'ร้านค้าที่ลงทะเบียน';
+ $('memberNo').textContent=status.application.member_id||'ไม่พบเลขสมาชิก';
+ $('message').textContent='';$('approved').hidden=false;
+}catch(e){$('message').textContent='ไม่สามารถตรวจสอบสิทธิ์ได้: '+e.message}})();
+</script></body></html>
