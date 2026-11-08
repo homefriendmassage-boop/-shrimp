@@ -118,8 +118,17 @@ Deno.serve(async(req)=>{
     return reply({ok:true,application:data});
   }catch(e){
     if(e instanceof Error&&e.message==="LINE_VERIFY_UNAVAILABLE")return error("LINE_VERIFY_UNAVAILABLE",503);
-    // The response deliberately excludes internal exception messages.
-    console.error("member-approval unexpected exception",e instanceof Error?e.name:"unknown");
+    // Diagnostic details stay in Supabase Logs, never in HTTP response.
+    // ReferenceError messages usually contain the missing variable name.
+    if(e instanceof Error){
+      const trace=(e.stack||"").split("\n").slice(0,4).join(" | ");
+      console.error("member-approval diagnostic", JSON.stringify({
+        action:String(action),
+        error_name:e.name,
+        error_message:e.message,
+        trace
+      }));
+    }else console.error("member-approval diagnostic non-Error",String(action));
     return error("SERVER_ERROR",500);
   }
 });
