@@ -78,7 +78,13 @@ Deno.serve(async(req)=>{
     if(isAdmin){
       const {data:staff,error:staffError}=await db.from("users").select("role,status").eq("uid",uid).eq("shop_id",shopId).maybeSingle();
       if(staffError)return error("DATABASE_ERROR",500);
-      if(!staff||staff.status!=="Active"||!["Admin","Superadmin"].includes(staff.role))return error("ADMIN_REQUIRED",403);
+      const legacyAdmin=!!staff&&staff.status==="Active"&&["Admin","Superadmin"].includes(staff.role);
+      // Dedicated, operator-provisioned authorization for general membership reviews.
+      // No browser or LINE signup is allowed to grant this role.
+      const {data:grant, error:grantError}=await db.from("membership_admins")
+        .select("line_uid").eq("shop_id",shopId).eq("line_uid",uid).maybeSingle();
+      if(grantError)return error("ADMIN_GRANTS_UNAVAILABLE",503);
+      if(!legacyAdmin&&!grant)return error("ADMIN_REQUIRED",403);
       if(action==="queue"){
         const {data, error:queueError}=await db.from("membership_applications")
           .select("id,member_id,display_name,state,requested_at,decided_at,reason")
