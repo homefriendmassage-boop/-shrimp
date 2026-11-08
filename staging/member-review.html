@@ -32,7 +32,14 @@ async function load(){
 $('reload').onclick=load;
 (async()=>{try{if(!shop)throw Error('ไม่พบ shop ID');
 await liff.init({liffId:APP_CONFIG.LIFF_ID_PLAYER});
-if(!liff.isLoggedIn()){liff.login({redirectUri:location.href});return}
+if(!liff.isLoggedIn()){
+ const url='https://liff.line.me/'+APP_CONFIG.LIFF_ID_PLAYER+'/staging/member-review.html?shop='+encodeURIComponent(shop);
+ $('message').textContent='กรุณาเปิดหน้านี้ภายในแอป LINE ด้วยลิงก์ด้านล่าง ไม่ใช้การล็อกอินจาก Chrome โดยตรง';
+ const link=document.createElement('a');link.href=url;link.textContent='เปิดหน้าคิวอนุมัติผ่าน LINE';
+ link.style.cssText='display:inline-block;color:#7dd3fc;padding:12px 0';
+ $('message').appendChild(document.createElement('br'));$('message').appendChild(link);
+ return;
+}
 if(!liff.getIDToken())throw Error('LIFF ต้องเปิด scope openid');
 await load()}catch(e){$('message').textContent=e.message}})();
 </script></body></html>
