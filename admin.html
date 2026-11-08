@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js"></script>
+  <script src="admin-api-client.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -175,6 +176,8 @@
       <h2 style="margin: 0; color: var(--text-main);">ไม่มีสิทธิ์เข้าถึง</h2>
       <p style="color: var(--text-muted); margin-top: 10px;">หน้านี้สงวนไว้สำหรับพนักงานเท่านั้น</p>
     </div>
+
+    <div id="adminApiError" class="card hidden no-print" role="alert" style="color:var(--yellow-main)"></div>
 
     <!-- แผงสมาชิกทั่วไป: สิทธิ์แยกจาก Admin Panel เดิม -->
     <section id="generalMembershipPanel" class="card hidden no-print">
@@ -446,7 +449,7 @@
   </div>
 
   <script>
-    const _supabase = supabase.createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_ANON_KEY);
+    const _supabase = createAdminApiClient(APP_CONFIG, () => currentShopId);
     
     let currentShopId = "SHOP_001"; // ค่าเริ่มต้นสำหรับร้านค้า
     let currentOpId = "", currentAdminName = "", creditMode = "private", currentUserRole = "Customer", selectedUserIdForManage = ""; 
@@ -482,7 +485,7 @@
           await loadGeneralMembershipRequests();
 
           let hashData = window.location.hash; 
-          if (hashData && hashData.length > 1) {
+          if (['Admin', 'Superadmin', 'Operator'].includes(currentUserRole) && hashData && hashData.length > 1) {
              let payloadData = hashData.substring(1); 
              let dataParts = payloadData.split('_'); 
              if (dataParts.length === 3) {
@@ -503,10 +506,12 @@
 
     async function checkAdminAccess(uid) {
       try {
-        const { data: user } = await _supabase.from('users').select('role, status, member_id, commission_balance').eq('uid', uid).eq('shop_id', currentShopId).single();
+        const access = await _supabase.access();
+        const user = access.staff;
+        if (!user || user.uid !== uid) throw new Error('LINE_AUTH_INVALID');
         if (user) currentUserRole = user.role;
         
-        if (currentUserRole === 'Customer' || currentUserRole === 'Inactive' || currentUserRole === 'Promoter' || !user) {
+        if (!user || user.status !== 'Active' || !['Admin', 'Superadmin', 'Operator'].includes(currentUserRole)) {
           document.getElementById('adminTabs').style.display = 'none';
           document.getElementById('adminContentView').classList.add('hidden');
           document.getElementById('reportContentView').classList.add('hidden');
@@ -536,7 +541,29 @@
           loadPendingRequests();
           setInterval(loadPendingRequests, 4000); 
         }
-      } catch (error) {}
+      } catch (error) {
+        currentUserRole = 'Customer';
+        document.getElementById('adminTabs').style.display = 'none';
+        for (const id of ['adminContentView', 'reportContentView', 'pendingContentView']) document.getElementById(id).classList.add('hidden');
+        document.getElementById('accessDeniedView').classList.remove('hidden');
+        document.getElementById('opProfile').textContent = 'ยังไม่ผ่านการตรวจสิทธิ์ Admin';
+        showAdminApiError(error.message);
+      }
+    }
+
+    function showAdminApiError(code) {
+      const messages = {
+        ADMIN_REQUIRED: 'บัญชี LINE นี้ยังไม่มีสิทธิ์ Admin หรือพนักงานที่ Active ในร้านนี้',
+        LINE_AUTH_INVALID: 'ยืนยันบัญชี LINE ไม่สำเร็จ กรุณาปิดแล้วเปิดหน้านี้ใหม่',
+        ADMIN_API_UNAVAILABLE: 'ติดต่อ admin-api ไม่สำเร็จ กรุณาตรวจการ Deploy และการตั้งค่า JWT',
+        ADMIN_API_HTTP_404: 'ยังไม่ได้ติดตั้ง Edge Function ชื่อ admin-api',
+        ADMIN_API_HTTP_401: 'ตรวจการตั้งค่า Verify JWT ของ admin-api ให้เป็น OFF',
+        SHOP_NOT_AVAILABLE: 'ไม่พบร้านที่เปิดใช้งานสำหรับรหัสร้านนี้',
+        ADMIN_DATABASE_ERROR: 'อ่านหรือบันทึกข้อมูลไม่สำเร็จ กรุณาตรวจ Logs ของ admin-api'
+      };
+      const box = document.getElementById('adminApiError');
+      box.textContent = (messages[code] || 'ระบบ Admin ทำรายการไม่สำเร็จ') + ' [' + code + ']';
+      box.classList.remove('hidden');
     }
 
     // สิทธิ์อนุมัติสมาชิกทั่วไป (แยกจาก users.role ของระบบเดิม)
