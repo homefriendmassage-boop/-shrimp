@@ -14,13 +14,32 @@ const reply = (body:unknown,status=200) => new Response(JSON.stringify(body),{
   status, headers:{...cors,"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}
 });
 const error = (code:string,status=400)=>reply({ok:false,code},status);
+function getPrivilegedKey():string|null{
+  // Supabase 2026 default: JSON dictionary of named secret keys.
+  const raw=Deno.env.get("SUPABASE_SECRET_KEYS");
+  if(raw){
+    try{
+      const keys=JSON.parse(raw) as Record<string,unknown>;
+      if(typeof keys.default==="string"&&keys.default.startsWith("sb_secret_"))return keys.default;
+    }catch{return null;}
+  }
+  // Legacy fallback, only for projects still exposing it.
+  const legacy=Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  return legacy&&legacy.length>20?legacy:null;
+}
 async function verifyToken(token:string, channelName:"PLAYER"|"ADMIN"):Promise<string|null>{
   const clientId=Deno.env.get("LINE_CHANNEL_ID_"+channelName);
   if(!clientId||!token)return null;
   const b=new URLSearchParams({id_token:token,client_id:clientId});
-  const r=await fetch("https://api.line.me/oauth2/v2.1/verify",{
-    method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"},body:b
-  });
+  let r:Response;
+  try{
+    r=await fetch("https://api.line.me/oauth2/v2.1/verify",{
+      method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"},body:b
+    });
+  }catch{
+    // Never echo token, secret, or LINE response details to the browser.
+    throw new Error("LINE_VERIFY_UNAVAILABLE");
+  }
   if(!r.ok)return null;
   const p=await r.json();
   return p.sub&&p.aud===clientId&&Number(p.exp)*1000>Date.now() ? String(p.sub) : null;
@@ -41,7 +60,11 @@ Deno.serve(async(req)=>{
     const isAdmin=action==="queue"||action==="decide";
     const uid=await verifyToken(token,isAdmin?"ADMIN":"PLAYER");
     if(!uid)return error("LINE_AUTH_INVALID",401);
-    const db=createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,{
+    const dbUrl=Deno.env.get("SUPABASE_URL");
+    if(!dbUrl)return error("SUPABASE_URL_MISSING",503);
+    const key=getPrivilegedKey();
+    if(!key)return error("SUPABASE_SERVER_KEY_MISSING",503);
+    const db=createClient(dbUrl,key,{
       auth:{persistSession:false,autoRefreshToken:false}
     });
     const {data:shop, error:shopError}=await db.from("shops").select("shop_id").eq("shop_id",shopId).maybeSingle();
@@ -88,5 +111,10 @@ Deno.serve(async(req)=>{
       return reply({ok:true,application:read.data});
     }
     return reply({ok:true,application:data});
-  }catch{return error("SERVER_ERROR",500);}
+  }catch(e){
+    if(e instanceof Error&&e.message==="LINE_VERIFY_UNAVAILABLE")return error("LINE_VERIFY_UNAVAILABLE",503);
+    // The response deliberately excludes internal exception messages.
+    console.error("member-approval unexpected exception",e instanceof Error?e.name:"unknown");
+    return error("SERVER_ERROR",500);
+  }
 });
