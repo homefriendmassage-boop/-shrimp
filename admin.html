@@ -179,6 +179,7 @@
     <!-- ผู้ดูแลสมาชิกทั่วไปโดยเฉพาะ: แสดงในหน้า Admin เดิมโดยไม่เปิดสิทธิ์จัดการบ่อ -->
     <div id="membershipOnlyView" class="card hidden no-print">
       <div class="card-title"><i class="fa-solid fa-user-check"></i> อนุมัติสมาชิกทั่วไป</div>
+      <p id="memberAdminStatus" style="color:var(--text-muted)" role="status">กำลังตรวจสอบสิทธิ์อนุมัติสมาชิก…</p>
       <div class="membership-queue"></div>
     </div>
 
@@ -745,6 +746,7 @@
     async function refreshGeneralMemberQueue() {
       if(generalMemberQueueBusy)return;
       generalMemberQueueBusy=true;
+      const statusNode=document.getElementById('memberAdminStatus');
       try {
         const json=await requestGeneralMembership({action:'queue'});
         const legacyAdminVisible=document.getElementById('adminTabs').style.display==='flex';
@@ -754,6 +756,7 @@
           document.getElementById('accessDeniedView').classList.add('hidden');
           document.getElementById('opProfile').textContent='ผู้ดูแลสมาชิกทั่วไป';
         }
+        statusNode.textContent='สิทธิ์อนุมัติสมาชิกทั่วไปได้รับการยืนยันแล้ว';
         const pending=(json.entries||[]).filter(row=>row.state==='Pending');
         for(const target of document.querySelectorAll('.membership-queue')){
           target.replaceChildren();
@@ -778,9 +781,16 @@
           }
         }
       }catch(e){
-        // หากไม่มีสิทธิ์สมาชิกทั่วไป ต้องไม่เปิดส่วนจัดการบ่อหรือทำให้หน้าเดิมพัง
-        if(e instanceof Error && !['ADMIN_REQUIRED','LINE_AUTH_INVALID'].includes(e.message))
-          console.warn('General membership queue:',e.message);
+        // แสดงเหตุผลเฉพาะสิทธิ์สมาชิกทั่วไป; ไม่เปลี่ยนสิทธิ์ Admin เดิม
+        const code=e instanceof Error?e.message:'UNKNOWN_ERROR';
+        statusNode.textContent=code==='ADMIN_REQUIRED'
+          ? 'LINE บัญชีนี้ไม่มีสิทธิ์อนุมัติสมาชิกทั่วไป กรุณาเปิดด้วยบัญชีเจ้าของร้านที่ได้รับสิทธิ์'
+          : 'ตรวจสิทธิ์อนุมัติสมาชิกไม่สำเร็จ: '+code;
+        if(code!=='ADMIN_REQUIRED'&&code!=='LINE_AUTH_INVALID')console.warn('General membership queue:',code);
+        if(document.getElementById('adminTabs').style.display!=='flex'){
+          document.getElementById('membershipOnlyView').classList.remove('hidden');
+          document.getElementById('accessDeniedView').classList.add('hidden');
+        }
       }finally{generalMemberQueueBusy=false}
     }
     async function decideGeneralMember(id,decision){
