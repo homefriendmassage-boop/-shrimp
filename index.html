@@ -327,6 +327,7 @@
     const supabaseKey = APP_CONFIG.SUPABASE_ANON_KEY;
     const _supabase = supabase.createClient(supabaseUrl, supabaseKey);
 
+    let currentShopId = "SHOP_001"; // ค่าเริ่มต้นร้านค้า
     let currentLineUserId = "";
     let currentDisplayName = "";
     let selectedBetType = "";
@@ -343,6 +344,11 @@
     async function initializeApp() {
       const urlParams = new URLSearchParams(window.location.search);
       
+      // ดึง shop_id จาก URL ถ้ามี (เช่น ?shop=SHOP_001)
+      if (urlParams.get('shop')) {
+        currentShopId = urlParams.get('shop');
+      }
+
       if(urlParams.get('table')) { 
         let qrDate = urlParams.get('d');
         let todayDate = new Date().toISOString().split('T')[0];
@@ -377,14 +383,21 @@
         let currentUser = user;
         
         if (!user) {
-          const { count } = await _supabase.from('users').select('*', { count: 'exact', head: true });
+          const { count } = await _supabase.from('users').select('*', { count: 'exact', head: true }).eq('shop_id', currentShopId);
           let newMemberNo = (count || 0) + 1;
           let newMemberId = 'M' + newMemberNo.toString().padStart(4, '0');
           let refId = sessionStorage.getItem('referrer_id') || null;
 
           currentUser = { 
-            uid: profile.userId, member_id: newMemberId, display_name: profile.displayName, 
-            profile_pic: profile.pictureUrl || '', credit_balance: 0, role: 'Customer', status: 'Inactive', referrer_uid: refId
+            uid: profile.userId, 
+            shop_id: currentShopId,
+            member_id: newMemberId, 
+            display_name: profile.displayName, 
+            profile_pic: profile.pictureUrl || '', 
+            credit_balance: 0, 
+            role: 'Customer', 
+            status: 'Active', // เปลี่ยนเป็น Active หรือ Pending ตามต้องการ
+            referrer_uid: refId
           };
           await _supabase.from('users').insert([currentUser]);
         } else {
@@ -408,7 +421,6 @@
         document.getElementById('tableDisplay').innerText = currentDisplayName || "บัญชีส่วนตัว";
         document.getElementById('creditDisplay').innerText = `฿${(currentUser.credit_balance || 0).toLocaleString()}`;
 
-        // จัดการแสดงปุ่มพิเศษตาม Role
         if (currentUserRole === 'Backer') {
             document.getElementById('btnBackerMenu').style.display = 'block';
         } else if (currentUserRole === 'Promoter') {
@@ -448,13 +460,10 @@
 
     function selectBet(type) {
       if(!isRoundOpen) return; 
-      
-      // ถ้าเป็นผู้แนะนำ (Promoter) ห้ามกดแทงกุ้ง
       if (currentUserRole === 'Promoter') {
           alert("สิทธิ์ผู้แนะนำ (Promoter) ไม่สามารถร่วมเดิมพันได้ครับ");
           return;
       }
-      
       selectedBetType = type;
       document.getElementById('btnEven').classList.remove('selected');
       document.getElementById('btnOdd').classList.remove('selected');
@@ -489,7 +498,7 @@
       let prefix = `R-${d.getFullYear().toString().substring(2)}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-`;
       
       try {
-        const { data: rounds, error } = await _supabase.from('rounds').select('round_id, weight, result, created_at').like('round_id', `${prefix}%`).eq('status', 'Ended').order('round_id', { ascending: false });
+        const { data: rounds, error } = await _supabase.from('rounds').select('round_id, weight, result, created_at').eq('shop_id', currentShopId).like('round_id', `${prefix}%`).eq('status', 'Ended').order('round_id', { ascending: false });
         if (error) throw error;
         let total = 0, evenCount = 0, oddCount = 0;
         listContainer.innerHTML = '';
@@ -558,7 +567,7 @@
         const { data: uData } = await _supabase.from('users').select('credit_balance').eq('uid', currentLineUserId).single();
         if(uData) { document.getElementById('creditDisplay').innerText = `฿${(uData.credit_balance || 0).toLocaleString()}`; }
 
-        const { data: rounds } = await _supabase.from('rounds').select('*').order('round_id', { ascending: false }).limit(2);
+        const { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).order('round_id', { ascending: false }).limit(2);
         if (rounds && rounds.length > 0) {
           const currentRound = rounds[0];
           document.getElementById('roundIdDisplay').innerText = `รอบ ${currentRound.round_id}`;
@@ -582,7 +591,7 @@
              document.getElementById('prevWeight').innerText = `รอข้อมูล...`; document.getElementById('prevResultBadge').className = `badge-win`; document.getElementById('prevResultBadge').innerText = `-`;
           }
 
-          const { data: bets } = await _supabase.from('bets').select('bet_type, amount, table_no').eq('round_id', currentRound.round_id).neq('status', 'Cancelled');
+          const { data: bets } = await _supabase.from('bets').select('bet_type, amount, table_no').eq('shop_id', currentShopId).eq('round_id', currentRound.round_id).neq('status', 'Cancelled');
           let evenAmt = 0, oddAmt = 0, totalAmt = 0; let evenTables = new Set(), oddTables = new Set();
           if(bets) {
             bets.forEach(b => {
@@ -612,17 +621,17 @@
 
       document.querySelector('.btn-submit').innerText = "กำลังดำเนินการ...";
       try {
-        const { data: round } = await _supabase.from('rounds').select('*').eq('status', 'Open').order('round_id', { ascending: false }).limit(1).single();
+        const { data: round } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).eq('status', 'Open').order('round_id', { ascending: false }).limit(1).single();
         if(!round) throw new Error("ปิดรับแทงแล้ว!");
 
-        const { data: set } = await _supabase.from('system_settings').select('min_bet, max_bet').eq('id', 1).single();
+        const { data: set } = await _supabase.from('system_settings').select('min_bet, max_bet').eq('shop_id', currentShopId).single();
         if (amount < (set ? set.min_bet : 20)) throw new Error(`ยอดแทงขั้นต่ำคือ ${set ? set.min_bet : 20} บาท`);
         if (amount > (set ? set.max_bet : 5000)) throw new Error(`ยอดแทงสูงสุดคือ ${set ? set.max_bet : 5000} บาท`);
 
         if (playMode === 'table') {
-          const { data: tData } = await _supabase.from('tables').select('credit').eq('table_no', userTableNo).single();
+          const { data: tData } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', userTableNo).single();
           if(!tData || tData.credit < amount) throw new Error("เครดิตที่โต๊ะไม่พอ กรุณาเติมเงินเข้าโต๊ะ");
-          await _supabase.from('tables').update({ credit: tData.credit - amount }).eq('table_no', userTableNo);
+          await _supabase.from('tables').update({ credit: tData.credit - amount }).eq('shop_id', currentShopId).eq('table_no', userTableNo);
         } else {
           const { data: uData } = await _supabase.from('users').select('credit_balance').eq('uid', currentLineUserId).single();
           if(!uData || uData.credit_balance < amount) throw new Error("เครดิตส่วนตัวไม่พอ กรุณาเติมเงิน");
@@ -630,9 +639,16 @@
         }
 
         await _supabase.from('bets').insert([{
-          bet_id: 'B' + Date.now() + Math.floor(Math.random()*1000), round_id: round.round_id, uid: currentLineUserId,
-          table_no: playMode === 'table' ? userTableNo : '-', bet_type: selectedBetType, amount: parseFloat(amount),
-          status: 'Active', play_mode: playMode, payout: 0
+          bet_id: 'B' + Date.now() + Math.floor(Math.random()*1000), 
+          shop_id: currentShopId,
+          round_id: round.round_id, 
+          uid: currentLineUserId,
+          table_no: playMode === 'table' ? userTableNo : '-', 
+          bet_type: selectedBetType, 
+          amount: parseFloat(amount),
+          status: 'Active', 
+          play_mode: playMode, 
+          payout: 0
         }]);
 
         document.getElementById('txtAmount').value = ""; selectBet(""); alert("รับยอดสำเร็จ!");
@@ -644,7 +660,7 @@
       const listDiv = document.getElementById('historyList');
       listDiv.innerHTML = '<div style="text-align:center; padding: 20px;">กำลังโหลด...</div>';
       try {
-        const { data: bets } = await _supabase.from('bets').select('*').eq('uid', currentLineUserId).order('created_at', { ascending: false }).limit(20);
+        const { data: bets } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('uid', currentLineUserId).order('created_at', { ascending: false }).limit(20);
         listDiv.innerHTML = '';
         if (!bets || bets.length === 0) { listDiv.innerHTML = '<div style="text-align:center; color:#94a3b8; padding: 20px;">ยังไม่มีประวัติการแทง</div>'; return; }
         
@@ -674,8 +690,8 @@
       try {
         await _supabase.from('bets').update({ status: 'Cancelled' }).eq('bet_id', betId);
         if (pMode === 'table') {
-          const { data: t } = await _supabase.from('tables').select('credit').eq('table_no', tNo).single();
-          await _supabase.from('tables').update({ credit: t.credit + amount }).eq('table_no', tNo);
+          const { data: t } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', tNo).single();
+          await _supabase.from('tables').update({ credit: t.credit + amount }).eq('shop_id', currentShopId).eq('table_no', tNo);
         } else {
           const { data: u } = await _supabase.from('users').select('credit_balance').eq('uid', currentLineUserId).single();
           await _supabase.from('users').update({ credit_balance: u.credit_balance + amount }).eq('uid', currentLineUserId);
@@ -685,7 +701,7 @@
     }
 
     // =====================================
-    // โซนจัดการระบบฝาก/ถอนเครดิต
+    // โซนจัดการระบบฝาก/ถอนเครดิต (ผ่าน Supabase ตรง)
     // =====================================
     function openTopupModal() {
       if (currentUserStatus !== 'Active') { alert("บัญชียังไม่เปิดใช้งาน"); return; }
@@ -706,23 +722,25 @@
       else document.getElementById('slipUploadSection').style.display = 'none';
     }
 
-    function compressImageAndGetBase64(file) {
-      return new Promise((resolve) => {
-        const reader = new FileReader(); reader.readAsDataURL(file);
-        reader.onload = function (event) {
-          const img = new Image(); img.src = event.target.result;
-          img.onload = function () {
-            const canvas = document.createElement('canvas'); const MAX_WIDTH = 800; 
-            let scaleSize = Math.min(MAX_WIDTH / img.width, 1);
-            canvas.width = img.width * scaleSize; canvas.height = img.height * scaleSize;
-            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-            resolve(canvas.toDataURL('image/jpeg', 0.6).split(',')[1]); 
-          }
-        };
-      });
+    // ฟังก์ชันอัปโหลดรูปสลิปขึ้น Supabase Storage (รองรับ Multitenant)
+    async function uploadSlipToSupabase(file) {
+      try {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${currentShopId}_${currentLineUserId}_${Date.now()}.${fileExt}`;
+        const filePath = `slips/${fileName}`;
+
+        const { data, error } = await _supabase.storage.from('slips').upload(filePath, file);
+        if (error) throw error;
+
+        // ดึง Public URL ของรูปภาพ
+        const { data: publicURLData } = _supabase.storage.from('slips').getPublicUrl(filePath);
+        return publicURLData.publicUrl;
+      } catch (err) {
+        console.error("Storage Upload Error:", err);
+        return "";
+      }
     }
 
-    // ฟังก์ชันขอเติม/ถอนเครดิตแบบบันทึกลงคิวรอดำเนินการ + ดักจับ Error
     async function submitTopupRequest() {
       const type = document.getElementById('selTransactionType').value;
       const amount = document.getElementById('txtTopupAmount').value;
@@ -732,64 +750,41 @@
       
       if (!amount || amount <= 0) { alert("ระบุจำนวนเงินให้ถูกต้อง"); return; }
 
-      let slipBase64 = "", slipMime = "";
-      if (type === 'ฝากเงิน' && method === 'โอนเงิน') {
-         const fileInput = document.getElementById('fileSlip');
-         if (fileInput.files.length === 0) { alert("กรุณาแนบรูปสลิปโอนเงินด้วยครับ"); return; }
-         slipMime = 'image/jpeg';
-         btnSubmit.disabled = true; btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> บีบอัดรูปภาพ...';
-         slipBase64 = await compressImageAndGetBase64(fileInput.files[0]);
-      }
-
       btnSubmit.disabled = true; btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังส่งข้อมูล...';
       
-      const payload = { 
-        action: 'requestTopup', uid: currentLineUserId, memberId: memberId, displayName: currentDisplayName, profilePic: document.getElementById('profileImage').src,
-        type: type, amount: parseFloat(amount), method: method, feeOption: (type === 'ถอนเงิน') ? feeOption : '-', slipBase64: slipBase64, slipMimeType: slipMime
-      };
-
-      console.log("Payload to GAS:", payload); // แสดงข้อมูลที่จะส่งไป GAS
+      let slipUrl = "";
+      if (type === 'ฝากเงิน' && method === 'โอนเงิน') {
+         const fileInput = document.getElementById('fileSlip');
+         if (fileInput.files.length > 0) {
+            btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลดสลิป...';
+            slipUrl = await uploadSlipToSupabase(fileInput.files[0]);
+         }
+      }
 
       try {
-        const response = await fetch(APP_CONFIG.GAS_URL, { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'text/plain;charset=utf-8' } });
-        const res = await response.json();
-        
-        console.log("Response from GAS:", res); // แสดงผลลัพธ์จาก GAS
+         // บันทึกลงตาราง topup_requests ใน Supabase โดยตรง (Supabase Trigger จะจัดการยิง LINE เองอัตโนมัติ)
+         const { data: insertData, error: dbError } = await _supabase.from('topup_requests').insert([{
+           shop_id: currentShopId,
+           uid: currentLineUserId,
+           member_id: memberId,
+           display_name: currentDisplayName,
+           type: type,
+           amount: parseFloat(amount),
+           method: method,
+           fee_option: (type === 'ถอนเงิน') ? feeOption : '-',
+           slip_url: slipUrl,
+           status: 'Pending'
+         }]).select(); 
 
-        if(res.status === 'success') { 
-           console.log("GAS Success, Attempting Supabase Insert...");
-           // บันทึกลงตาราง topup_requests ใน Supabase พร้อมดักจับ Error
-           const { data: insertData, error: dbError } = await _supabase.from('topup_requests').insert([{
-              uid: currentLineUserId,
-              member_id: memberId,
-              display_name: currentDisplayName,
-              type: type,
-              amount: parseFloat(amount),
-              method: method,
-              fee_option: (type === 'ถอนเงิน') ? feeOption : '-',
-              slip_url: res.fileUrl || '',
-              status: 'Pending'
-           }]).select(); // เพิ่ม .select() เพื่อให้ส่งคืนข้อมูลที่ insert กลับมา
-
-           if (dbError) {
-               console.error("Supabase Insert Error:", dbError);
-               alert("แจ้งเตือน LINE สำเร็จ แต่บันทึกลงฐานข้อมูลไม่เข้า!\nสาเหตุ: " + dbError.message);
-               btnSubmit.disabled = false; 
-               btnSubmit.innerHTML = 'ส่งแจ้งแอดมิน';
-           } else {
-               console.log("Supabase Insert Success:", insertData);
-               alert(`ส่งแจ้ง ${type} สำเร็จ! ระบบได้ส่งแจ้งเตือนไปที่แอดมินแล้วครับ`); 
-               closeTopupModal(); 
-           }
-        } else { 
-            console.error("GAS Error:", res.message);
-            alert("ข้อผิดพลาด: " + res.message); 
-            btnSubmit.disabled = false; 
-            btnSubmit.innerHTML = 'ส่งแจ้งแอดมิน'; 
-        }
+         if (dbError) {
+            throw new Error(dbError.message);
+         } else {
+            alert(`ส่งแจ้ง ${type} สำเร็จ! ระบบได้ส่งแจ้งเตือนไปที่แอดมินแล้วครับ`); 
+            closeTopupModal(); 
+         }
       } catch (error) { 
-          console.error("Fetch Error:", error);
-          alert('การเชื่อมต่อขัดข้อง กรุณาลองใหม่อีกครั้ง'); 
+          console.error("Supabase Insert Error:", error);
+          alert('เกิดข้อผิดพลาดในการบันทึกข้อมูล: ' + error.message); 
           btnSubmit.disabled = false; 
           btnSubmit.innerHTML = 'ส่งแจ้งแอดมิน'; 
       }
