@@ -5,13 +5,13 @@
 <body><div class="card"><h1>สมัครสมาชิกทั่วไป</h1><small>ใช้สำหรับลงทะเบียนและขออนุมัติสมาชิกทั่วไปเท่านั้น ไม่เกี่ยวกับการเดิมพันหรือการปรับเครดิต</small>
 <div style="margin:18px 0;padding:14px;border:1px solid #45627c;border-radius:10px"><small>ร้านที่สมัครสมาชิก</small><div id="shopName" style="font-size:1.25rem;font-weight:700;margin-top:4px" aria-live="polite">กำลังตรวจสอบชื่อร้าน…</div></div>
 <label>ชื่อแสดงในระบบ<input id="name" maxlength="80" placeholder="ชื่อสมาชิก"></label>
-<button id="apply" disabled>ส่งคำขอสมัครสมาชิก</button><button id="check" disabled>ตรวจสถานะ</button>
+<div id="actions" hidden><button id="apply" disabled>ส่งคำขอสมัครสมาชิก</button></div>
 <div id="result" role="status">กำลังเข้าสู่ระบบ LINE…</div></div>
 <script>
 const $=x=>document.getElementById(x);let logged=false;
 const shopId=new URLSearchParams(location.search).get('shop')||'';
 async function request(action){
- $('result').textContent='กำลังดำเนินการ…';$('apply').disabled=true;$('check').disabled=true;
+ $('result').textContent='กำลังตรวจสอบสมาชิก…';$('apply').disabled=true;
  try{
   const body={action,shop_id:shopId};if(action==='apply')body.display_name=$('name').value.trim();
   const r=await fetch('https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval',{
@@ -20,15 +20,19 @@ async function request(action){
   const j=await r.json();if(!r.ok||!j.ok)throw Error(j.code||r.status);
   const state=j.application?.state||'NotApplied';
   if(state==='Approved'){
-   location.replace('member-home.html?shop='+encodeURIComponent(shopId));
+   $('actions').hidden=true;
+   $('name').parentElement.hidden=true;
+   $('result').textContent='ยินดีต้อนรับกลับครับ\nเลขสมาชิก: '+(j.application?.member_id||'-')+'\nสถานะ: อนุมัติสมาชิกทั่วไปแล้ว';
    return;
   }
+  $('actions').hidden=state!=='NotApplied';
+  $('name').parentElement.hidden=state!=='NotApplied';
   const names={Pending:'รอแอดมินอนุมัติ',Approved:'อนุมัติสมาชิกทั่วไปแล้ว',Rejected:'ไม่ผ่านการอนุมัติ',NotApplied:'ยังไม่ได้สมัคร'};
   $('result').textContent=(names[state]||state)+(j.application?.member_id?'\nเลขสมาชิก: '+j.application.member_id:'')+(j.application?.id?'\nเลขคำขอ: '+j.application.id:'');
  }catch(e){$('result').textContent='ข้อผิดพลาด: '+e.message}
- finally{$('apply').disabled=!logged;$('check').disabled=!logged}
+ finally{$('apply').disabled=!logged}
 }
-$('apply').onclick=()=>request('apply');$('check').onclick=()=>request('status');
+$('apply').onclick=()=>request('apply');
 (async()=>{try{
  if(!shopId)throw Error('กรุณาเปิดผ่านลิงก์ร้านที่ถูกต้อง');
  await liff.init({liffId:APP_CONFIG.LIFF_ID_PLAYER});
@@ -44,6 +48,6 @@ $('apply').onclick=()=>request('apply');$('check').onclick=()=>request('status')
  if(!shopResponse.ok||!shopData.ok)throw Error(shopData.code||'ตรวจสอบร้านไม่สำเร็จ');
  if(!shopData.shop_name)throw Error('ยังไม่ได้กำหนดชื่อร้านในระบบ กรุณาติดต่อผู้ดูแล');
  $('shopName').textContent=shopData.shop_name;
- $('apply').disabled=false;$('check').disabled=false;request('status')
+ request('status')
 }catch(e){$('result').textContent='เปิดใช้งานไม่ได้: '+e.message}})();
 </script></body></html>
