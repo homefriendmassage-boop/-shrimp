@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js"></script>
-  <script src="admin-api-client.js?v=1"></script>
+  <script src="admin-api-client.js?v=2"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -179,13 +179,7 @@
 
     <div id="adminApiError" class="card hidden no-print" role="alert" style="color:var(--yellow-main)"></div>
 
-    <!-- แผงสมาชิกทั่วไป: สิทธิ์แยกจาก Admin Panel เดิม -->
-    <section id="generalMembershipPanel" class="card hidden no-print">
-      <div class="card-title"><i class="fa-solid fa-user-check"></i> อนุมัติสมาชิกทั่วไป</div>
-      <p id="generalMembershipStatus" style="color:var(--text-muted)" role="status">กำลังโหลดคำขอ…</p>
-      <button type="button" class="btn btn-outline" style="width:100%;margin-bottom:12px" onclick="loadGeneralMembershipRequests()">รีเฟรชรายชื่อสมาชิก</button>
-      <div id="generalMembershipList"></div>
-    </section>
+
 
     <!-- View 1: ควบคุมบ่อ -->
     <div id="adminContentView" class="hidden no-print">
@@ -324,6 +318,13 @@
 
     <!-- View 2: คิวรอดำเนินการ -->
     <div id="pendingContentView" class="hidden no-print">
+    <!-- แผงสมาชิกทั่วไป: สิทธิ์แยกจาก Admin Panel เดิม -->
+    <section id="generalMembershipPanel" class="card hidden no-print">
+      <div class="card-title"><i class="fa-solid fa-user-check"></i> อนุมัติสมาชิกทั่วไป</div>
+      <p id="generalMembershipStatus" style="color:var(--text-muted)" role="status">กำลังโหลดคำขอ…</p>
+      <button type="button" class="btn btn-outline" style="width:100%;margin-bottom:12px" onclick="loadGeneralMembershipRequests()">รีเฟรชรายชื่อสมาชิก</button>
+      <div id="generalMembershipList"></div>
+    </section>
       <div class="card">
         <div class="card-title" style="color: var(--yellow-main);"><i class="fa-solid fa-bell"></i> คิวฝาก-ถอน รอดำเนินการ</div>
         <div id="pendingListContainer" style="display: flex; flex-direction: column; gap: 15px;">
@@ -334,6 +335,16 @@
 
     <!-- View 3: รายงานผล และสั่งพิมพ์ -->
     <div id="reportContentView" class="hidden no-print">
+      <section class="card">
+        <div class="card-title"><i class="fa-solid fa-users"></i> สรุปสมาชิกทั่วไป</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div style="background:#0f111a;padding:10px;border-radius:8px"><div>สมาชิกปัจจุบัน</div><strong id="membershipCountApproved">—</strong></div>
+          <div style="background:#0f111a;padding:10px;border-radius:8px"><div>รออนุมัติ</div><strong id="membershipCountPending">—</strong></div>
+          <div style="background:#0f111a;padding:10px;border-radius:8px"><div>เลิก / ไม่อนุมัติ</div><strong id="membershipCountRejected">—</strong></div>
+          <div style="background:#0f111a;padding:10px;border-radius:8px"><div>รวมทั้งหมด</div><strong id="membershipCountTotal">—</strong></div>
+        </div>
+        <p id="membershipSummaryStatus" role="status" style="color:var(--text-muted);margin-bottom:0"></p>
+      </section>
       <div class="card">
         <div class="card-title" style="color: var(--green-main);"><i class="fa-solid fa-file-invoice"></i> สรุปยอดและพิมพ์รายงาน</div>
         <div class="form-group">
@@ -593,6 +604,7 @@
         panel.classList.remove('hidden');
         // reviewer-only account sees membership section, never legacy Admin control tabs
         if(document.getElementById('adminTabs').style.display!=='flex'){
+          document.getElementById('pendingContentView').before(panel);
           document.getElementById('accessDeniedView').classList.add('hidden');
           document.getElementById('opProfile').textContent='ผู้ดูแลสมาชิกทั่วไป';
         }
@@ -638,6 +650,24 @@
       }catch(e){alert('ทำรายการไม่สำเร็จ: '+(e instanceof Error?e.message:'UNKNOWN_ERROR'))}
     }
 
+    async function loadMembershipSummary() {
+        const status = document.getElementById('membershipSummaryStatus');
+        const keys = ['Approved', 'Pending', 'Rejected', 'Total'];
+        for (const key of keys) document.getElementById('membershipCount' + key).textContent = '—';
+        status.textContent = 'กำลังโหลดจำนวนสมาชิก…';
+        try {
+            const { counts } = await _supabase.membershipSummary();
+            for (const key of keys) {
+                document.getElementById('membershipCount' + key).textContent = counts[key].toLocaleString('th-TH');
+            }
+            status.textContent = '';
+        } catch (error) {
+            status.textContent = error.message === 'INVALID_ACTION'
+                ? 'ต้องอัปเดต admin-api เพื่อโหลดจำนวนสมาชิก'
+                : 'โหลดจำนวนสมาชิกไม่สำเร็จ กรุณาเปิดแท็บรายงานอีกครั้ง';
+        }
+    }
+
     function switchAdminTab(tab) {
         document.getElementById('tabControl').classList.remove('active');
         document.getElementById('tabPending').classList.remove('active');
@@ -657,6 +687,7 @@
         } else if (tab === 'report') {
             document.getElementById('tabReport').classList.add('active');
             document.getElementById('reportContentView').classList.remove('hidden');
+            loadMembershipSummary();
             generateReport();
         }
     }
