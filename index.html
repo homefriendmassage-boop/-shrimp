@@ -186,6 +186,7 @@
 
     <!-- ปุ่มเมนูพิเศษ -->
     <div class="special-menu-container">
+        <a id="switchToAdmin" class="hidden" style="display:block;color:var(--blue-main);padding:12px">สลับไปหน้า Admin</a>
         <button id="btnBackerMenu" class="btn-special btn-backer" onclick="window.location.href='backer.html'">
             <i class="fa-solid fa-handshake-angle"></i> แดชบอร์ดรับจบ
         </button>
@@ -413,8 +414,9 @@
       try {
         const result = await readPlayerProfile();
         if (result.staff) {
-          window.location.replace('admin.html?shop=' + encodeURIComponent(currentShopId));
-          return;
+          const adminLink = document.getElementById('switchToAdmin');
+          adminLink.href = 'https://liff.line.me/' + APP_CONFIG.LIFF_ID_ADMIN + '?shop=' + encodeURIComponent(currentShopId);
+          adminLink.classList.remove('hidden');
         }
         if (result.state !== 'Approved') {
           const messages = {
