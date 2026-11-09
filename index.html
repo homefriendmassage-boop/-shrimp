@@ -905,6 +905,40 @@
       }
     }
 
+    async function creditWalletSlip(image, amount) {
+      const token = liff.getIDToken();
+      if (!token) throw new Error('กรุณาเข้าสู่ระบบ LINE ใหม่');
+      const form = new FormData();
+      form.set('shop_id', currentShopId);
+      form.set('amount', amount);
+      form.set('image', image);
+      const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/wallet-topup', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, apikey: APP_CONFIG.SUPABASE_ANON_KEY },
+        body: form,
+        signal: AbortSignal.timeout(30000),
+      });
+      const result = await response.json();
+      if (result.code === 'AUTO_CREDIT_DISABLED') return false;
+      if (response.ok && (result.code === 'CREDITED' || result.code === 'ALREADY_CREDITED')) {
+        alert(result.code === 'CREDITED' ? 'เติม Wallet สำเร็จ' : 'สลิปนี้เติม Wallet สำเร็จไปแล้ว');
+        closeTopupModal();
+        fetchDashboard();
+        return true;
+      }
+
+      const messages = {
+        IMAGE_INVALID: 'กรุณาเลือกรูป JPG, PNG, GIF หรือ WebP ขนาดไม่เกิน 4 MB',
+        AMOUNT_INVALID: 'กรุณาระบุจำนวนเงินให้ถูกต้อง (ทศนิยมไม่เกิน 2 ตำแหน่ง)',
+        AMOUNT_MISMATCH: 'ยอดในสลิปไม่ตรงกับยอดที่ระบุ',
+        RECEIVER_MISMATCH: 'บัญชีผู้รับในสลิปไม่ตรงกับบัญชีของร้าน',
+        DUPLICATE_SLIP: 'สลิปนี้ถูกใช้ตรวจแล้ว กรุณาตรวจประวัติ Wallet หรือติดต่อแอดมิน',
+        SLIP_NOT_VERIFIED: 'ตรวจสลิปไม่ผ่าน กรุณาตรวจรูปสลิปหรือติดต่อแอดมิน',
+        PLAYER_ACCESS_REQUIRED: 'บัญชีนี้ยังใช้การเติมอัตโนมัติไม่ได้ กรุณาติดต่อแอดมิน',
+      };
+      throw new Error(messages[result.code] || 'ยังยืนยันผลการเติมไม่ได้ กรุณาตรวจประวัติ Wallet ก่อนส่งซ้ำ');
+    }
+
     async function submitTopupRequest() {
       const type = document.getElementById('selTransactionType').value;
       const amount = document.getElementById('txtTopupAmount').value;
@@ -930,6 +964,11 @@
       btnSubmit.textContent = slipFile ? 'กำลังอัปโหลดสลิป…' : 'กำลังส่งข้อมูล…';
 
       try {
+         if (slipFile) {
+           btnSubmit.textContent = 'กำลังตรวจสลิป…';
+           if (await creditWalletSlip(slipFile, amount)) return;
+           btnSubmit.textContent = 'กำลังอัปโหลดสลิป…';
+         }
          const slipUrl = slipFile ? await uploadSlipToSupabase(slipFile) : '';
          if (slipFile && !slipUrl) throw new Error('อัปโหลดสลิปไม่สำเร็จ กรุณาลองอีกครั้ง');
          btnSubmit.textContent = 'กำลังส่งข้อมูล…';
