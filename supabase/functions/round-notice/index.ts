@@ -80,10 +80,12 @@ function roundFlex(shop, round) {
 
 async function dispatch(db, shop, round, batches) {
   const message = roundFlex(shop, round);
+  let accepted = 0;
+  let failed = 0;
   for (const batch of batches) {
-    if (Date.now() >= Number(round.end_time_ms)) return;
+    if (Date.now() >= Number(round.end_time_ms)) break;
     const current = await db.from('rounds').select('status').eq('shop_id', shop.shop_id).eq('round_id', round.round_id).maybeSingle();
-    if (current.error || current.data?.status !== 'Open') return;
+    if (current.error || current.data?.status !== 'Open') break;
     const to = batch.recipients.filter(validUid);
     if (!to.length) continue;
     try {
@@ -97,14 +99,20 @@ async function dispatch(db, shop, round, batches) {
         signal: AbortSignal.timeout(6000)
       });
       if (!response.ok && !(response.status === 409 && response.headers.has('x-line-accepted-request-id'))) {
+        failed += to.length;
         console.error('round notice LINE status', response.status);
         continue;
       }
+      accepted += to.length;
       const saved = await db.from('round_notice_batches').update({ sent_at: new Date().toISOString() })
         .eq('id', batch.id).eq('shop_id', shop.shop_id);
       if (saved.error) console.error('round notice could not record acceptance');
-    } catch { console.error('round notice request failed'); }
+    } catch {
+      failed += to.length;
+      console.error('round notice request failed');
+    }
   }
+  return { accepted, failed };
 }
 
 Deno.serve(async req => {
@@ -136,13 +144,21 @@ Deno.serve(async req => {
     if (shop.data?.status !== 'active' || round.data?.status !== 'Open' || !(Number(round.data.end_time_ms) > Date.now())) {
       return fail('ROUND_NOT_OPEN', 409);
     }
-    const batches = await db.from('round_notice_batches').select('id,recipients').eq('shop_id', input.shop_id)
-      .eq('round_id', input.round_id).is('sent_at', null).order('batch_no');
+    const batches = await db.from('round_notice_batches').select('id,recipients,sent_at')
+      .eq('shop_id', input.shop_id).eq('round_id', input.round_id).order('batch_no');
     if (batches.error) return fail('DATABASE_ERROR', 500);
-    if (!batches.data?.length) return reply({ ok: true, queued: false });
+    const jobs = batches.data ?? [];
+    const eligible = jobs.reduce((count, job) => count + job.recipients.length, 0);
+    const unsent = jobs.filter(job => !job.sent_at);
+    const alreadyAccepted = jobs.filter(job => job.sent_at).reduce((count, job) => count + job.recipients.length, 0);
+    if (!unsent.length) return reply({ ok: true, eligible, accepted: alreadyAccepted, failed: 0 });
     if (!shop.data.line_oa_token) return fail('SHOP_OA_TOKEN_MISSING', 422);
-    EdgeRuntime.waitUntil(dispatch(db, shop.data, round.data, batches.data).catch(() => console.error('round notice dispatch failed')));
-    return reply({ ok: true, queued: true });
+    if (unsent.length <= 2) {
+      const result = await dispatch(db, shop.data, round.data, unsent);
+      return reply({ ok: true, eligible, accepted: alreadyAccepted + result.accepted, failed: result.failed });
+    }
+    EdgeRuntime.waitUntil(dispatch(db, shop.data, round.data, unsent).catch(() => console.error('round notice dispatch failed')));
+    return reply({ ok: true, eligible, accepted: alreadyAccepted, queued: true });
   } catch {
     console.error('round notice request failed');
     return fail('SERVER_ERROR', 500);
