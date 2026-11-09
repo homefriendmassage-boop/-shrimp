@@ -177,6 +177,7 @@
       <p style="color: var(--text-muted); margin-top: 10px;">หน้านี้สงวนไว้สำหรับพนักงานเท่านั้น</p>
     </div>
 
+    <a id="switchToPlayer" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">สลับไปหน้า Player</a>
     <div id="adminApiError" class="card hidden no-print" role="alert" style="color:var(--yellow-main)"></div>
 
 
@@ -259,7 +260,7 @@
             </button>
         </div>
         <div class="form-group" style="display: flex; gap: 10px; margin-bottom: 15px;">
-          <input type="text" id="txtSearchUser" class="form-control" placeholder="พิมพ์รหัส M000X" style="flex: 2;">
+          <input type="text" id="txtSearchUser" class="form-control" placeholder="LINE User ID หรือรหัสสมาชิก" style="flex: 2;">
           <button class="btn btn-blue" style="flex: 1;" onclick="searchUser()"><i class="fa-solid fa-search"></i> ค้นหา</button>
         </div>
         
@@ -537,7 +538,12 @@
           document.getElementById('adminTabs').style.display = 'flex';
           
           let roleBadge = "พนักงาน (Operator)";
-          if(currentUserRole === 'Superadmin' || currentUserRole === 'Admin') roleBadge = "แอดมินบ่อ";
+          if (['Superadmin', 'Admin'].includes(currentUserRole)) {
+            roleBadge = "แอดมินบ่อ · M0000";
+            const playerLink = document.getElementById('switchToPlayer');
+            playerLink.href = 'https://liff.line.me/' + APP_CONFIG.LIFF_ID_PLAYER + '?shop=' + encodeURIComponent(currentShopId);
+            playerLink.classList.remove('hidden');
+          }
           document.getElementById('opProfile').innerHTML = `<i class="fa-solid fa-user-tie"></i> ${roleBadge}`;
           
           if (currentUserRole === 'Operator') {
@@ -811,9 +817,16 @@
     }
 
     async function searchUser() { 
-        let mId = document.getElementById('txtSearchUser').value.trim(); if(!mId) return; 
-        try { 
-            const { data: u } = await _supabase.from('users').select('*').eq('shop_id', currentShopId).eq('member_id', mId).single(); 
+        const search = document.getElementById('txtSearchUser').value.trim();
+        selectedUserIdForManage = '';
+        document.getElementById('userInfoContainer').style.display = 'none';
+        if (!search) return;
+        const column = /^U[0-9a-f]{32}$/i.test(search) ? 'uid' : 'member_id';
+        try {
+            const { data: matches } = await _supabase.from('users').select('*').eq('shop_id', currentShopId)
+                .eq(column, column === 'uid' ? search : search.toUpperCase()).limit(2);
+            if (matches.length > 1) return alert('พบรหัสซ้ำ กรุณาค้นหาด้วย LINE User ID');
+            const [u] = matches;
             if(u) { 
                 selectedUserIdForManage = u.uid; 
                 document.getElementById('uManagePic').src = u.profile_pic || 'https://via.placeholder.com/150'; 
@@ -843,6 +856,9 @@
     async function updateUserRole() { 
         if(!selectedUserIdForManage) return; 
         let nr = document.getElementById('selChangeRole').value; 
+        if (nr === 'Admin' && document.getElementById('txtSearchUser').value.trim() !== selectedUserIdForManage) {
+            return alert('กรุณาค้นหาด้วย LINE User ID ของสมาชิกก่อนตั้งเป็นแอดมิน');
+        }
         let updateData = { role: nr };
         if(nr === 'Backer') { updateData.backer_share = 0; updateData.backer_water_fee = 10; }
         

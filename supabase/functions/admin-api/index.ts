@@ -130,20 +130,18 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const profile = await db.from('users').select('uid,role,status,member_id,credit_balance')
           .eq('uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (profile.error) fail('DATABASE_ERROR', 500);
-        if (profile.data?.status === 'Active' && ['Admin', 'Superadmin', 'Operator'].includes(profile.data.role)) {
-          return reply({ ok: true, staff: true });
-        }
+        const staff = profile.data?.status === 'Active' && ['Admin', 'Superadmin', 'Operator'].includes(profile.data.role);
         const application = await db.from('membership_applications').select('state,member_id')
           .eq('line_uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (application.error) fail('DATABASE_ERROR', 500);
         if (application.data?.state !== 'Approved') {
-          return reply({ ok: true, state: application.data?.state ?? 'NotApplied', member_id: application.data?.member_id ?? null });
+          return reply({ ok: true, staff, state: application.data?.state ?? 'NotApplied', member_id: application.data?.member_id ?? null });
         }
         const code = application.data.member_id;
         if (!profile.data || profile.data.member_id !== code || !/^M(0[0-9]{3}|[1-9][0-9]{3,})$/.test(code)) {
           fail('MEMBER_PROFILE_NOT_LINKED', 409);
         }
-        return reply({ ok: true, state: 'Approved', player: profile.data });
+        return reply({ ok: true, staff, state: 'Approved', player: profile.data });
       }
 
       // Identity always comes from LINE verification, never from input.uid/role.
