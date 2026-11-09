@@ -640,6 +640,14 @@
             btn.onclick=()=>decideGeneralMembership(item.id,decision);
             buttons.appendChild(btn);
           }
+          if (item.profile_pic) {
+            const picture = document.createElement('img');
+            picture.src = item.profile_pic;
+            picture.alt = 'โปรไฟล์ LINE ของผู้สมัคร';
+            picture.style.cssText = 'width:56px;height:56px;object-fit:cover;border-radius:50%;margin-bottom:8px';
+            picture.onerror = () => picture.remove();
+            card.append(picture);
+          }
           card.append(name,when,buttons);
           list.appendChild(card);
         });
@@ -829,7 +837,10 @@
             const [u] = matches;
             if(u) { 
                 selectedUserIdForManage = u.uid; 
-                document.getElementById('uManagePic').src = u.profile_pic || 'https://via.placeholder.com/150'; 
+                const picture = document.getElementById('uManagePic');
+                picture.hidden = !u.profile_pic;
+                picture.onerror = () => { picture.hidden = true; };
+                if (u.profile_pic) picture.src = u.profile_pic; 
                 document.getElementById('uManageName').innerText = u.display_name; 
                 document.getElementById('uManageId').innerText = u.member_id; 
                 document.getElementById('uManageStatus').innerText = u.status; 
@@ -1150,6 +1161,21 @@
       }
     }
 
+    async function notifyRoundOpening(roundId) {
+      try {
+        const token = liff.getIDToken();
+        if (!token) throw new Error('LINE_AUTH_INVALID');
+        const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/round-notice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + token },
+          body: JSON.stringify({ shop_id: currentShopId, round_id: roundId }),
+          signal: AbortSignal.timeout(15000)
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.code || 'ROUND_NOTICE_FAILED');
+      } catch (error) { showAdminApiError('ROUND_NOTICE · ' + error.message); }
+    }
+
     async function controlRound(cmd) {
       if (cmd === 'createRound') {
         if(!confirm('ยืนยันการเปิดรอบใหม่?')) return;
@@ -1164,11 +1190,7 @@
           let duration = set ? set.round_duration : 15;
           await _supabase.from('rounds').insert([{ shop_id: currentShopId, round_id: rndName, status: 'Open', end_time_ms: new Date().getTime() + (duration * 60000), resolver_type: 'none' }]);
           
-          // ระบบเดิมส่ง Line ด้วย GAS (อาจต้องทำ Edge function หรือ Trigger แจ้งเปิดรอบในอนาคต)
-          // let todayStr = new Date().toISOString().split('T')[0];
-          // const { data: activeBets } = await _supabase.from('bets').select('uid').gte('created_at', todayStr + 'T00:00:00Z');
-          // let activeUids = []; if (activeBets) activeUids = Array.from(new Set(activeBets.map(b => b.uid)));
-          // notifyGAS('notifyRoundStatusToUsers', { status: 'Open', roundId: rndName, duration: duration, targetUids: activeUids });
+          notifyRoundOpening(rndName);
           
           document.getElementById('resolverStatusMsg').style.display = 'none';
           alert(`เปิดรอบ ${rndName} สำเร็จ!`);
@@ -1454,7 +1476,28 @@
     }
 
     async function loadTableList() { const l = document.getElementById('tableListContainer'); const { data: t } = await _supabase.from('tables').select('*').eq('shop_id', currentShopId).order('created_at', { ascending: true }); l.innerHTML = ''; if(!t || t.length === 0) { l.innerHTML = '<div style="text-align:center; color: var(--text-muted);">ยังไม่มีโต๊ะในระบบ</div>'; return; } t.forEach(tb => { let cd = document.createElement('div'); cd.style.cssText = "background: #0f111a; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;"; cd.innerHTML = `<div><div style="font-weight: 600; font-size: 1rem; color: white;">โต๊ะ ${tb.table_no}</div><div style="font-size: 0.8rem; color: var(--green-main);">เครดิต: ฿${tb.credit.toLocaleString()}</div></div><div style="display:flex; gap:5px;"><button class="btn btn-blue" style="padding: 6px 10px; font-size: 0.85rem;" onclick="showQrCode('${tb.table_no}')"><i class="fa-solid fa-qrcode"></i> QR</button><button class="btn btn-red" style="padding: 6px 10px; font-size: 0.85rem;" onclick="deleteTable('${tb.table_no}')"><i class="fa-solid fa-trash"></i></button></div>`; l.appendChild(cd); }); }
-    async function addNewTable() { let tNo = document.getElementById('txtNewTable').value.trim(); if(!tNo) return; try { await _supabase.from('tables').insert([{ shop_id: currentShopId, table_no: tNo, credit: 0 }]); alert('เพิ่มโต๊ะสำเร็จ'); document.getElementById('txtNewTable').value = ''; loadTableList(); } catch(e) { alert("เพิ่มไม่ได้ อาจมีชื่อโต๊ะนี้แล้วในระบบ"); } }
+    async function addNewTable() {
+      const input = document.getElementById('txtNewTable');
+      const tableNo = input.value.trim();
+      if (!/^[0-9]{1,8}$/.test(tableNo)) {
+        alert('กรุณากรอกหมายเลขโต๊ะเป็นตัวเลข 1–8 หลัก');
+        input.focus();
+        return;
+      }
+      const button = document.getElementById('btnAddTable');
+      if (button.disabled) return;
+      button.disabled = true;
+      try {
+        const { data } = await _supabase.from('tables')
+          .insert([{ shop_id: currentShopId, table_no: tableNo, credit: 0 }]).select('table_no');
+        if (!data?.some(row => row.table_no === tableNo)) throw new Error('TABLE_INSERT_NOT_CONFIRMED');
+        input.value = '';
+        await loadTableList();
+      } catch (error) {
+        alert(error.message === 'TABLE_ALREADY_EXISTS'
+          ? 'หมายเลขโต๊ะนี้มีอยู่แล้ว' : 'เพิ่มหรือโหลดโต๊ะไม่สำเร็จ [' + error.message + ']');
+      } finally { button.disabled = false; }
+    }
     async function deleteTable(tNo) { if(confirm(`ยืนยันลบโต๊ะ ${tNo}?`)){ await _supabase.from('tables').delete().eq('shop_id', currentShopId).eq('table_no', tNo); loadTableList(); } }
     
     function showQrCode(tNo) { 
