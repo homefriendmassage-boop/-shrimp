@@ -179,6 +179,14 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (!profile.data || profile.data.member_id !== code || !/^M(0[0-9]{3}|[1-9][0-9]{3,})$/.test(code)) {
           fail('MEMBER_PROFILE_NOT_LINKED', 409);
         }
+        if (input.include_wallet_requests === true) {
+          if (profile.data.status !== 'Active') fail('PLAYER_ACCESS_REQUIRED', 403);
+          const requests = await db.from('topup_requests').select('type,amount,status,created_at')
+            .eq('shop_id', shopId).eq('uid', claims.sub)
+            .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(10);
+          if (requests.error) fail('WALLET_REQUESTS_UNAVAILABLE', 500);
+          return reply({ ok: true, wallet_requests: requests.data });
+        }
         return reply({ ok: true, staff, state: 'Approved', player: profile.data });
       }
 
