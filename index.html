@@ -748,7 +748,7 @@
           uid: currentLineUserId,
           table_no: playMode === 'table' ? userTableNo : '-', 
           bet_type: selectedBetType, 
-          amount: parseFloat(amount),
+          amount: amountValue,
           status: 'Active', 
           play_mode: playMode, 
           payout: 0
@@ -851,20 +851,27 @@
       const feeOption = document.getElementById('selWithdrawFee').value;
       const btnSubmit = document.getElementById('btnSubmitTopup');
       
-      if (!amount || amount <= 0) { alert("ระบุจำนวนเงินให้ถูกต้อง"); return; }
-
-      btnSubmit.disabled = true; btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังส่งข้อมูล...';
-      
-      let slipUrl = "";
-      if (type === 'ฝากเงิน' && method === 'โอนเงิน') {
-         const fileInput = document.getElementById('fileSlip');
-         if (fileInput.files.length > 0) {
-            btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลดสลิป...';
-            slipUrl = await uploadSlipToSupabase(fileInput.files[0]);
-         }
+      if (btnSubmit.disabled) return;
+      const amountValue = Number(amount);
+      if (!Number.isFinite(amountValue) || amountValue <= 0) {
+        alert('ระบุจำนวนเงินให้ถูกต้อง');
+        return;
       }
 
+      const needsSlip = type === 'ฝากเงิน' && method === 'โอนเงิน';
+      const slipFile = needsSlip ? document.getElementById('fileSlip').files[0] : null;
+      if (needsSlip && !slipFile) {
+        alert('กรุณาแนบรูปสลิปโอนเงิน');
+        return;
+      }
+
+      btnSubmit.disabled = true;
+      btnSubmit.textContent = slipFile ? 'กำลังอัปโหลดสลิป…' : 'กำลังส่งข้อมูล…';
+
       try {
+         const slipUrl = slipFile ? await uploadSlipToSupabase(slipFile) : '';
+         if (slipFile && !slipUrl) throw new Error('อัปโหลดสลิปไม่สำเร็จ กรุณาลองอีกครั้ง');
+         btnSubmit.textContent = 'กำลังส่งข้อมูล…';
          // บันทึกลงตาราง topup_requests ใน Supabase โดยตรง (Supabase Trigger จะจัดการยิง LINE เองอัตโนมัติ)
          const { data: insertData, error: dbError } = await _supabase.from('topup_requests').insert([{
            shop_id: currentShopId,
@@ -882,7 +889,7 @@
          if (dbError) {
             throw new Error(dbError.message);
          } else {
-            alert(`ส่งแจ้ง ${type} สำเร็จ! ระบบได้ส่งแจ้งเตือนไปที่แอดมินแล้วครับ`); 
+            alert(`ส่งแจ้ง ${type} สำเร็จ! คำขออยู่ระหว่างรอแอดมินตรวจสอบ`); 
             closeTopupModal(); 
          }
       } catch (error) { 
