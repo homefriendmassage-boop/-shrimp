@@ -129,17 +129,20 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
     const picture = lineProfilePicture(request.profile_pic || profile.data?.profile_pic);
     const titles = { Pending: 'ได้รับคำขอ', Approved: 'ทำรายการสำเร็จ', Rejected: 'คำขอถูกปฏิเสธ' };
     const title = request.status === 'Approved' && request.type === 'ฝากเงิน' ? 'เติมเครดิตเรียบร้อย' : titles[request.status] + ' · ' + request.type;
-    const liff = shop.data?.liff_id_player || env('MEMBERSHIP_LIFF_ID_PLAYER') || '2012454809-UFGeUGbW';
+    const adminLiff = shop.data?.liff_id_admin || env('MEMBERSHIP_LIFF_ID_ADMIN') || '2012454809-41EMnP1K';
+    const opensQueue = request.status === 'Pending' && request.staff_recipient === true;
+    const playerLiff = shop.data?.liff_id_player || env('MEMBERSHIP_LIFF_ID_PLAYER') || '2012454809-UFGeUGbW';
     const bubble = { type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
       { type: 'text', text: title, weight: 'bold', wrap: true },
       ...(picture ? [{ type: 'image', url: picture, size: 'sm', aspectRatio: '1:1', aspectMode: 'cover', align: 'start' }] : []),
       { type: 'text', text: name + (member ? ' · สมาชิก ' + member : ''), wrap: true },
       { type: 'text', text: 'ยอดรายการ ฿' + Number(request.amount).toLocaleString('th-TH'), wrap: true },
     ] } };
+    const liff = opensQueue ? adminLiff : playerLiff;
     if (/^\d+-[a-zA-Z0-9]+$/.test(liff)) {
       bubble.footer = { type: 'box', layout: 'vertical', contents: [{
         type: 'button', style: 'primary', action: {
-          type: 'uri', label: 'เปิดหน้า Player', uri: 'https://liff.line.me/' + liff + '?shop=' + encodeURIComponent(shopId),
+          type: 'uri', label: opensQueue ? 'ตรวจสอบรายการ' : 'เปิดหน้า Player', uri: 'https://liff.line.me/' + liff + '?shop=' + encodeURIComponent(shopId) + (opensQueue ? '&tab=pending' : ''),
         },
       }] };
     }
@@ -150,12 +153,11 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
     });
     if (!result.ok) console.error('wallet LINE notification rejected', result.status);
     const group = shop.data?.admin_group_id;
-    const adminLiff = shop.data?.liff_id_admin || env('MEMBERSHIP_LIFF_ID_ADMIN') || '2012454809-41EMnP1K';
     if (request.status === 'Pending' && /^[CUR][0-9a-f]{32}$/i.test(group || '') && group !== request.uid &&
         /^\d+-[a-zA-Z0-9]+$/.test(adminLiff)) {
       const adminBubble = { ...bubble, footer: { type: 'box', layout: 'vertical', contents: [{
         type: 'button', style: 'primary', action: {
-          type: 'uri', label: 'เปิดคิวรอดำเนินการ',
+          type: 'uri', label: 'ตรวจสอบรายการ',
           uri: 'https://liff.line.me/' + adminLiff + '?shop=' + encodeURIComponent(shopId) + '&tab=pending',
         },
       }] } };
@@ -263,7 +265,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             console.error('wallet request insert error', result.error.code);
             fail('WALLET_REQUEST_UNAVAILABLE', 500);
           }
-          await notifyWalletPlayer(db, fetcher, env, shopId, { uid: claims.sub, type, amount, status: 'Pending', member_id: code, display_name: claims.name, profile_pic: claims.picture });
+          await notifyWalletPlayer(db, fetcher, env, shopId, { uid: claims.sub, type, amount, status: 'Pending', member_id: code, display_name: claims.name, profile_pic: claims.picture,
+            staff_recipient: ['Admin', 'Superadmin', 'Operator'].includes(profile.data.role) });
           return reply({ ok: true, status: 'Pending' });
         }
         if (input.include_wallet_requests === true) {
