@@ -200,6 +200,8 @@
       <h2 style="margin: 0; color: var(--text-main);">รอการอนุมัติสิทธิ์</h2>
       <p id="membershipGateMessage" style="color: var(--text-muted); margin-top: 10px;">บัญชีของคุณยังไม่เปิดใช้งาน</p>
       <a id="membershipApplyLink" class="hidden" style="color:var(--blue-main)">สมัครสมาชิก</a>
+      <button id="retryOwnerNotice" type="button" class="hidden" style="margin:14px auto;padding:12px;border:0;border-radius:8px;background:var(--blue-main);color:white;font:inherit">ส่งเตือนแอดมินอีกครั้ง</button>
+      <p id="retryOwnerNoticeResult" role="status"></p>
       <div style="margin-top: 20px; font-size: 1.1rem; color: var(--blue-main); font-weight: bold;">
         รหัสอ้างอิง: <span id="pendingMemberId">-</span>
       </div>
@@ -410,9 +412,42 @@
       apply.classList.toggle('hidden', !canApply);
     }
 
+    document.getElementById('retryOwnerNotice').onclick = async function () {
+      const status = document.getElementById('retryOwnerNoticeResult');
+      this.disabled = true;
+      status.textContent = 'กำลังลองส่งแจ้งเตือน…';
+      try {
+        const token = liff.getIDToken();
+        if (!token) throw new Error('LINE_AUTH_INVALID');
+        const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/member-approval', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + token,
+            apikey: APP_CONFIG.SUPABASE_ANON_KEY
+          },
+          body: JSON.stringify({ action: 'status', shop_id: currentShopId }),
+          signal: AbortSignal.timeout(20000)
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.code || 'RETRY_FAILED');
+        status.textContent = result.application?.state === 'Pending'
+          ? 'เรียกลองส่งแล้ว กรุณาเช็กแชต LINE OA ในบัญชีเจ้าของร้าน'
+          : 'ใบสมัครไม่ได้อยู่ในสถานะรออนุมัติแล้ว กรุณาเปิดหน้าใหม่';
+      } catch (error) {
+        status.textContent = 'เรียกลองส่งไม่สำเร็จ [' + error.message + ']';
+      } finally {
+        this.disabled = false;
+      }
+    };
+
     async function authenticateUser(profile) {
       try {
         const result = await readPlayerProfile();
+        if (result.staff && !result.state) {
+          window.location.replace('admin.html?shop=' + encodeURIComponent(currentShopId));
+          return;
+        }
         if (result.staff) {
           const adminLink = document.getElementById('switchToAdmin');
           adminLink.href = 'https://liff.line.me/' + APP_CONFIG.LIFF_ID_ADMIN + '?shop=' + encodeURIComponent(currentShopId);
@@ -424,6 +459,7 @@
             Pending: 'ส่งใบสมัครแล้ว กำลังรออนุมัติ',
             Rejected: 'ใบสมัครยังไม่ได้รับอนุมัติ กรุณาติดต่อผู้ดูแลร้าน'
           };
+          document.getElementById('retryOwnerNotice').classList.toggle('hidden', result.state !== 'Pending');
           showMembershipGate(messages[result.state] || 'กรุณาติดต่อผู้ดูแลร้าน', result.member_id, result.state === 'NotApplied');
           return;
         }
