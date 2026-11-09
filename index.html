@@ -360,10 +360,8 @@
       return params;
     }
 
-    let playerShopExplicit = false;
     async function initializeApp() {
       const urlParams = playerEntryParams();
-      playerShopExplicit = urlParams.has('shop');
       
       // ดึง shop_id จาก URL ถ้ามี (เช่น ?shop=SHOP_000)
       if (urlParams.get('shop')) {
@@ -388,7 +386,6 @@
         await liff.init({ liffId: APP_CONFIG.LIFF_ID_PLAYER });
         const restored = playerEntryParams();
         if (restored.has('shop')) {
-          playerShopExplicit = true;
           currentShopId = restored.get('shop');
         }
         if (!liff.isLoggedIn()) { liff.login(); } 
@@ -413,7 +410,7 @@
           Authorization: 'Bearer ' + token,
           apikey: APP_CONFIG.SUPABASE_ANON_KEY
         },
-        body: JSON.stringify({ action: 'player_profile', shop_id: playerShopExplicit ? currentShopId : '', resolve_demo: !playerShopExplicit }),
+        body: JSON.stringify({ action: 'player_profile', shop_id: currentShopId }),
         signal: AbortSignal.timeout(15000)
       });
       const result = await response.json();
