@@ -178,6 +178,7 @@
     </div>
 
     <a id="switchToPlayer" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">สลับไปหน้า Player</a>
+    <a id="merchantReviewLink" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px" href="merchant-register.html?shop=SHOP_000">สมัครและจัดการร้านค้า</a>
     <div id="adminApiError" class="card hidden no-print" role="alert" style="color:var(--yellow-main)"></div>
 
 
@@ -463,7 +464,7 @@
   <script>
     const _supabase = createAdminApiClient(APP_CONFIG, () => currentShopId);
     
-    let currentShopId = "SHOP_001"; // ค่าเริ่มต้นสำหรับร้านค้า
+    let currentShopId = "SHOP_000"; // ค่าเริ่มต้นสำหรับร้านค้า
     let currentOpId = "", currentAdminName = "", creditMode = "private", currentUserRole = "Customer", selectedUserIdForManage = ""; 
     let targetEndTimeMs = null, isRoundOpen = false;
     let pendingFinalizeData = null; // เก็บข้อมูลรอบที่กำลังรออนุมัติส่วนต่าง
@@ -543,6 +544,7 @@
             const playerLink = document.getElementById('switchToPlayer');
             playerLink.href = 'https://liff.line.me/' + APP_CONFIG.LIFF_ID_PLAYER + '?shop=' + encodeURIComponent(currentShopId);
             playerLink.classList.remove('hidden');
+            if (currentShopId === 'SHOP_000') document.getElementById('merchantReviewLink').classList.remove('hidden');
           }
           document.getElementById('opProfile').innerHTML = `<i class="fa-solid fa-user-tie"></i> ${roleBadge}`;
           
@@ -1159,7 +1161,7 @@
           if (lr && lr.length > 0 && lr[0].status !== 'Ended') throw new Error("รอบเก่ายังไม่ตัดผล! โปรดใส่ผลกุ้งก่อน");
           let d = new Date(); let prefix = `R-${d.getFullYear().toString().substring(2)}${(d.getMonth()+1).toString().padStart(2,'0')}${d.getDate().toString().padStart(2,'0')}`;
           let nn = 1; if (lr && lr.length > 0 && lr[0].round_id.startsWith(prefix)) nn = parseInt(lr[0].round_id.split('-')[2]) + 1;
-          let rndName = `${prefix}-${nn}`;
+          let rndName = `${prefix}-${nn}-${currentShopId}`;
           const { data: [set] } = await _supabase.from('system_settings').select('round_duration').eq('shop_id', currentShopId).limit(1);
           let duration = set ? set.round_duration : 15;
           await _supabase.from('rounds').insert([{ shop_id: currentShopId, round_id: rndName, status: 'Open', end_time_ms: new Date().getTime() + (duration * 60000), resolver_type: 'none' }]);

@@ -186,6 +186,7 @@
 
     <!-- ปุ่มเมนูพิเศษ -->
     <div class="special-menu-container">
+        <a id="merchantApplyLink" class="hidden" style="display:block;color:var(--blue-main);padding:12px" href="merchant-register.html?shop=SHOP_000">สมัครเปิดร้านของคุณ</a>
         <a id="switchToAdmin" class="hidden" style="display:block;color:var(--blue-main);padding:12px">สลับไปหน้า Admin</a>
         <button id="btnBackerMenu" class="btn-special btn-backer" onclick="window.location.href='backer.html'">
             <i class="fa-solid fa-handshake-angle"></i> แดชบอร์ดรับจบ
@@ -331,7 +332,7 @@
     const supabaseKey = APP_CONFIG.SUPABASE_ANON_KEY;
     const _supabase = supabase.createClient(supabaseUrl, supabaseKey);
 
-    let currentShopId = "SHOP_001"; // ค่าเริ่มต้นร้านค้า
+    let currentShopId = "SHOP_000"; // ค่าเริ่มต้นร้านค้า
     let currentLineUserId = "";
     let currentDisplayName = "";
     let selectedBetType = "";
@@ -348,7 +349,7 @@
     async function initializeApp() {
       const urlParams = new URLSearchParams(window.location.search);
       
-      // ดึง shop_id จาก URL ถ้ามี (เช่น ?shop=SHOP_001)
+      // ดึง shop_id จาก URL ถ้ามี (เช่น ?shop=SHOP_000)
       if (urlParams.get('shop')) {
         currentShopId = urlParams.get('shop');
       }
@@ -375,6 +376,7 @@
           currentLineUserId = profile.userId;
           currentDisplayName = profile.displayName;
           if(profile.pictureUrl) { document.getElementById('profileImage').src = profile.pictureUrl; }
+          if (currentShopId === 'SHOP_000') document.getElementById('merchantApplyLink').classList.remove('hidden');
           await authenticateUser(profile);
         }
       } catch (err) { alert("LIFF Error: " + err.message); }

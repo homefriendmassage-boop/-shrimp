@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>สมัครเปิดร้าน | บ่อกุ้ง DEMO</title>
+  <script src="config.js"></script>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body { margin: 0 auto; max-width: 560px; padding: 20px; background: #101820; color: #eef4fb; font: 16px system-ui, sans-serif; }
+    section, form { padding: 18px; margin: 16px 0; border: 1px solid #45627c; border-radius: 14px; background: #192633; }
+    label { display: block; margin: 14px 0; }
+    input { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; padding: 10px; }
+    button { padding: 10px 14px; border: 0; border-radius: 8px; background: #0b7955; color: white; font: inherit; }
+    button:disabled { opacity: .55; }
+    a { color: #8fceff; }
+    article { padding: 10px 0; border-bottom: 1px solid #45627c; }
+  </style>
+</head>
+<body>
+  <h1>สมัครเปิดร้าน</h1>
+  <p>บ่อกุ้ง DEMO · SHOP_000</p>
+  <p id="notice" role="status">กำลังยืนยันบัญชี LINE…</p>
+  <form id="registration" hidden>
+    <label>ชื่อร้าน<input id="shopName" required maxlength="80"></label>
+    <label>LINE User ID เจ้าของร้าน<input id="ownerUid" readonly required></label>
+    <label>Channel Access Token ของ LINE OA
+      <input id="oaToken" type="password" autocomplete="off" required maxlength="2048">
+    </label>
+    <p>ให้บัญชี LINE เจ้าของเพิ่มเพื่อน OA ที่ใช้ส่งแจ้งเตือนก่อนสมัคร</p>
+    <button id="submit" type="submit">ส่งคำขอเปิดร้าน</button>
+  </form>
+  <section id="myRequest" hidden>
+    <h2 id="requestName"></h2>
+    <p id="requestState"></p>
+    <a id="openAdmin" hidden>เปิดหน้า Admin ของร้าน</a>
+  </section>
+  <section id="review" hidden>
+    <h2>คำขอเปิดร้าน</h2>
+    <div id="requests"></div>
+  </section>
+  <script>
+    const shop = new URLSearchParams(location.search).get('shop');
+    const $ = id => document.getElementById(id);
+    const labels = {
+      LINE_OA_TOKEN_INVALID: 'LINE ไม่รับ Channel Access Token ของ OA นี้',
+      LINE_OA_OWNER_NOT_REACHABLE: 'OA นี้ยังอ่านบัญชี LINE เจ้าของไม่ได้ ตรวจการเพิ่มเพื่อนและ LINE Provider',
+      OA_ALREADY_REGISTERED: 'LINE OA นี้เคยส่งคำขอเปิดร้านแล้ว',
+      LINE_AUTH_INVALID: 'ยืนยันบัญชี LINE ไม่สำเร็จ กรุณาเปิดใหม่',
+      DATABASE_ERROR: 'ฐานข้อมูลยังดำเนินการไม่สำเร็จ กรุณาติดต่อผู้ดูแล'
+    };
+    function showError(error) {
+      $('notice').textContent = labels[error.message] || 'ดำเนินการไม่สำเร็จ [' + error.message + ']';
+    }
+    async function call(action, input = {}) {
+      const token = liff.getIDToken();
+      if (!token) throw new Error('LINE_AUTH_INVALID');
+      const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/merchant-onboarding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ ...input, action, shop_id: shop }),
+        signal: AbortSignal.timeout(25000)
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.code || 'HTTP_' + response.status);
+      return result;
+    }
+    function showRequest(request) {
+      $('registration').hidden = !!request;
+      $('myRequest').hidden = !request;
+      if (!request) return;
+      $('requestName').textContent = request.shop_id + ' · ' + request.shop_name;
+      $('requestState').textContent = request.state === 'Active' ? 'เปิดร้านแล้ว' : 'รอผู้ดูแลเปิดร้าน';
+      $('openAdmin').hidden = request.state !== 'Active';
+      $('openAdmin').href = 'https://liff.line.me/' + APP_CONFIG.LIFF_ID_ADMIN + '?shop=' + encodeURIComponent(request.shop_id);
+    }
+    async function loadReview() {
+      const result = await call('queue');
+      $('review').hidden = false;
+      $('requests').replaceChildren();
+      for (const request of result.requests) {
+        const row = document.createElement('article');
+        const text = document.createElement('p');
+        text.textContent = request.shop_id + ' · ' + request.shop_name;
+        row.append(text);
+        if (request.state === 'Pending') {
+          const button = document.createElement('button');
+          button.textContent = 'เปิดร้านนี้';
+          button.onclick = async () => {
+            if (!confirm('เปิดร้าน ' + request.shop_id + ' ใช่ไหม?')) return;
+            button.disabled = true;
+            try {
+              await call('activate', { requested_shop: request.shop_id });
+              $('notice').textContent = 'เปิดร้าน ' + request.shop_id + ' แล้ว';
+              await loadReview();
+            } catch (error) { showError(error); }
+            finally { button.disabled = false; }
+          };
+          row.append(button);
+        }
+        $('requests').append(row);
+      }
+      if (!result.requests.length) $('requests').textContent = 'ยังไม่มีคำขอเปิดร้าน';
+    }
+    $('registration').onsubmit = async event => {
+      event.preventDefault();
+      $('submit').disabled = true;
+      $('notice').textContent = 'กำลังตรวจ LINE OA และส่งคำขอ…';
+      try {
+        const result = await call('apply', {
+          shop_name: $('shopName').value.trim(),
+          owner_uid: $('ownerUid').value,
+          channel_access_token: $('oaToken').value
+        });
+        $('notice').textContent = 'ส่งคำขอแล้ว';
+        showRequest(result.request);
+      } catch (error) { showError(error); }
+      finally {
+        $('oaToken').value = '';
+        $('submit').disabled = false;
+      }
+    };
+    (async () => {
+      try {
+        if (shop !== 'SHOP_000') {
+          $('notice').textContent = 'เปิดหน้าสมัครผ่านร้านบ่อกุ้ง DEMO';
+          return;
+        }
+        await liff.init({ liffId: APP_CONFIG.LIFF_ID_ADMIN });
+        if (!liff.isLoggedIn()) {
+          liff.login({ redirectUri: location.href });
+          return;
+        }
+        const result = await call('status');
+        $('notice').textContent = '';
+        $('ownerUid').value = result.owner_uid;
+        if (result.platform_owner) await loadReview();
+        else showRequest(result.request);
+      } catch (error) { showError(error); }
+    })();
+  </script>
+</body>
+</html>
