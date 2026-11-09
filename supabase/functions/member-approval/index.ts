@@ -105,14 +105,14 @@ async function noticeWindow(db, applicationId) {
   };
 }
 async function deliverNotification(db, shop, application, kind, manual = false) {
-  if (!application?.id) return 'unavailable';
+  if (!application?.id) return { status: 'failed', code: 'APPLICATION_NOT_FOUND' };
   try {
     const claim = await db.rpc('claim_membership_notice', {
       p_application: application.id, p_kind: kind, p_manual: manual
     });
     if (claim.error) throw new Error('OUTBOX_CLAIM_FAILED');
     const [job] = claim.data ?? [];
-    if (!job) return 'waiting';
+    if (!job) return { status: 'waiting' };
 
     let to = application.line_uid;
     if (kind === 'submitted') {
@@ -121,10 +121,9 @@ async function deliverNotification(db, shop, application, kind, manual = false) 
         to = owners?.[shop.shop_id];
       } catch { throw new Error('MEMBERSHIP_OWNER_UIDS_INVALID'); }
     }
-    const token = shop.line_oa_token;
-    if (typeof to !== 'string' || !/^U[0-9a-f]{32}$/i.test(to) || !token) {
-      throw new Error('MEMBERSHIP_LINE_CONFIGURATION_MISSING');
-    }
+    const token = shop.line_oa_token?.trim();
+    if (typeof to !== 'string' || !/^U[0-9a-f]{32}$/i.test(to)) throw new Error('MEMBERSHIP_OWNER_UID_MISSING');
+    if (!token) throw new Error('SHOP_OA_TOKEN_MISSING');
     const message = membershipFlex(shop, application, kind);
     const response = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
@@ -139,10 +138,18 @@ async function deliverNotification(db, shop, application, kind, manual = false) 
     const saved = await db.from('membership_notification_outbox').update({ sent_at: new Date().toISOString() })
       .eq('id', job.id).eq('retry_key', job.retry_key);
     if (saved.error) throw new Error('OUTBOX_MARK_SENT_FAILED');
-    return 'accepted';
+    return { status: 'accepted' };
   } catch (failure) {
     console.error('membership notification', kind, failure instanceof Error ? failure.message : 'UNKNOWN_ERROR');
-    return 'failed';
+    const message = failure instanceof Error ? failure.message : '';
+    const allowed = [
+      'MEMBERSHIP_OWNER_UIDS_INVALID', 'MEMBERSHIP_LINE_CONFIGURATION_MISSING',
+      'OUTBOX_CLAIM_FAILED', 'OUTBOX_MARK_SENT_FAILED', 'MEMBERSHIP_LIFF_ID_INVALID',
+      'MEMBERSHIP_OWNER_UID_MISSING', 'SHOP_OA_TOKEN_MISSING'
+    ];
+    const code = allowed.includes(message) || /^LINE_PUSH_HTTP_[0-9]{3}$/.test(message)
+      ? message : 'NOTIFICATION_SEND_FAILED';
+    return { status: 'failed', code };
   }
 }
 
@@ -240,7 +247,7 @@ Deno.serve(async req => {
     }
     const { line_uid, display_name, ...application } = own;
     const notice = own.state === 'Pending' ? await noticeWindow(db, own.id) : null;
-    return reply({ ok: true, application, notice, delivery });
+    return reply({ ok: true, application, notice, delivery: delivery?.status, delivery_code: delivery?.code });
   } catch (failure) {
     if (failure instanceof Error && failure.message === 'LINE_VERIFY_UNAVAILABLE') return error('LINE_VERIFY_UNAVAILABLE', 503);
     console.error('member-approval failure', action, failure instanceof Error ? failure.name : 'UNKNOWN_ERROR');
