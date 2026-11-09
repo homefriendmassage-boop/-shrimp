@@ -304,6 +304,7 @@
         <div id="settingsContent" class="settings-content">
           <div class="form-group"><label>เวลาจับเวลาต่อรอบ (นาที)</label><input type="number" id="settingRoundDuration" class="form-control"></div>
           <div class="form-group"><label>อัตราค่าน้ำทั่วไป (เช่น 0.05 คือ 5%)</label><input type="number" step="0.01" id="settingWaterMargin" class="form-control"></div>
+          <div class="form-group"><label>เงื่อนไขค่าน้ำตอนถอน</label><select id="settingWithdrawalFee" class="form-control"><option value="deduct">หักค่าน้ำ</option><option value="none">ไม่หักค่าน้ำ</option></select></div>
           <div class="form-group"><label>เปอร์เซ็นต์ค่าคอมมิชชั่น</label><input type="number" step="0.001" id="settingCommRate" class="form-control"></div>
           <div class="form-group"><label>ยอดแทงขั้นต่ำ (บาท)</label><input type="number" id="settingMinBet" class="form-control"></div>
           <div class="form-group"><label>ยอดแทงสูงสุด (บาท)</label><input type="number" id="settingMaxBet" class="form-control"></div>
@@ -908,7 +909,7 @@
              
              card.innerHTML = `
                 <div style="display: flex; justify-content: space-between;"><div style="color: white; font-weight: bold;">${r.display_name} <span style="color: var(--text-muted); font-size: 0.8rem;">(${r.member_id})</span></div><div style="color: ${typeColor}; font-weight: bold; font-size: 1.1rem;">${r.type} ฿${r.amount}</div></div>
-                <div style="font-size: 0.85rem; color: var(--text-muted);"><div>ช่องทาง: ${r.method}</div><div>เวลา: ${new Date(r.created_at).toLocaleTimeString('th-TH')}</div></div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);"><div>ช่องทาง: ${r.method}</div>${r.type === 'ถอนเงิน' ? '<div>เงื่อนไข: ' + (r.fee_option === 'ไม่หักค่าน้ำ' ? 'ไม่หักค่าน้ำ' : 'หักค่าน้ำ') + '</div>' : ''}<div>เวลา: ${new Date(r.created_at).toLocaleTimeString('th-TH')}</div></div>
                 ${slipBtn}
                 <div style="display: flex; gap: 10px; margin-top: 10px;">
                     <button class="btn btn-red" style="padding: 8px;" onclick="rejectPendingRequest(${r.id}, '${r.uid}', '${r.type}', ${r.amount})">ปฏิเสธ</button>
@@ -1519,6 +1520,7 @@
     async function loadSettings() {
       try {
         const { data: [settings] } = await _supabase.from('system_settings').select('*').eq('shop_id', currentShopId).limit(1);
+        document.getElementById('settingWithdrawalFee').value = settings?.withdrawal_fee_mode ?? 'deduct';
         document.getElementById('settingWaterMargin').value = settings?.water_margin ?? 0.05;
         document.getElementById('settingRoundDuration').value = settings?.round_duration ?? 15;
         document.getElementById('settingCommRate').value = settings?.comm_rate ?? 0.01;
@@ -1531,6 +1533,7 @@
     async function saveSettings() {
       try {
         const { data: saved } = await _supabase.from('system_settings').update({
+          withdrawal_fee_mode: document.getElementById('settingWithdrawalFee').value,
           water_margin: parseFloat(document.getElementById('settingWaterMargin').value),
           round_duration: parseInt(document.getElementById('settingRoundDuration').value, 10),
           comm_rate: parseFloat(document.getElementById('settingCommRate').value),
