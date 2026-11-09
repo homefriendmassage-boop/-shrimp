@@ -493,6 +493,10 @@
           currentOpId = profile.userId; 
           currentAdminName = profile.displayName;
           await checkAdminAccess(currentOpId);
+          if (document.getElementById('adminTabs').style.display === 'flex' &&
+              new URLSearchParams(window.location.search).get('tab') === 'pending') {
+            switchAdminTab('pending');
+          }
           await loadGeneralMembershipRequests();
 
           let hashData = window.location.hash; 
