@@ -1405,6 +1405,23 @@
         }
     }
     
+    async function notifyCreditTransaction(transactionId) {
+      try {
+        const token = liff.getIDToken();
+        if (!token) throw new Error('LINE_AUTH_INVALID');
+        const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/round-notice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + token },
+          body: JSON.stringify({ action: 'credit_notice', shop_id: currentShopId, transaction_id: transactionId }),
+          signal: AbortSignal.timeout(20000)
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.code || 'CREDIT_NOTICE_FAILED');
+      } catch (error) {
+        alert('บันทึกเครดิตแล้ว แต่ส่ง Flex ไม่สำเร็จ [' + error.message + ']');
+      }
+    }
+
     async function processCredit(type) {
       let tId = document.getElementById('txtTargetId').value.trim(); 
       let amountStr = document.getElementById('txtAmount').value;
@@ -1439,8 +1456,7 @@
               const { error: updErr } = await _supabase.from('users').update({ backer_wallet: newBackerBal }).eq('shop_id', currentShopId).eq('uid', u.uid);
               if (updErr) throw new Error("อัปเดตยอดเงินคนรับจบไม่สำเร็จ กรุณาเช็คฐานข้อมูล: " + updErr.message);
 
-              // ยกเลิกการใช้ GAS ส่งข้อความ
-              // notifyGAS('adminTopupComplete', { adminName: currentAdminName, type: type, targetUid: u.uid, targetMemberId: tId, amount: amount, newBalance: newBackerBal });
+
           } else {
               let newBal = type === 'deposit' ? u.credit_balance + amount : u.credit_balance - amount;
               if (newBal < 0) throw new Error("ยอดเครดิตลูกค้าไม่พอให้ถอน");
@@ -1450,15 +1466,17 @@
               const { error: updErr } = await _supabase.from('users').update(updateData).eq('shop_id', currentShopId).eq('uid', u.uid);
               if (updErr) throw new Error("อัปเดตเครดิตลูกค้าไม่สำเร็จ: " + updErr.message);
 
-              // ยกเลิกการใช้ GAS ส่งข้อความ
-              // notifyGAS('adminTopupComplete', { adminName: currentAdminName, type: type, targetUid: u.uid, targetMemberId: tId, amount: amount, newBalance: newBal });
+
           }
-          await _supabase.from('transactions').insert([{ shop_id: currentShopId, target_id: tId, type: type, amount: amount, admin_name: currentAdminName, target_type: 'user' }]);
+          const { data: transactions } = await _supabase.from('transactions')
+            .insert([{ shop_id: currentShopId, target_id: tId, type, amount, admin_name: currentAdminName, target_type: 'user' }])
+            .select('id');
           
           if(pendingReqId) {
              await _supabase.from('topup_requests').update({ status: 'Approved', admin_name: currentAdminName }).eq('shop_id', currentShopId).eq('id', pendingReqId);
              document.getElementById('txtPendingRequestId').value = ""; 
           }
+          if (transactions?.[0]?.id != null) notifyCreditTransaction(Number(transactions[0].id));
           alert(`สำเร็จ! อัปเดตยอดเรียบร้อยแล้ว`);
         }
         

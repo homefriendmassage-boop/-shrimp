@@ -59,26 +59,112 @@ async function recordWebhook(req, shop) {
 
 const noticeStates = { opened: 'Open', closed: 'Closed', result: 'Ended' };
 
-function roundFlex(shop, round, kind) {
+const flexColors = { dark: '#141721', panel: '#1B1F2D', white: '#FFFFFF', muted: '#A3ADBF',
+  green: '#10B981', red: '#F43F42', blue: '#397DF1', lightBlue: '#BFD9FF' };
+const flexText = (text, color, options = {}) => ({ type: 'text', text: String(text), color, wrap: true, ...options });
+const flexBox = (contents, options = {}) => ({ type: 'box', layout: 'vertical', spacing: 'sm', contents, ...options });
+const flexButton = (label, uri, color) => ({ type: 'button', style: 'primary', height: 'sm', color, action: { type: 'uri', label, uri } });
+const money = value => '฿' + Number(value).toLocaleString('th-TH', { maximumFractionDigits: 2 });
+
+function playerLink(shop) {
   const liffId = shop.liff_id_player || Deno.env.get('MEMBERSHIP_LIFF_ID_PLAYER') || '2012454809-UFGeUGbW';
   if (!/^\d+-[A-Za-z0-9]+$/.test(liffId)) throw new Error('PLAYER_LIFF_INVALID');
-  const url = 'https://liff.line.me/' + liffId + '?shop=' + encodeURIComponent(shop.shop_id);
-  const title = { opened: 'เปิดรอบใหม่แล้ว', closed: 'ปิดรับรอบนี้แล้ว', result: 'ประกาศผลชั่งกุ้ง' }[kind];
+  return 'https://liff.line.me/' + liffId + '?shop=' + encodeURIComponent(shop.shop_id);
+}
+
+function roundFlex(shop, round, kind) {
+  const c = flexColors;
+  const uri = playerLink(shop);
+  const title = { opened: 'เปิดรับแทงแล้ว!', closed: 'ปิดรับแทงแล้ว', result: 'ประกาศผลชั่งกุ้ง' }[kind];
+  let bubble;
+  if (kind === 'opened') {
+    const minutes = Math.max(1, Math.ceil((Number(round.end_time_ms) - Date.now()) / 60000));
+    bubble = {
+      body: flexBox([
+        flexText('📢 ' + title, c.green, { weight: 'bold', size: 'lg' }),
+        flexText('รอบใหม่: ' + round.round_id, c.white, { weight: 'bold', size: 'sm' }),
+        flexText('หมดเวลาในอีก ' + minutes + ' นาที 🦐', c.muted, { size: 'sm' })
+      ], { backgroundColor: c.dark }),
+      footer: flexBox([flexButton('เข้าเล่นรอบนี้', uri, c.red)], { backgroundColor: c.dark })
+    };
+  } else if (kind === 'closed') {
+    bubble = { body: flexBox([
+      flexText('⏳ [รอบ: ' + round.round_id + '] ปิดรับแทงแล้ว!', '#233755', { weight: 'bold', size: 'sm' }),
+      flexText('รอแอดมินชั่งกุ้งและประกาศผลครับ 🦐', '#233755', { size: 'sm' })
+    ], { backgroundColor: c.lightBlue }) };
+  } else {
+    const row = (label, value, color = c.white) => ({
+      type: 'box', layout: 'horizontal', spacing: 'sm',
+      contents: [flexText(label, c.muted, { size: 'sm', flex: 2 }),
+        flexText(value, color, { size: 'sm', flex: 3, weight: 'bold', align: 'end' })]
+    });
+    const outcome = round.result === 'คู่' ? c.blue : c.red;
+    const footer = [flexButton('เล่นรอบถัดไป', uri, c.blue)];
+    if (round.win_count > 0) footer.unshift(flexText('🎉 ยินดีกับผู้ชนะ ' + round.win_count + ' บิล', c.green, { align: 'center', size: 'sm', weight: 'bold' }));
+    bubble = {
+      header: flexBox([flexText(title + ' 🦐', c.white, { align: 'center', weight: 'bold', size: 'lg' })], { backgroundColor: c.panel }),
+      body: flexBox([
+        row('รอบที่', round.round_id), row('น้ำหนัก', round.weight + ' กรัม'),
+        { type: 'separator', color: '#303747', margin: 'md' },
+        row('ผลที่ออก', round.result + ' ชนะ!', outcome)
+      ], { backgroundColor: c.dark }),
+      footer: flexBox(footer, { backgroundColor: c.panel })
+    };
+  }
+  return { type: 'flex', altText: title + ' · ' + round.round_id, contents: { type: 'bubble', size: 'mega', ...bubble } };
+}
+
+function creditFlex(shop, transaction, account) {
+  const c = flexColors;
+  const deposit = transaction.type === 'deposit';
+  const title = deposit ? '🎉 เติมเครดิตสำเร็จ' : '💸 ถอนเครดิตสำเร็จ';
+  const accent = deposit ? c.green : c.red;
+  const wallet = account.role === 'Backer';
   return {
     type: 'flex', altText: title,
     contents: {
-      type: 'bubble',
-      body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [
-        { type: 'text', text: title, weight: 'bold', size: 'lg', wrap: true },
-        { type: 'text', text: String(shop.shop_name || 'บ่อตกกุ้ง').slice(0, 100), wrap: true },
-        { type: 'text', text: 'รอบ ' + round.round_id, wrap: true },
-        ...(kind === 'result' ? [{ type: 'text', text: 'ผล ' + round.result + ' · น้ำหนัก ' + round.weight + ' กรัม', wrap: true }] : [])
-      ] },
-      footer: { type: 'box', layout: 'vertical', contents: [
-        { type: 'button', style: 'primary', action: { type: 'uri', label: 'เปิดหน้าเล่น', uri: url } }
-      ] }
+      type: 'bubble', size: 'mega',
+      header: flexBox([flexText(title, c.white, { weight: 'bold', align: 'center' })], { backgroundColor: accent }),
+      body: flexBox([
+        flexText('แอดมินดำเนินการให้คุณเรียบร้อยแล้ว', '#444444', { size: 'sm' }),
+        flexText('จำนวนเงิน: ' + money(transaction.amount), accent, { size: 'lg', weight: 'bold' }),
+        flexText((wallet ? 'ยอดกระเป๋ารับจบคงเหลือ: ' : 'ยอดเครดิตคงเหลือปัจจุบัน: ') + money(wallet ? account.backer_wallet : account.credit_balance), '#666666', { size: 'sm' })
+      ], { backgroundColor: c.white }),
+      footer: flexBox([flexButton('เข้าสู่ระบบ (หน้าเล่น)', playerLink(shop), c.blue)], { backgroundColor: c.white })
     }
   };
+}
+
+async function creditNotice(db, shop, transactionId) {
+  if (!Number.isSafeInteger(transactionId) || transactionId < 1) return fail('INVALID_TRANSACTION');
+  const record = await db.from('transactions').select('id,target_id,type,amount,created_at')
+    .eq('shop_id', shop.shop_id).eq('id', transactionId).eq('target_type', 'user').maybeSingle();
+  if (record.error) return fail('DATABASE_ERROR', 500);
+  const transaction = record.data;
+  const age = Date.now() - Date.parse(transaction?.created_at);
+  if (!transaction || !['deposit', 'withdraw'].includes(transaction.type) || !(Number(transaction.amount) > 0) ||
+      !Number.isFinite(age) || age < -60000 || age > 10 * 60000) return fail('TRANSACTION_NOT_AVAILABLE', 404);
+  const member = await db.from('users').select('uid,role,credit_balance,backer_wallet,status')
+    .eq('shop_id', shop.shop_id).eq('member_id', transaction.target_id).maybeSingle();
+  if (member.error) return fail('DATABASE_ERROR', 500);
+  if (member.data?.status !== 'Active' || !validUid(member.data.uid)) return fail('MEMBER_NOT_AVAILABLE', 404);
+  if (!shop.line_oa_token) return fail('SHOP_OA_TOKEN_MISSING', 422);
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256',
+    new TextEncoder().encode('credit-notice:' + shop.shop_id + ':' + transaction.id))).slice(0, 16);
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  const retryKey = [hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join('-');
+  const response = await fetch('https://api.line.me/v2/bot/message/push', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + shop.line_oa_token, 'Content-Type': 'application/json', 'X-Line-Retry-Key': retryKey },
+    body: JSON.stringify({ to: member.data.uid, messages: [creditFlex(shop, transaction, member.data)] }),
+    signal: AbortSignal.timeout(6000)
+  });
+  if (!response.ok && !(response.status === 409 && response.headers.has('x-line-accepted-request-id'))) {
+    return fail('LINE_PUSH_HTTP_' + response.status, 502);
+  }
+  return reply({ ok: true, accepted: true });
 }
 
 async function dispatch(db, shop, round, batches, kind) {
@@ -128,8 +214,9 @@ Deno.serve(async req => {
     const input = await req.json();
     const kind = input?.kind ?? 'opened';
     if (!Object.hasOwn(noticeStates, kind)) return fail('INVALID_NOTICE_KIND');
-    if (!input || !/^SHOP_[0-9]{3,}$/.test(input.shop_id) || typeof input.round_id !== 'string' ||
-        !/^[A-Za-z0-9_-]{1,80}$/.test(input.round_id)) return fail('INVALID_ROUND');
+    const creditRequest = input?.action === 'credit_notice';
+    if (!input || !/^SHOP_[0-9]{3,}$/.test(input.shop_id)) return fail('SHOP_INVALID');
+    if (!creditRequest && (typeof input.round_id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(input.round_id))) return fail('INVALID_ROUND');
     const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
     const clientId = Deno.env.get('LINE_CHANNEL_ID_ADMIN');
     if (!token || !clientId) return fail('LINE_AUTH_INVALID', 401);
@@ -144,6 +231,9 @@ Deno.serve(async req => {
     if (staff.error) return fail('DATABASE_ERROR', 500);
     if (staff.data?.status !== 'Active' || !['Admin', 'Superadmin', 'Operator'].includes(staff.data.role)) return fail('ADMIN_REQUIRED', 403);
     const shop = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,liff_id_player').eq('shop_id', input.shop_id).maybeSingle();
+    if (shop.error) return fail('DATABASE_ERROR', 500);
+    if (shop.data?.status !== 'active') return fail('SHOP_NOT_AVAILABLE', 403);
+    if (creditRequest) return await creditNotice(db, shop.data, input.transaction_id);
     const round = await db.from('rounds').select('round_id,status,end_time_ms,result,weight').eq('shop_id', input.shop_id).eq('round_id', input.round_id).maybeSingle();
     if (shop.error || round.error) return fail('DATABASE_ERROR', 500);
     if (shop.data?.status !== 'active' || round.data?.status !== noticeStates[kind] ||
@@ -159,6 +249,11 @@ Deno.serve(async req => {
     const unsent = jobs.filter(job => !job.sent_at);
     const alreadyAccepted = jobs.filter(job => job.sent_at).reduce((count, job) => count + job.recipients.length, 0);
     if (!unsent.length) return reply({ ok: true, eligible, accepted: alreadyAccepted, failed: 0 });
+    if (kind === 'result') {
+      const wins = await db.from('bets').select('bet_id', { count: 'exact', head: true })
+        .eq('shop_id', input.shop_id).eq('round_id', input.round_id).eq('status', 'Win');
+      if (!wins.error) round.data.win_count = wins.count;
+    }
     if (!shop.data.line_oa_token) return fail('SHOP_OA_TOKEN_MISSING', 422);
     if (unsent.length <= 2) {
       const result = await dispatch(db, shop.data, round.data, unsent, kind);
