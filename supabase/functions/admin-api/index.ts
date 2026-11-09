@@ -122,27 +122,30 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
     const shop = await db.from('shops').select('line_oa_token,liff_id_player,liff_id_admin,admin_group_id').eq('shop_id', shopId).maybeSingle();
     const token = shop.data?.line_oa_token;
     if (!token) return;
-    const profile = await db.from('users').select('display_name,member_id,profile_pic')
+    const credited = request.status === 'Approved' && request.type === 'ฝากเงิน';
+    const profile = credited && request.member_id ? null : await db.from('users').select('display_name,member_id,profile_pic')
       .eq('shop_id', shopId).eq('uid', request.uid).maybeSingle();
-    const name = String(request.display_name || profile.data?.display_name || 'สมาชิก').slice(0, 100);
-    const member = request.member_id || profile.data?.member_id;
-    const picture = lineProfilePicture(request.profile_pic || profile.data?.profile_pic);
+    const name = String(request.display_name || profile?.data?.display_name || 'สมาชิก').slice(0, 100);
+    const member = request.member_id || profile?.data?.member_id;
+    const picture = lineProfilePicture(request.profile_pic || profile?.data?.profile_pic);
     const titles = { Pending: 'ได้รับคำขอ', Approved: 'ทำรายการสำเร็จ', Rejected: 'คำขอถูกปฏิเสธ' };
-    const title = request.status === 'Approved' && request.type === 'ฝากเงิน' ? 'เติมเครดิตเรียบร้อย' : titles[request.status] + ' · ' + request.type;
+    const title = credited ? '🎉 เติมเครดิตสำเร็จ' : titles[request.status] + ' · ' + request.type;
     const adminLiff = shop.data?.liff_id_admin || env('MEMBERSHIP_LIFF_ID_ADMIN') || '2012454809-41EMnP1K';
     const opensQueue = request.status === 'Pending' && request.staff_recipient === true;
     const playerLiff = shop.data?.liff_id_player || env('MEMBERSHIP_LIFF_ID_PLAYER') || '2012454809-UFGeUGbW';
     const bubble = { type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
       { type: 'text', text: title, weight: 'bold', wrap: true },
-      ...(picture ? [{ type: 'image', url: picture, size: 'sm', aspectRatio: '1:1', aspectMode: 'cover', align: 'start' }] : []),
-      { type: 'text', text: name + (member ? ' · สมาชิก ' + member : ''), wrap: true },
-      { type: 'text', text: 'ยอดรายการ ฿' + Number(request.amount).toLocaleString('th-TH'), wrap: true },
+      ...(!credited && picture ? [{ type: 'image', url: picture, size: 'sm', aspectRatio: '1:1', aspectMode: 'cover', align: 'start' }] : []),
+      ...(credited ? (member ? [{ type: 'text', text: 'สมาชิก ' + member, wrap: true }] : [])
+        : [{ type: 'text', text: name + (member ? ' · สมาชิก ' + member : ''), wrap: true }]),
+      { type: 'text', text: (credited ? 'ยอดที่เติม ฿' : 'ยอดรายการ ฿') + Number(request.amount).toLocaleString('th-TH', { maximumFractionDigits: 2 }),
+        ...(credited ? { size: 'xl', weight: 'bold', color: '#047857' } : {}), wrap: true },
     ] } };
     const liff = opensQueue ? adminLiff : playerLiff;
     if (/^\d+-[a-zA-Z0-9]+$/.test(liff)) {
       bubble.footer = { type: 'box', layout: 'vertical', contents: [{
         type: 'button', style: 'primary', action: {
-          type: 'uri', label: opensQueue ? 'ตรวจสอบรายการ' : 'เปิดหน้า Player', uri: 'https://liff.line.me/' + liff + '?shop=' + encodeURIComponent(shopId) + (opensQueue ? '&tab=pending' : ''),
+          type: 'uri', label: opensQueue ? 'ตรวจสอบรายการ' : credited ? 'เข้าหน้าใช้งาน' : 'เปิดหน้า Player', uri: 'https://liff.line.me/' + liff + '?shop=' + encodeURIComponent(shopId) + (opensQueue ? '&tab=pending' : ''),
         },
       }] };
     }
