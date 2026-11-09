@@ -99,12 +99,14 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query', 'membership_summary'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
       if (!/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-      const clientId = env('LINE_CHANNEL_ID_ADMIN');
-      if (!clientId) fail('LINE_CHANNEL_ID_ADMIN_MISSING', 503);
+      const playerRequest = input.action === 'player_profile';
+      const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
+      const clientId = env(channelKey);
+      if (!clientId) fail(channelKey + '_MISSING', 503);
       if (!token || token.length > 16000) fail('LINE_AUTH_INVALID', 401);
       let verified;
       try {
@@ -120,6 +122,30 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       const key = serverKey(env);
       if (!url || !key) fail('SUPABASE_SERVER_CONFIG_MISSING', 503);
       const db = createDb(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+      if (playerRequest) {
+        const shop = await db.from('shops').select('status').eq('shop_id', shopId).maybeSingle();
+        if (shop.error) fail('DATABASE_ERROR', 500);
+        if (String(shop.data?.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
+
+        const profile = await db.from('users').select('uid,role,status,member_id,credit_balance')
+          .eq('uid', claims.sub).eq('shop_id', shopId).maybeSingle();
+        if (profile.error) fail('DATABASE_ERROR', 500);
+        if (profile.data?.status === 'Active' && ['Admin', 'Superadmin', 'Operator'].includes(profile.data.role)) {
+          return reply({ ok: true, staff: true });
+        }
+        const application = await db.from('membership_applications').select('state,member_id')
+          .eq('line_uid', claims.sub).eq('shop_id', shopId).maybeSingle();
+        if (application.error) fail('DATABASE_ERROR', 500);
+        if (application.data?.state !== 'Approved') {
+          return reply({ ok: true, state: application.data?.state ?? 'NotApplied', member_id: application.data?.member_id ?? null });
+        }
+        const code = application.data.member_id;
+        if (!profile.data || profile.data.member_id !== code || !/^M(0[0-9]{3}|[1-9][0-9]{3,})$/.test(code)) {
+          fail('MEMBER_PROFILE_NOT_LINKED', 409);
+        }
+        return reply({ ok: true, state: 'Approved', player: profile.data });
+      }
+
       // Identity always comes from LINE verification, never from input.uid/role.
       const staff = await db.from('users').select('uid,shop_id,role,status,member_id,display_name').eq('uid', claims.sub).eq('shop_id', shopId).maybeSingle();
       if (staff.error) fail('DATABASE_ERROR', 500);

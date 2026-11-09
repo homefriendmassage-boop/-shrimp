@@ -197,7 +197,8 @@
     <div id="pendingView" class="hidden" style="text-align: center; padding: 60px 20px; background: var(--bg-panel); border-radius: 16px; border: 1px solid var(--card-border);">
       <i class="fa-solid fa-lock" style="font-size: 4rem; color: var(--text-muted); margin-bottom: 20px;"></i>
       <h2 style="margin: 0; color: var(--text-main);">รอการอนุมัติสิทธิ์</h2>
-      <p style="color: var(--text-muted); margin-top: 10px;">บัญชีของคุณยังไม่เปิดใช้งาน<br>โปรดแจ้งพนักงานเพื่อเปิดระบบครับ</p>
+      <p id="membershipGateMessage" style="color: var(--text-muted); margin-top: 10px;">บัญชีของคุณยังไม่เปิดใช้งาน</p>
+      <a id="membershipApplyLink" class="hidden" style="color:var(--blue-main)">สมัครสมาชิก</a>
       <div style="margin-top: 20px; font-size: 1.1rem; color: var(--blue-main); font-weight: bold;">
         รหัสอ้างอิง: <span id="pendingMemberId">-</span>
       </div>
@@ -377,70 +378,76 @@
       startCountdownTimer();
     }
 
+    async function readPlayerProfile() {
+      const token = liff.getIDToken();
+      if (!token) throw new Error('LINE_AUTH_INVALID');
+      const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + token,
+          apikey: APP_CONFIG.SUPABASE_ANON_KEY
+        },
+        body: JSON.stringify({ action: 'player_profile', shop_id: currentShopId }),
+        signal: AbortSignal.timeout(15000)
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.code || 'PLAYER_PROFILE_UNAVAILABLE');
+      return result;
+    }
+
+    function showMembershipGate(message, code, canApply = false) {
+      document.getElementById('membershipGateMessage').textContent = message;
+      document.getElementById('pendingMemberId').textContent = code || '-';
+      document.getElementById('memberIdDisplay').textContent = code || '-';
+      document.getElementById('tableDisplay').textContent = currentDisplayName || 'บัญชีส่วนตัว';
+      document.getElementById('pendingView').classList.remove('hidden');
+      for (const id of ['bettingView', 'historyView', 'statsView']) document.getElementById(id).classList.add('hidden');
+      document.getElementById('bottomNavMenu').style.display = 'none';
+      const apply = document.getElementById('membershipApplyLink');
+      apply.href = 'staging/member-apply.html?shop=' + encodeURIComponent(currentShopId);
+      apply.classList.toggle('hidden', !canApply);
+    }
+
     async function authenticateUser(profile) {
       try {
-        const { data: user } = await _supabase.from('users').select('*').eq('uid', profile.userId).single();
-        let currentUser = user;
-        
-        if (!user) {
-          const { count } = await _supabase.from('users').select('*', { count: 'exact', head: true }).eq('shop_id', currentShopId);
-          let newMemberNo = (count || 0) + 1;
-          let newMemberId = 'M' + newMemberNo.toString().padStart(4, '0');
-          let refId = sessionStorage.getItem('referrer_id') || null;
-
-          currentUser = { 
-            uid: profile.userId, 
-            shop_id: currentShopId,
-            member_id: newMemberId, 
-            display_name: profile.displayName, 
-            profile_pic: profile.pictureUrl || '', 
-            credit_balance: 0, 
-            role: 'Customer', 
-            status: 'Active', // เปลี่ยนเป็น Active หรือ Pending ตามต้องการ
-            referrer_uid: refId
+        const result = await readPlayerProfile();
+        if (result.staff) {
+          window.location.replace('admin.html?shop=' + encodeURIComponent(currentShopId));
+          return;
+        }
+        if (result.state !== 'Approved') {
+          const messages = {
+            NotApplied: 'กรุณาสมัครสมาชิกของร้านนี้ก่อนเข้าใช้งาน',
+            Pending: 'ส่งใบสมัครแล้ว กำลังรออนุมัติ',
+            Rejected: 'ใบสมัครยังไม่ได้รับอนุมัติ กรุณาติดต่อผู้ดูแลร้าน'
           };
-          await _supabase.from('users').insert([currentUser]);
-        } else {
-          await _supabase.from('users').update({ display_name: profile.displayName, profile_pic: profile.pictureUrl || '' }).eq('uid', profile.userId);
+          showMembershipGate(messages[result.state] || 'กรุณาติดต่อผู้ดูแลร้าน', result.member_id, result.state === 'NotApplied');
+          return;
+        }
+        const user = result.player;
+        if (!user || user.uid !== profile.userId) throw new Error('LINE_AUTH_INVALID');
+        memberId = user.member_id;
+        currentUserRole = user.role || 'Customer';
+        currentUserStatus = user.status;
+        if (currentUserStatus !== 'Active') {
+          showMembershipGate('บัญชียังไม่เปิดใช้งาน กรุณาติดต่อผู้ดูแลร้าน', memberId);
+          return;
         }
 
-        currentUserRole = currentUser.role ? currentUser.role.trim() : 'Customer';
-        
-        // ถ้าเป็น Admin/Op ให้เด้งไปหน้าแอดมิน
-        if (currentUserRole === 'Superadmin' || currentUserRole === 'Admin' || currentUserRole === 'Operator') {
-           document.getElementById('tableDisplay').innerText = "กำลังเข้าสู่หน้าแอดมิน...";
-           window.location.replace("admin.html");
-           return; 
-        }
-
-        memberId = currentUser.member_id;
-        currentUserStatus = currentUser.status; 
-
-        document.getElementById('memberIdDisplay').innerText = memberId;
-        document.getElementById('pendingMemberId').innerText = memberId;
-        document.getElementById('tableDisplay').innerText = currentDisplayName || "บัญชีส่วนตัว";
-        document.getElementById('creditDisplay').innerText = `฿${(currentUser.credit_balance || 0).toLocaleString()}`;
-
-        if (currentUserRole === 'Backer') {
-            document.getElementById('btnBackerMenu').style.display = 'block';
-        } else if (currentUserRole === 'Promoter') {
-            document.getElementById('btnPromoterMenu').style.display = 'block';
-        }
-
-        if (currentUserStatus === 'Active') {
-          document.getElementById('bettingView').classList.remove('hidden');
-          document.getElementById('pendingView').classList.add('hidden');
-          document.getElementById('bottomNavMenu').style.display = 'flex'; 
-          fetchDashboard();
-          setInterval(fetchDashboard, 3000); 
-        } else {
-          document.getElementById('bettingView').classList.add('hidden');
-          document.getElementById('historyView').classList.add('hidden');
-          document.getElementById('statsView').classList.add('hidden');
-          document.getElementById('pendingView').classList.remove('hidden');
-          document.getElementById('bottomNavMenu').style.display = 'none'; 
-        }
-      } catch (error) { document.getElementById('tableDisplay').innerText = "เชื่อมต่อล้มเหลว"; }
+        document.getElementById('memberIdDisplay').textContent = memberId;
+        document.getElementById('tableDisplay').textContent = currentDisplayName || 'บัญชีส่วนตัว';
+        document.getElementById('creditDisplay').textContent = `฿${(user.credit_balance || 0).toLocaleString()}`;
+        if (currentUserRole === 'Backer') document.getElementById('btnBackerMenu').style.display = 'block';
+        if (currentUserRole === 'Promoter') document.getElementById('btnPromoterMenu').style.display = 'block';
+        document.getElementById('bettingView').classList.remove('hidden');
+        document.getElementById('pendingView').classList.add('hidden');
+        document.getElementById('bottomNavMenu').style.display = 'flex';
+        fetchDashboard();
+        setInterval(fetchDashboard, 3000);
+      } catch (error) {
+        showMembershipGate('ตรวจสอบบัญชีไม่สำเร็จ กรุณาเปิดหน้าใหม่ [' + error.message + ']', null);
+      }
     }
 
     function setMode(mode) {
