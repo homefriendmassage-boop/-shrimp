@@ -27,11 +27,20 @@ const fail = (code, status = 400) => { throw Object.assign(new Error(code), { st
 const includes = (words, key) => words.split(' ').includes(key);
 const primitive = value => typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value)) || typeof value === 'boolean';
 
+function lineProfilePicture(value) {
+  if (typeof value !== 'string' || value.length > 1000) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'profile.line-scdn.net' ? url.toString() : null;
+  } catch { return null; }
+}
+
 export function validateQuery(input, role, shopId) {
   const { table, operation = 'select' } = input;
   if (!Object.hasOwn(fields, table)) fail('TABLE_NOT_ALLOWED', 403);
   if (!['select', 'insert', 'update', 'delete'].includes(operation)) fail('OPERATION_NOT_ALLOWED', 403);
   if (!['Admin', 'Superadmin', 'Operator'].includes(role)) fail('ADMIN_REQUIRED', 403);
+  if (role === 'Operator' && operation === 'select' && ['transactions', 'backer_logs'].includes(table)) fail('ADMIN_REQUIRED', 403);
   const columns = input.columns === '*' || input.columns === undefined ? fields[table].split(' ') : String(input.columns).split(',').map(s => s.trim());
   if (!columns.length || columns.some(c => !includes(fields[table], c))) fail('COLUMN_NOT_ALLOWED', 403);
   const filters = input.filters ?? [];
@@ -130,7 +139,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const profile = await db.from('users').select('uid,role,status,member_id,credit_balance')
           .eq('uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (profile.error) fail('DATABASE_ERROR', 500);
-        const staff = profile.data?.status === 'Active' && ['Admin', 'Superadmin', 'Operator'].includes(profile.data.role);
+        const staff = profile.data?.status === 'Active' && ['Admin', 'Superadmin'].includes(profile.data.role);
         const application = await db.from('membership_applications').select('state,member_id')
           .eq('line_uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (application.error) fail('DATABASE_ERROR', 500);
@@ -151,7 +160,11 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       const shop = await db.from('shops').select('shop_id,status').eq('shop_id', shopId).maybeSingle();
       if (shop.error) fail('DATABASE_ERROR', 500);
       if (!shop.data || String(shop.data.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
-      if (input.action === 'access') return reply({ ok: true, staff: staff.data });
+      if (input.action === 'access') {
+        const picture = lineProfilePicture(claims.picture);
+        if (picture) await db.from('users').update({ profile_pic: picture }).eq('shop_id', shopId).eq('uid', claims.sub);
+        return reply({ ok: true, staff: staff.data });
+      }
       if (input.action === 'membership_summary') {
         if (!['Admin', 'Superadmin'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
         const states = ['Approved', 'Pending', 'Rejected'];
@@ -190,8 +203,29 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (input.single) query = query.single();
       const result = await query;
       if (result.error) {
+        if (spec.table === 'tables' && spec.operation === 'insert' && result.error.code === '23505') fail('TABLE_ALREADY_EXISTS', 409);
         console.error('admin-api database error', spec.table, spec.operation, result.error.code);
         fail('ADMIN_DATABASE_ERROR', 500);
+      }
+      const profileLookup = spec.table === 'users' && spec.operation === 'select' && input.limit === 2 &&
+        spec.filters.some(filter => filter.op === 'eq' && ['uid', 'member_id'].includes(filter.column));
+      if (profileLookup && Array.isArray(result.data) && result.data.length === 1 &&
+          !result.data[0].profile_pic && /^U[0-9a-f]{32}$/i.test(result.data[0].uid)) {
+        const user = result.data[0];
+        const credential = await db.from('shops').select('line_oa_token').eq('shop_id', shopId).maybeSingle();
+        if (credential.data?.line_oa_token) {
+          try {
+            const response = await fetcher('https://api.line.me/v2/bot/profile/' + user.uid, {
+              headers: { Authorization: 'Bearer ' + credential.data.line_oa_token },
+              signal: AbortSignal.timeout(3000)
+            });
+            const picture = response.ok ? lineProfilePicture((await response.json()).pictureUrl) : null;
+            if (picture) {
+              user.profile_pic = picture;
+              await db.from('users').update({ profile_pic: picture }).eq('shop_id', shopId).eq('uid', user.uid);
+            }
+          } catch { /* A missing OA profile must not block member search. */ }
+        }
       }
       return reply({ ok: true, data: result.data });
     } catch (e) {
