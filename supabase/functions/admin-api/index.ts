@@ -109,9 +109,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
       if (!['access', 'query', 'membership_summary', 'player_profile'].includes(input.action)) fail('INVALID_ACTION');
-      let shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
-      const resolveDemo = input.action === 'player_profile' && input.resolve_demo === true && shopId === '';
-      if (!resolveDemo && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
+      const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
+      if (!/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = input.action === 'player_profile';
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
@@ -133,11 +132,6 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (!url || !key) fail('SUPABASE_SERVER_CONFIG_MISSING', 503);
       const db = createDb(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
       if (playerRequest) {
-        if (resolveDemo) {
-          const demo = await db.from('shops').select('shop_id').eq('shop_id', 'SHOP_000').maybeSingle();
-          if (demo.error) fail('DATABASE_ERROR', 500);
-          shopId = demo.data?.shop_id ?? 'SHOP_001';
-        }
         const shop = await db.from('shops').select('status').eq('shop_id', shopId).maybeSingle();
         if (shop.error) fail('DATABASE_ERROR', 500);
         if (String(shop.data?.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
@@ -150,13 +144,13 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           .eq('line_uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (application.error) fail('DATABASE_ERROR', 500);
         if (application.data?.state !== 'Approved') {
-          return reply({ ok: true, shop_id: shopId, staff, state: application.data?.state ?? 'NotApplied', member_id: application.data?.member_id ?? null });
+          return reply({ ok: true, staff, state: application.data?.state ?? 'NotApplied', member_id: application.data?.member_id ?? null });
         }
         const code = application.data.member_id;
         if (!profile.data || profile.data.member_id !== code || !/^M(0[0-9]{3}|[1-9][0-9]{3,})$/.test(code)) {
           fail('MEMBER_PROFILE_NOT_LINKED', 409);
         }
-        return reply({ ok: true, shop_id: shopId, staff, state: 'Approved', player: profile.data });
+        return reply({ ok: true, staff, state: 'Approved', player: profile.data });
       }
 
       // Identity always comes from LINE verification, never from input.uid/role.
