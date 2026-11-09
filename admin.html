@@ -924,6 +924,7 @@
     // ==========================================
     let cachedReportData = {}; 
     async function generateReport() {
+      cachedReportData = {};
       if (currentUserRole === 'Operator') return; 
       const listDiv = document.getElementById('roundReportList');
       listDiv.innerHTML = '<div style="text-align:center; color: var(--text-muted); padding: 15px;">กำลังคำนวณรายงาน...</div>';
@@ -1107,8 +1108,26 @@
           } else { fl.innerHTML = '<div style="text-align:center; color:var(--text-muted); padding:15px;">ยังไม่มีรายการแทงในรอบนี้</div>'; }
           document.getElementById('adminEvenAmt').innerText = `฿${ea.toLocaleString()}`; document.getElementById('adminEvenCount').innerText = `${et.size} โต๊ะ/บิล`;
           document.getElementById('adminOddAmt').innerText = `฿${oa.toLocaleString()}`; document.getElementById('adminOddCount').innerText = `${ot.size} โต๊ะ/บิล`;
+        } else {
+          isRoundOpen = false;
+          targetEndTimeMs = 0;
+          document.getElementById('adminRoundId').textContent = 'รอบ -';
+          document.getElementById('adminStatusBadge').textContent = 'ยังไม่มีรอบ';
+          document.getElementById('adminRoundSubInfo').textContent = 'ยังไม่มีรอบในร้านนี้';
+          document.getElementById('liveBetsFeedList').textContent = 'ยังไม่มีรายการในรอบนี้';
+          document.getElementById('resolverStatusMsg').style.display = 'none';
+          for (const side of ['Even', 'Odd']) {
+            document.getElementById('admin' + side + 'Amt').textContent = '฿0';
+            document.getElementById('admin' + side + 'Count').textContent = '0 โต๊ะ/บิล';
+          }
         }
-      } catch (e) {}
+      } catch (e) {
+        isRoundOpen = false;
+        targetEndTimeMs = 0;
+        document.getElementById('adminStatusBadge').textContent = 'โหลดไม่สำเร็จ';
+        document.getElementById('adminRoundSubInfo').textContent = 'โหลดข้อมูลรอบไม่สำเร็จ ระบบจะลองใหม่';
+        showAdminApiError(e.message);
+      }
     }
 
     async function controlRound(cmd) {
@@ -1121,7 +1140,7 @@
           let d = new Date(); let prefix = `R-${d.getFullYear().toString().substring(2)}${(d.getMonth()+1).toString().padStart(2,'0')}${d.getDate().toString().padStart(2,'0')}`;
           let nn = 1; if (lr && lr.length > 0 && lr[0].round_id.startsWith(prefix)) nn = parseInt(lr[0].round_id.split('-')[2]) + 1;
           let rndName = `${prefix}-${nn}`;
-          const { data: set } = await _supabase.from('system_settings').select('round_duration').eq('shop_id', currentShopId).single();
+          const { data: [set] } = await _supabase.from('system_settings').select('round_duration').eq('shop_id', currentShopId).limit(1);
           let duration = set ? set.round_duration : 15;
           await _supabase.from('rounds').insert([{ shop_id: currentShopId, round_id: rndName, status: 'Open', end_time_ms: new Date().getTime() + (duration * 60000), resolver_type: 'none' }]);
           
@@ -1241,7 +1260,7 @@
         const roundId = lr[0].round_id; const res = (w % 2 === 0) ? 'คู่' : 'คี่';
         const resolverType = lr[0].resolver_type;
         
-        const { data: set } = await _supabase.from('system_settings').select('water_margin, comm_rate').eq('shop_id', currentShopId).single();
+        const { data: [set] } = await _supabase.from('system_settings').select('water_margin, comm_rate').eq('shop_id', currentShopId).limit(1);
         const margin = set ? set.water_margin : 0.05; const commRate = set ? set.comm_rate : 0.01;
 
         const { data: bets, error: betsError } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('round_id', roundId).neq('status', 'Cancelled');
@@ -1428,8 +1447,34 @@
     
     function closeQrModal() { document.getElementById('qrModal').classList.add('hidden'); }
     
-    async function loadSettings() { const { data: s } = await _supabase.from('system_settings').select('*').eq('shop_id', currentShopId).single(); if(s) { document.getElementById('settingWaterMargin').value=s.water_margin; document.getElementById('settingRoundDuration').value=s.round_duration; document.getElementById('settingCommRate').value=s.comm_rate||0.01; document.getElementById('settingMinBet').value=s.min_bet||20; document.getElementById('settingMaxBet').value=s.max_bet||5000; } }
-    async function saveSettings() { await _supabase.from('system_settings').update({ water_margin: parseFloat(document.getElementById('settingWaterMargin').value), round_duration: parseInt(document.getElementById('settingRoundDuration').value), comm_rate: parseFloat(document.getElementById('settingCommRate').value), min_bet: parseFloat(document.getElementById('settingMinBet').value), max_bet: parseFloat(document.getElementById('settingMaxBet').value) }).eq('shop_id', currentShopId); alert("บันทึกการตั้งค่าสำเร็จ"); toggleSettings(); }
+    async function loadSettings() {
+      try {
+        const { data: [settings] } = await _supabase.from('system_settings').select('*').eq('shop_id', currentShopId).limit(1);
+        document.getElementById('settingWaterMargin').value = settings?.water_margin ?? 0.05;
+        document.getElementById('settingRoundDuration').value = settings?.round_duration ?? 15;
+        document.getElementById('settingCommRate').value = settings?.comm_rate ?? 0.01;
+        document.getElementById('settingMinBet').value = settings?.min_bet ?? 20;
+        document.getElementById('settingMaxBet').value = settings?.max_bet ?? 5000;
+      } catch (error) {
+        showAdminApiError(error.message);
+      }
+    }
+    async function saveSettings() {
+      try {
+        const { data: saved } = await _supabase.from('system_settings').update({
+          water_margin: parseFloat(document.getElementById('settingWaterMargin').value),
+          round_duration: parseInt(document.getElementById('settingRoundDuration').value, 10),
+          comm_rate: parseFloat(document.getElementById('settingCommRate').value),
+          min_bet: parseFloat(document.getElementById('settingMinBet').value),
+          max_bet: parseFloat(document.getElementById('settingMaxBet').value)
+        }).eq('shop_id', currentShopId).select('id');
+        if (!saved?.length) return alert('ยังไม่มีแถวตั้งค่าของร้านนี้ในฐานข้อมูล กรุณาเพิ่มแถวตั้งค่าร้านก่อนบันทึก');
+        alert('บันทึกการตั้งค่าสำเร็จ');
+        toggleSettings();
+      } catch (error) {
+        showAdminApiError(error.message);
+      }
+    }
     function toggleSettings() { const c = document.getElementById('settingsContent'); const i = document.getElementById('settingsIcon'); if(c.classList.contains('open')){ c.classList.remove('open'); i.className="fa-solid fa-chevron-down"; } else{ c.classList.add('open'); i.className="fa-solid fa-chevron-up"; } }
 
     initializeApp();
