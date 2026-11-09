@@ -6,3 +6,6 @@ verify_jwt = false
 
 [functions.round-notice]
 verify_jwt = false
+
+[functions.wallet-topup]
+verify_jwt = false
