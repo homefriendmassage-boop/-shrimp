@@ -35,6 +35,34 @@ function lineProfilePicture(value) {
   } catch { return null; }
 }
 
+const playerTokenCache = new Map();
+async function verifyLineClaims(token, clientId, fetcher, useCache) {
+  let key;
+  if (useCache) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(clientId + ':' + token));
+    key = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    const cached = playerTokenCache.get(key);
+    if (cached && cached.until > Date.now()) return cached.claims;
+  }
+  let verified;
+  try {
+    verified = await fetcher('https://api.line.me/oauth2/v2.1/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ id_token: token, client_id: clientId }), signal: AbortSignal.timeout(10000)
+    });
+  } catch { fail('LINE_VERIFY_UNAVAILABLE', 503); }
+  if (!verified.ok) fail('LINE_AUTH_INVALID', 401);
+  const claims = await verified.json();
+  if (typeof claims.sub !== 'string' || claims.aud !== clientId || !(Number(claims.exp) * 1000 > Date.now())) {
+    fail('LINE_AUTH_INVALID', 401);
+  }
+  if (key) {
+    if (playerTokenCache.size >= 256) playerTokenCache.delete(playerTokenCache.keys().next().value);
+    playerTokenCache.set(key, { claims: { sub: claims.sub }, until: Math.min(Date.now() + 60000, Number(claims.exp) * 1000) });
+  }
+  return claims;
+}
+
 export function validateQuery(input, role, shopId) {
   const { table, operation = 'select' } = input;
   if (!Object.hasOwn(fields, table)) fail('TABLE_NOT_ALLOWED', 403);
@@ -108,29 +136,30 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query', 'membership_summary', 'player_profile'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
       if (!/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-      const playerRequest = input.action === 'player_profile';
+      const playerRequest = ['player_profile', 'player_state'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
       const clientId = env(channelKey);
       if (!clientId) fail(channelKey + '_MISSING', 503);
       if (!token || token.length > 16000) fail('LINE_AUTH_INVALID', 401);
-      let verified;
-      try {
-        verified = await fetcher('https://api.line.me/oauth2/v2.1/verify', {
-          method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ id_token: token, client_id: clientId }), signal: AbortSignal.timeout(10000)
-        });
-      } catch (_) { fail('LINE_VERIFY_UNAVAILABLE', 503); }
-      if (!verified.ok) fail('LINE_AUTH_INVALID', 401);
-      const claims = await verified.json();
-      if (typeof claims.sub !== 'string' || claims.aud !== clientId || !(Number(claims.exp) * 1000 > Date.now())) fail('LINE_AUTH_INVALID', 401);
+      const claims = await verifyLineClaims(token, clientId, fetcher, input.action === 'player_state');
       const url = env('SUPABASE_URL');
       const key = serverKey(env);
       if (!url || !key) fail('SUPABASE_SERVER_CONFIG_MISSING', 503);
       const db = createDb(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+      if (input.action === 'player_state') {
+        const table = input.table_no;
+        if (table != null && (typeof table !== 'string' || table.length > 40)) fail('TABLE_INVALID');
+        const result = await db.rpc('read_player_live_state', {
+          p_shop: shopId, p_uid: claims.sub, p_table: table || null, p_results: input.include_results === true
+        });
+        if (result.error) fail('PLAYER_STATE_UNAVAILABLE', 500);
+        if (!result.data) fail('PLAYER_ACCESS_REQUIRED', 403);
+        return reply({ ok: true, snapshot: result.data });
+      }
       if (playerRequest) {
         const shop = await db.from('shops').select('status').eq('shop_id', shopId).maybeSingle();
         if (shop.error) fail('DATABASE_ERROR', 500);

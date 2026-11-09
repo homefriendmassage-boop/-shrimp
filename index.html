@@ -179,6 +179,7 @@
       <div class="header-box" style="text-align: right; display: flex; flex-direction: column; justify-content: center;">
         <div class="label">เครดิตคงเหลือ</div>
         <div class="value val-green" id="creditDisplay">฿0</div>
+        <small id="playerSyncStatus" role="status" style="display:block;color:var(--text-muted)"></small>
         <button onclick="openTopupModal()" style="margin-top: 5px; background: var(--blue-main); border: none; color: white; border-radius: 6px; padding: 4px; font-size: 0.75rem; font-family: 'Kanit'; cursor: pointer;">
           <i class="fa-solid fa-plus"></i> แจ้งทำรายการ
         </button>
@@ -400,7 +401,7 @@
       startCountdownTimer();
     }
 
-    async function readPlayerProfile() {
+    async function readPlayerProfile(action = 'player_profile', extra = {}) {
       const token = liff.getIDToken();
       if (!token) throw new Error('LINE_AUTH_INVALID');
       const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
@@ -410,7 +411,7 @@
           Authorization: 'Bearer ' + token,
           apikey: APP_CONFIG.SUPABASE_ANON_KEY
         },
-        body: JSON.stringify({ action: 'player_profile', shop_id: currentShopId }),
+        body: JSON.stringify({ ...extra, action, shop_id: currentShopId }),
         signal: AbortSignal.timeout(15000)
       });
       const result = await response.json();
@@ -513,7 +514,6 @@
         document.getElementById('pendingView').classList.add('hidden');
         document.getElementById('bottomNavMenu').style.display = 'flex';
         fetchDashboard();
-        setInterval(fetchDashboard, 3000);
       } catch (error) {
         showMembershipGate('ตรวจสอบบัญชีไม่สำเร็จ กรุณาเปิดหน้าใหม่ [' + error.message + ']', null);
       }
@@ -567,40 +567,32 @@
       }
     }
 
-    async function loadDailyStats() {
-      const listContainer = document.getElementById('statsListContainer');
-      listContainer.innerHTML = '<div style="text-align:center; padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลดข้อมูล...</div>';
-      let d = new Date();
-      let prefix = `R-${d.getFullYear().toString().substring(2)}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-`;
-      
-      try {
-        const { data: rounds, error } = await _supabase.from('rounds').select('round_id, weight, result, created_at').eq('shop_id', currentShopId).like('round_id', `${prefix}%`).eq('status', 'Ended').order('round_id', { ascending: false });
-        if (error) throw error;
-        let total = 0, evenCount = 0, oddCount = 0;
-        listContainer.innerHTML = '';
+    let dailyResultsKey;
+    function loadDailyStats() { fetchDashboard(); }
 
-        if (rounds && rounds.length > 0) {
-          total = rounds.length;
-          rounds.forEach(r => {
-            if (r.result === 'คู่') evenCount++;
-            if (r.result === 'คี่') oddCount++;
-            let typeColor = r.result === 'คู่' ? 'var(--blue-main)' : 'var(--red-main)';
-            let timeStr = new Date(r.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-            let card = document.createElement('div');
-            card.style.cssText = "background: var(--bg-panel); border: 1px solid var(--card-border); border-radius: 12px; padding: 12px 15px; display: flex; justify-content: space-between; align-items: center;";
-            card.innerHTML = `<div><div style="font-weight: 600; font-size: 1.1rem;">รอบ ${r.round_id}</div><div style="font-size: 0.8rem; color: var(--text-muted);"><i class="fa-regular fa-clock"></i> ${timeStr} | น้ำหนัก: ${r.weight} กรัม</div></div><div style="font-weight: bold; font-size: 1.4rem; color: ${typeColor};">${r.result}</div>`;
-            listContainer.appendChild(card);
-          });
-        } else {
-          listContainer.innerHTML = '<div style="text-align:center; color: var(--text-muted); padding: 20px;">ยังไม่มีข้อมูลผลรอบของวันนี้</div>';
-        }
-
-        document.getElementById('statTotalRounds').innerText = total;
-        document.getElementById('statEvenCount').innerText = evenCount;
-        document.getElementById('statOddCount').innerText = oddCount;
-      } catch (e) {
-        listContainer.innerHTML = '<div style="text-align:center; color: var(--red-main); padding: 20px;">เกิดข้อผิดพลาดในการโหลดข้อมูล</div>';
+    function renderDailyStats(rounds) {
+      const key = JSON.stringify(rounds);
+      if (key === dailyResultsKey) return;
+      dailyResultsKey = key;
+      const list = document.getElementById('statsListContainer');
+      list.replaceChildren();
+      let even = 0;
+      let odd = 0;
+      for (const round of rounds) {
+        if (round.result === 'คู่') even++;
+        if (round.result === 'คี่') odd++;
+        const card = document.createElement('div');
+        card.style.cssText = 'background:var(--bg-panel);border:1px solid var(--card-border);border-radius:12px;padding:12px 15px';
+        const time = new Date(round.created_at).toLocaleTimeString('th-TH', {
+          hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok'
+        });
+        card.textContent = 'รอบ ' + round.round_id + ' · ' + time + ' · ' + round.weight + ' กรัม · ' + round.result;
+        list.append(card);
       }
+      if (!rounds.length) list.textContent = 'ยังไม่มีข้อมูลผลรอบของวันนี้';
+      document.getElementById('statTotalRounds').textContent = rounds.length;
+      document.getElementById('statEvenCount').textContent = even;
+      document.getElementById('statOddCount').textContent = odd;
     }
 
     function lockBettingUI(isLocked) {
@@ -637,55 +629,90 @@
       }, 1000);
     }
 
-    async function fetchDashboard() {
-      if (currentUserStatus !== 'Active') return; 
-      try {
-        const { data: uData } = await _supabase.from('users').select('credit_balance').eq('uid', currentLineUserId).single();
-        if(uData) { document.getElementById('creditDisplay').innerText = `฿${(uData.credit_balance || 0).toLocaleString()}`; }
+    let liveTimer;
+    let liveRequest = false;
+    let refreshAfterRequest = false;
+    let displayedRoundId;
 
-        const { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).order('round_id', { ascending: false }).limit(2);
-        if (rounds && rounds.length > 0) {
-          const currentRound = rounds[0];
-          document.getElementById('roundIdDisplay').innerText = `รอบ ${currentRound.round_id}`;
-          targetEndTimeMs = currentRound.end_time_ms || 0;
-          let now = new Date().getTime();
-          
-          if(currentRound.status === 'Open' && now < targetEndTimeMs) { document.getElementById('statusDisplay').innerHTML = `<span class="live-badge">● LIVE</span> เปิดรับแทง`; isRoundOpen = true; lockBettingUI(false); } 
-          else if(currentRound.status === 'Open' && now >= targetEndTimeMs) { document.getElementById('statusDisplay').innerHTML = `<span class="status-blink">รอผลชั่งกุ้ง...</span>`; isRoundOpen = false; lockBettingUI(true); }
-          else if(currentRound.status === 'Closed') { document.getElementById('statusDisplay').innerHTML = `<span class="status-blink">รอผลชั่งกุ้ง...</span>`; isRoundOpen = false; lockBettingUI(true); targetEndTimeMs = 0; }
-          else if(currentRound.status === 'Ended') { document.getElementById('statusDisplay').innerHTML = `<span style="color:var(--text-muted); font-size: 0.9rem;">⚫ จบรอบแล้ว</span>`; isRoundOpen = false; lockBettingUI(true); targetEndTimeMs = 0; }
-
-          if(currentRound.status === 'Ended') {
-             document.getElementById('prevWeight').innerText = `${currentRound.weight} กรัม`;
-             document.getElementById('prevResultBadge').className = `badge-win ${currentRound.result === 'คู่' ? '' : 'red'}`;
-             document.getElementById('prevResultBadge').innerText = `${currentRound.result} ชนะ`;
-          } else if (rounds.length > 1 && rounds[1].status === 'Ended') {
-             document.getElementById('prevWeight').innerText = `${rounds[1].weight} กรัม`;
-             document.getElementById('prevResultBadge').className = `badge-win ${rounds[1].result === 'คู่' ? '' : 'red'}`;
-             document.getElementById('prevResultBadge').innerText = `${rounds[1].result} ชนะ`;
-          } else {
-             document.getElementById('prevWeight').innerText = `รอข้อมูล...`; document.getElementById('prevResultBadge').className = `badge-win`; document.getElementById('prevResultBadge').innerText = `-`;
-          }
-
-          const { data: bets } = await _supabase.from('bets').select('bet_type, amount, table_no').eq('shop_id', currentShopId).eq('round_id', currentRound.round_id).neq('status', 'Cancelled');
-          let evenAmt = 0, oddAmt = 0, totalAmt = 0; let evenTables = new Set(), oddTables = new Set();
-          if(bets) {
-            bets.forEach(b => {
-              totalAmt += Number(b.amount);
-              if(b.bet_type === 'คู่') { evenAmt += Number(b.amount); evenTables.add(b.table_no || '-'); }
-              if(b.bet_type === 'คี่') { oddAmt += Number(b.amount); oddTables.add(b.table_no || '-'); }
-            });
-          }
-          document.getElementById('liveEvenDisplay').innerText = `฿${evenAmt.toLocaleString()}`; document.getElementById('liveOddDisplay').innerText = `฿${oddAmt.toLocaleString()}`; document.getElementById('liveTotalDisplay').innerText = `฿${totalAmt.toLocaleString()}`;
-          document.getElementById('countEvenDisplay').innerText = `${evenTables.size} โต๊ะ/บิล`; document.getElementById('countOddDisplay').innerText = `${oddTables.size} โต๊ะ/บิล`;
-
-          let evenPct = totalAmt > 0 ? (evenAmt / totalAmt) * 100 : 0; let oddPct = totalAmt > 0 ? (oddAmt / totalAmt) * 100 : 0;
-          document.getElementById('barEven').style.width = `${evenPct}%`; document.getElementById('barOdd').style.width = `${oddPct}%`;
-        } else {
-          document.getElementById('roundIdDisplay').innerHTML = `-`; document.getElementById('statusDisplay').innerHTML = `<span class="closed-badge">OFFLINE</span> ไม่มีรอบที่เปิด`; isRoundOpen = false; lockBettingUI(true);
-        }
-      } catch (error) {}
+    function renderLiveSnapshot(snapshot, table) {
+      const credit = playMode === 'table' ? (table ? snapshot.table_credit : null) : snapshot.credit;
+      document.getElementById('creditDisplay').textContent = credit == null ? '—' : '฿' + Number(credit).toLocaleString('th-TH');
+      const round = snapshot.round;
+      const result = snapshot.last_result;
+      const totals = snapshot.totals;
+      const end = Number(round?.end_time_ms) || 0;
+      targetEndTimeMs = round?.status === 'Open' ? end : 0;
+      const wasOpen = isRoundOpen;
+      isRoundOpen = round?.status === 'Open' && end > Date.now();
+      if (displayedRoundId !== (round?.round_id ?? null)) {
+        lockBettingUI(true);
+        displayedRoundId = round?.round_id ?? null;
+        if (isRoundOpen) lockBettingUI(false);
+      } else if (wasOpen !== isRoundOpen) {
+        lockBettingUI(!isRoundOpen);
+      }
+      document.getElementById('roundIdDisplay').textContent = round ? 'รอบ ' + round.round_id : '-';
+      const status = document.getElementById('statusDisplay');
+      status.innerHTML = isRoundOpen ? '<span class="live-badge">● LIVE</span> เปิดรับแทง'
+        : round?.status === 'Ended' ? '<span style="color:var(--text-muted)">⚫ จบรอบแล้ว</span>'
+        : round ? '<span class="status-blink">รอผลชั่งกุ้ง…</span>'
+        : '<span class="closed-badge">OFFLINE</span> ไม่มีรอบที่เปิด';
+      document.getElementById('prevWeight').textContent = result ? result.weight + ' กรัม' : 'รอข้อมูล...';
+      const badge = document.getElementById('prevResultBadge');
+      badge.className = 'badge-win' + (result?.result === 'คี่' ? ' red' : '');
+      badge.textContent = result ? result.result + ' ชนะ' : '-';
+      for (const [key, id] of [['even','liveEvenDisplay'],['odd','liveOddDisplay'],['total','liveTotalDisplay']]) {
+        document.getElementById(id).textContent = '฿' + Number(totals[key]).toLocaleString('th-TH');
+      }
+      document.getElementById('countEvenDisplay').textContent = totals.even_count + ' โต๊ะ/บิล';
+      document.getElementById('countOddDisplay').textContent = totals.odd_count + ' โต๊ะ/บิล';
+      document.getElementById('barEven').style.width = (totals.total > 0 ? totals.even / totals.total * 100 : 0) + '%';
+      document.getElementById('barOdd').style.width = (totals.total > 0 ? totals.odd / totals.total * 100 : 0) + '%';
+      if (snapshot.daily_results) renderDailyStats(snapshot.daily_results);
     }
+
+    async function fetchDashboard() {
+      clearTimeout(liveTimer);
+      if (currentUserStatus !== 'Active' || document.hidden) return;
+      if (liveRequest) { refreshAfterRequest = true; return; }
+      liveRequest = true;
+      const sync = document.getElementById('playerSyncStatus');
+      const table = userTableNo || null;
+      let delay = 2000;
+      try {
+        const { snapshot } = await readPlayerProfile('player_state', {
+          table_no: table,
+          include_results: !document.getElementById('statsView').classList.contains('hidden')
+        });
+        if (!snapshot) throw new Error('PLAYER_STATE_UNAVAILABLE');
+        renderLiveSnapshot(snapshot, table);
+        sync.textContent = '';
+      } catch (error) {
+        isRoundOpen = false;
+        targetEndTimeMs = 0;
+        lockBettingUI(true);
+        if (error.message === 'PLAYER_ACCESS_REQUIRED') {
+          currentUserStatus = 'Inactive';
+          showMembershipGate('บัญชียังไม่พร้อมใช้งาน กรุณาติดต่อผู้ดูแลร้าน', memberId);
+        } else {
+          delay = 5000;
+          sync.textContent = 'ข้อมูลล่าสุดอาจยังไม่อัปเดต กำลังเชื่อมต่อใหม่';
+        }
+      } finally {
+        liveRequest = false;
+        const immediate = refreshAfterRequest;
+        refreshAfterRequest = false;
+        if (currentUserStatus === 'Active' && !document.hidden) {
+          liveTimer = setTimeout(fetchDashboard, immediate ? 0 : delay);
+        }
+      }
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) clearTimeout(liveTimer);
+      else fetchDashboard();
+    });
+    window.addEventListener('online', fetchDashboard);
 
     async function submitBet() {
       if(currentUserRole === 'Promoter') { alert("ผู้แนะนำไม่สามารถแทงกุ้งได้ครับ"); return; }
