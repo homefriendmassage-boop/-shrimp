@@ -462,6 +462,21 @@
       </div>
   </div>
 
+  <dialog id="walletDepositDialog" aria-labelledby="walletDepositTitle"
+    style="background:#1b1f2b;color:white;border:1px solid #49556a;border-radius:20px;width:min(420px,85vw);padding:24px;text-align:center;">
+    <form method="dialog">
+      <i class="fa-solid fa-wallet" style="font-size:2rem;color:#34d399;" aria-hidden="true"></i>
+      <h2 id="walletDepositTitle">ยืนยันเติมเครดิต</h2>
+      <p id="walletDepositMember" style="color:#aab6ca;"></p>
+      <p id="walletDepositAmount" style="color:#34d399;font-size:2rem;font-weight:bold;"></p>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-outline" value="cancel" autofocus style="flex:1;">ยกเลิก</button>
+        <button class="btn btn-green" value="approve" style="flex:1;">ยืนยันเติมเงิน</button>
+      </div>
+    </form>
+  </dialog>
+  <style>#walletDepositDialog::backdrop{background:rgba(0,0,0,.65);}</style>
+
   <script>
     const _supabase = createAdminApiClient(APP_CONFIG, () => currentShopId);
     
@@ -938,9 +953,16 @@
     async function approveQueuedWalletDeposit(request, button) {
       if (button.disabled) return;
       const amount = Number(request.amount).toLocaleString('th-TH');
-      if (!confirm('ยืนยันเติมเครดิต ฿' + amount + ' ให้สมาชิก ' + request.member_id + ' · ' + request.display_name + '?')) return;
+      const dialog = document.getElementById('walletDepositDialog');
+      if (dialog.open) return;
+      document.getElementById('walletDepositMember').textContent = 'สมาชิก ' + request.member_id + ' · ' + request.display_name;
+      document.getElementById('walletDepositAmount').textContent = '฿' + amount;
+      dialog.returnValue = '';
       button.disabled = true;
       try {
+        const decision = new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true }));
+        dialog.showModal();
+        if (await decision !== 'approve') return;
         await _supabase.approveWalletDeposit(request.id);
         await loadPendingRequests();
       } catch (error) {
