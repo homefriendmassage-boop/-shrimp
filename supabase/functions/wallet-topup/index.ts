@@ -24,11 +24,9 @@ Deno.serve(async (req) => {
 
   const channel = env("LINE_CHANNEL_ID_PLAYER");
   const thunder = env("THUNDER_API_KEY");
-  // Require an explicit cutover so previously processed manual deposits cannot be replayed.
-  const cutoff = Date.parse(env("WALLET_AUTO_CREDIT_SINCE"));
   const url = env("SUPABASE_URL");
   const key = env("SUPABASE_SERVICE_ROLE_KEY");
-  if (!channel || !thunder || !url || !key || !Number.isFinite(cutoff)) return reply("AUTO_CREDIT_DISABLED", 503);
+  if (!channel || !thunder || !url || !key) return reply("AUTO_CREDIT_DISABLED", 503);
   const token = req.headers.get("authorization")?.match(/^Bearer (\S+)$/i)?.[1];
   if (!token || token.length > 16000) return reply("LINE_AUTH_INVALID", 401);
 
@@ -62,7 +60,7 @@ Deno.serve(async (req) => {
     const [member, application, account] = await Promise.all([
       db.from("users").select("role,member_id").eq("uid", uid).eq("shop_id", shop).eq("status", "Active").maybeSingle(),
       db.from("membership_applications").select("member_id").eq("line_uid", uid).eq("shop_id", shop).eq("state", "Approved").maybeSingle(),
-      db.from("wallet_receiving_accounts").select("shop_id").eq("shop_id", shop).eq("enabled", true).limit(1),
+      db.from("wallet_receiving_accounts").select("shop_id").eq("shop_id", shop).eq("enabled", true).lte("auto_credit_from", new Date().toISOString()).limit(1),
     ]);
     if (member.error || application.error || account.error) return reply("WALLET_UNAVAILABLE", 503);
     if (!member.data || !application.data || member.data.member_id !== application.data.member_id ||
@@ -96,14 +94,16 @@ Deno.serve(async (req) => {
     const number = slip?.matchedAccount?.bankNumber;
     if (slip?.isDuplicate === true) return reply("DUPLICATE_SLIP", 409);
     if (slip?.isDuplicate !== false || typeof ref !== "string" || !ref.trim() || ref.length > 160 ||
-        !Number.isFinite(time) || time < cutoff || time > Date.now() + 60000) return reply("SLIP_NOT_VERIFIED", 422);
+        !Number.isFinite(time) || time > Date.now() + 60000) return reply("SLIP_NOT_VERIFIED", 422);
     if (slip.isAmountMatched !== true || slip.amountInSlip !== Number(amount)) return reply("AMOUNT_MISMATCH", 422);
     if (typeof bank !== "string" || typeof number !== "string") return reply("RECEIVER_MISMATCH", 422);
     const normalizedNumber = number.replace(/[ -]/g, "");
-    const match = await db.from("wallet_receiving_accounts").select("shop_id")
+    const match = await db.from("wallet_receiving_accounts").select("auto_credit_from")
       .eq("bank_code", bank).eq("bank_number", normalizedNumber).eq("shop_id", shop).eq("enabled", true).maybeSingle();
     if (match.error) return reply("WALLET_UNAVAILABLE", 503);
-    if (!match.data) return reply("RECEIVER_MISMATCH", 422);
+    const cutoff = Date.parse(match.data?.auto_credit_from);
+    if (!Number.isFinite(cutoff) || cutoff > Date.now()) return reply("RECEIVER_MISMATCH", 422);
+    if (time < cutoff) return reply("SLIP_NOT_VERIFIED", 422);
 
     const id = crypto.randomUUID();
     const path = shop + "/" + uid + "/" + id + "." + extensions.get(image.type);
@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
     if (upload.error) return reply("STORAGE_ERROR", 500);
     const credit = await db.rpc("credit_verified_wallet_slip", {
       p_id: id, p_shop: shop, p_uid: uid, p_ref: ref.trim(), p_hash: hash,
-      p_amount: amount, p_bank: bank, p_number: normalizedNumber, p_path: path,
+      p_amount: amount, p_bank: bank, p_number: normalizedNumber, p_path: path, p_slip_at: new Date(time).toISOString(),
     });
     if (credit.error) return reply("WALLET_UNAVAILABLE", 503);
     if (credit.data === "CREDITED") return reply("CREDITED", 200);
