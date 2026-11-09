@@ -167,6 +167,12 @@
         <button onclick="closeTopupModal()" style="flex: 1; background: transparent; border: 1px solid var(--text-muted); color: var(--text-muted); border-radius: 8px; padding: 12px; font-family: 'Kanit'; cursor: pointer;">ยกเลิก</button>
         <button id="btnSubmitTopup" onclick="submitTopupRequest()" style="flex: 1; background: var(--blue-main); border: none; color: white; border-radius: 8px; padding: 12px; font-family: 'Kanit'; font-weight: 600; cursor: pointer;">ส่งแจ้งแอดมิน</button>
       </div>
+      <section style="margin-top: 18px; border-top: 1px solid var(--card-border); padding-top: 12px;">
+        <h4 style="margin: 0 0 8px;">สถานะรายการ Wallet ล่าสุด</h4>
+        <button type="button" onclick="loadWalletRequests()" id="refreshWalletRequests">อัปเดตสถานะ</button>
+        <p id="walletRequestsStatus" role="status" style="color: var(--text-muted);"></p>
+        <ul id="walletRequests" style="padding-left: 20px; margin-bottom: 0;"></ul>
+      </section>
     </div>
   </div>
 
@@ -812,8 +818,37 @@
     function openTopupModal() {
       if (currentUserStatus !== 'Active') { alert("บัญชียังไม่เปิดใช้งาน"); return; }
       document.getElementById('topupModal').classList.remove('hidden'); toggleOptions();
+      loadWalletRequests();
     }
     
+    async function loadWalletRequests() {
+      const button = document.getElementById('refreshWalletRequests');
+      if (button.disabled) return;
+      const list = document.getElementById('walletRequests');
+      const status = document.getElementById('walletRequestsStatus');
+      button.disabled = true;
+      list.replaceChildren();
+      status.textContent = 'กำลังโหลดรายการ…';
+      try {
+        const result = await readPlayerProfile('player_profile', { include_wallet_requests: true });
+        if (!Array.isArray(result.wallet_requests)) throw new Error('WALLET_REQUESTS_UNAVAILABLE');
+        const labels = new Map([['Pending', 'รอตรวจ'], ['Approved', 'อนุมัติแล้ว'], ['Rejected', 'ปฏิเสธ']]);
+        for (const request of result.wallet_requests) {
+          const row = document.createElement('li');
+          const amount = Number(request.amount).toLocaleString('th-TH', { style: 'currency', currency: 'THB' });
+          const date = new Date(request.created_at).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
+          row.textContent = request.type + ' ' + amount + ' · ' + (labels.get(request.status) ?? 'ไม่ทราบสถานะ') + ' · ' + date;
+          list.appendChild(row);
+        }
+        status.textContent = result.wallet_requests.length ? '' : 'ยังไม่มีรายการ Wallet';
+        fetchDashboard();
+      } catch {
+        status.textContent = 'โหลดสถานะรายการไม่ได้ กรุณากดอัปเดตอีกครั้ง';
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     function updateSlipPreview() {
       const input = document.getElementById('fileSlip');
       const preview = document.getElementById('slipPreview');
