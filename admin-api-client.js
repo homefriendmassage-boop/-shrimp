@@ -40,5 +40,9 @@ function createAdminApiClient(config, getShopId) {
     }
     return query;
   }
-  return { from, access: () => call({ action: 'access' }) };
+  return {
+    from,
+    access: () => call({ action: 'access' }),
+    membershipSummary: () => call({ action: 'membership_summary' })
+  };
 }
