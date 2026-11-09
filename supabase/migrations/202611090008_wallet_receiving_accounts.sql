@@ -18,7 +18,7 @@ grant select on public.wallet_receiving_accounts to service_role;
 -- Once a shop switches to automatic verification, an older Player build
 -- must not create a second manual transfer request for the same payment.
 create function public.guard_legacy_wallet_transfer() returns trigger
-language plpgsql security definer set search_path = '' as $
+language plpgsql security definer set search_path = '' as $wallet_guard$
 begin
   if new.type = 'ฝากเงิน' and new.method = 'โอนเงิน' and new.status = 'Pending'
       and exists (
@@ -29,7 +29,7 @@ begin
   end if;
   return new;
 end;
-$;
+$wallet_guard$;
 
 revoke all on function public.guard_legacy_wallet_transfer() from public, anon, authenticated;
 create trigger guard_legacy_wallet_transfer before insert on public.topup_requests
