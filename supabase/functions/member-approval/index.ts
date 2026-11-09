@@ -83,8 +83,14 @@ async function deliverNotification(db, shop, application, kind) {
     if (readError) throw new Error('OUTBOX_READ_FAILED');
     if (!job) return;
     const owners = kind === 'submitted' ? JSON.parse(Deno.env.get('MEMBERSHIP_OWNER_UIDS') || '{}') : null;
-    const to = kind === 'submitted' ? owners[shop.shop_id] : application.line_uid;
-    const token = shop.line_oa_token;
+    const demoOwner = shop.shop_id === 'SHOP_000' ? owners?.SHOP_001 : null;
+    const to = kind === 'submitted' ? (shop.owner_line_uid || owners[shop.shop_id] || demoOwner) : application.line_uid;
+    let token = shop.line_oa_token;
+    if (!token && shop.owner_line_uid) {
+      const secret = await db.rpc('read_merchant_messaging_token', { p_shop: shop.shop_id });
+      if (secret.error) throw new Error('MERCHANT_MESSAGING_SECRET_UNAVAILABLE');
+      token = secret.data;
+    }
     if (typeof to !== 'string' || !/^U[0-9a-f]{32}$/i.test(to) || !token) {
       throw new Error('MEMBERSHIP_LINE_CONFIGURATION_MISSING');
     }
@@ -151,7 +157,9 @@ Deno.serve(async req => {
     if (isAdmin) {
       const staff = await db.from('users').select('role,status').eq('uid', uid).eq('shop_id', shopId).maybeSingle();
       if (staff.error) return error('DATABASE_ERROR', 500);
-      const legacyAdmin = staff.data?.status === 'Active' && ['Admin', 'Superadmin'].includes(staff.data.role);
+      const legacyAdmin = staff.data
+        ? staff.data.status === 'Active' && ['Admin', 'Superadmin'].includes(staff.data.role)
+        : shop.owner_line_uid === uid;
       const grant = await db.from('membership_admins').select('line_uid').eq('shop_id', shopId).eq('line_uid', uid).maybeSingle();
       if (grant.error) return error('ADMIN_GRANTS_UNAVAILABLE', 503);
       if (!legacyAdmin && !grant.data) return error('ADMIN_REQUIRED', 403);
