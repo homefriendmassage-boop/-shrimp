@@ -123,14 +123,16 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (!url || !key) fail('SUPABASE_SERVER_CONFIG_MISSING', 503);
       const db = createDb(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
       if (playerRequest) {
-        const shop = await db.from('shops').select('status').eq('shop_id', shopId).maybeSingle();
+        const shop = await db.from('shops').select('status,owner_line_uid').eq('shop_id', shopId).maybeSingle();
         if (shop.error) fail('DATABASE_ERROR', 500);
         if (String(shop.data?.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
 
         const profile = await db.from('users').select('uid,role,status,member_id,credit_balance')
           .eq('uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (profile.error) fail('DATABASE_ERROR', 500);
-        const staff = profile.data?.status === 'Active' && ['Admin', 'Superadmin', 'Operator'].includes(profile.data.role);
+        const staff = profile.data
+          ? profile.data.status === 'Active' && ['Admin', 'Superadmin', 'Operator'].includes(profile.data.role)
+          : shop.data.owner_line_uid === claims.sub;
         const application = await db.from('membership_applications').select('state,member_id')
           .eq('line_uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (application.error) fail('DATABASE_ERROR', 500);
@@ -147,13 +149,16 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       // Identity always comes from LINE verification, never from input.uid/role.
       const staff = await db.from('users').select('uid,shop_id,role,status,member_id,display_name').eq('uid', claims.sub).eq('shop_id', shopId).maybeSingle();
       if (staff.error) fail('DATABASE_ERROR', 500);
-      if (!staff.data || staff.data.status !== 'Active' || !['Admin', 'Superadmin', 'Operator'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
-      const shop = await db.from('shops').select('shop_id,status').eq('shop_id', shopId).maybeSingle();
+      const shop = await db.from('shops').select('shop_id,status,owner_line_uid').eq('shop_id', shopId).maybeSingle();
       if (shop.error) fail('DATABASE_ERROR', 500);
       if (!shop.data || String(shop.data.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
-      if (input.action === 'access') return reply({ ok: true, staff: staff.data });
+      const account = staff.data ?? (shop.data.owner_line_uid === claims.sub
+        ? { uid: claims.sub, shop_id: shopId, role: 'Admin', status: 'Active', member_id: null }
+        : null);
+      if (!account || account.status !== 'Active' || !['Admin', 'Superadmin', 'Operator'].includes(account.role)) fail('ADMIN_REQUIRED', 403);
+      if (input.action === 'access') return reply({ ok: true, staff: account });
       if (input.action === 'membership_summary') {
-        if (!['Admin', 'Superadmin'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
+        if (!['Admin', 'Superadmin'].includes(account.role)) fail('ADMIN_REQUIRED', 403);
         const states = ['Approved', 'Pending', 'Rejected'];
         const results = await Promise.all(states.map(state =>
           db.from('membership_applications').select('id', { count: 'exact', head: true })
@@ -164,7 +169,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         counts.Total = counts.Approved + counts.Pending + counts.Rejected;
         return reply({ ok: true, counts });
       }
-      const spec = validateQuery(input, staff.data.role, shopId);
+      const spec = validateQuery(input, account.role, shopId);
       let query = db.from(spec.table);
       if (spec.operation === 'select') query = query.select(spec.columns);
       else if (spec.operation === 'insert') {
