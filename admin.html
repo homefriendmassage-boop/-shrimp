@@ -1176,7 +1176,8 @@
         });
         const result = await response.json();
         if (!response.ok || !result.ok) throw new Error(result.code || 'ROUND_NOTICE_FAILED');
-        if (result.eligible === 0) status.textContent = 'ไม่มีสมาชิกเข้าเกณฑ์แจ้งเตือนใน 12 ชั่วโมงล่าสุด';
+        if (result.eligible === undefined) status.textContent = result.queued ? 'เข้าคิวส่งแจ้งเปิดรอบแล้ว' : 'ไม่มีรายการแจ้งเปิดรอบที่รอส่ง';
+        else if (result.eligible === 0) status.textContent = 'ไม่มีสมาชิกเข้าเกณฑ์แจ้งเตือนใน 12 ชั่วโมงล่าสุด';
         else if (result.queued) status.textContent = 'เข้าคิวแจ้งเปิดรอบให้สมาชิก ' + (result.eligible ?? '') + ' คน';
         else status.textContent = 'LINE API รับคำขอแจ้งเปิดรอบ ' + result.accepted + ' จาก ' + result.eligible + ' คน' +
           (result.failed ? ' · ส่งไม่สำเร็จ ' + result.failed + ' คน กรุณาตรวจ Logs ของ round-notice' : '');
