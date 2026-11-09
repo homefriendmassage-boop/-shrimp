@@ -95,6 +95,72 @@
         .text-right { text-align: right !important; }
         .grand-total { font-weight: bold; background-color: #eee !important; }
     }
+    #walletDepositDialog {
+      box-sizing: border-box;
+      width: min(380px, calc(100% - 32px));
+      max-height: calc(100% - 32px);
+      margin: auto;
+      padding: 24px 20px 20px;
+      border: 1px solid #434b5d;
+      border-radius: 20px;
+      background: linear-gradient(150deg, #1c2230, #141823);
+      color: #f8fafc;
+      text-align: center;
+      box-shadow: 0 18px 48px #0008;
+    }
+    #walletDepositDialog::backdrop { background: #080b13b3; }
+    #walletDepositDialog .wallet-confirm-icon {
+      display: grid;
+      place-items: center;
+      width: 80px;
+      height: 80px;
+      margin: 0 auto 12px;
+      border-radius: 50%;
+      background: radial-gradient(circle at top, #17453c, #15302755 75%, transparent);
+    }
+    #walletDepositDialog .wallet-confirm-icon i { grid-area: 1 / 1; }
+    #walletDepositDialog .fa-coins {
+      transform: translate(8px, -15px);
+      color: #ffc54d;
+      font-size: 25px;
+    }
+    #walletDepositDialog .fa-wallet {
+      transform: translateY(9px);
+      color: #99a9c1;
+      font-size: 43px;
+      text-shadow: 0 3px 4px #0e1421;
+    }
+    #walletDepositTitle { margin: 0; font-size: 1.45rem; }
+    #walletDepositMember { margin: 4px 0 14px; color: #aab6ca; overflow-wrap: anywhere; }
+    #walletDepositAmount {
+      margin: 0 auto 18px;
+      padding: 6px 10px;
+      border: 1px solid #296555;
+      border-radius: 12px;
+      background: #12352f80;
+      color: #35eda9;
+      font-size: 2rem;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+    #walletDepositDialog .wallet-confirm-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    #walletDepositDialog button {
+      min-height: 46px;
+      padding: 8px 6px;
+      border: 0;
+      border-radius: 9px;
+      background: #505868;
+      color: #fff;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    #walletDepositDialog button[value="approve"] { background: linear-gradient(#008c51, #007a45); }
+    #walletDepositDialog button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   </style>
 </head>
 <body>
@@ -463,19 +529,21 @@
   </div>
 
   <dialog id="walletDepositDialog" aria-labelledby="walletDepositTitle"
-    style="background:#1b1f2b;color:white;border:1px solid #49556a;border-radius:20px;width:min(420px,85vw);padding:24px;text-align:center;">
+    aria-describedby="walletDepositMember walletDepositAmount">
     <form method="dialog">
-      <i class="fa-solid fa-wallet" style="font-size:2rem;color:#34d399;" aria-hidden="true"></i>
+      <div class="wallet-confirm-icon" aria-hidden="true">
+        <i class="fa-solid fa-coins"></i>
+        <i class="fa-solid fa-wallet"></i>
+      </div>
       <h2 id="walletDepositTitle">ยืนยันเติมเครดิต</h2>
-      <p id="walletDepositMember" style="color:#aab6ca;"></p>
-      <p id="walletDepositAmount" style="color:#34d399;font-size:2rem;font-weight:bold;"></p>
-      <div style="display:flex;gap:10px;">
-        <button class="btn btn-outline" value="cancel" autofocus style="flex:1;">ยกเลิก</button>
-        <button class="btn btn-green" value="approve" style="flex:1;">ยืนยันเติมเงิน</button>
+      <p id="walletDepositMember"></p>
+      <p id="walletDepositAmount"></p>
+      <div class="wallet-confirm-actions">
+        <button type="submit" value="cancel" autofocus>ยกเลิก</button>
+        <button type="submit" value="approve">ยืนยันเติมเงิน</button>
       </div>
     </form>
   </dialog>
-  <style>#walletDepositDialog::backdrop{background:rgba(0,0,0,.65);}</style>
 
   <script>
     const _supabase = createAdminApiClient(APP_CONFIG, () => currentShopId);
