@@ -179,6 +179,24 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (!profile.data || profile.data.member_id !== code || !/^M(0[0-9]{3}|[1-9][0-9]{3,})$/.test(code)) {
           fail('MEMBER_PROFILE_NOT_LINKED', 409);
         }
+        if (input.include_wallet_requests === true) {
+          if (profile.data.status !== 'Active') fail('PLAYER_ACCESS_REQUIRED', 403);
+          const [requests, credits] = await Promise.all([
+            db.from('topup_requests').select('type,amount,status,created_at')
+              .eq('shop_id', shopId).eq('uid', claims.sub)
+              .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(10),
+            db.from('wallet_slip_credits').select('amount,credited_at')
+              .eq('shop_id', shopId).eq('uid', claims.sub)
+              .order('credited_at', { ascending: false }).order('transaction_ref', { ascending: false }).limit(10),
+          ]);
+          if (requests.error || credits.error) fail('WALLET_REQUESTS_UNAVAILABLE', 500);
+          const automatic = credits.data.map(entry => ({
+            type: 'ฝากเงิน', amount: entry.amount, status: 'Approved', created_at: entry.credited_at,
+          }));
+          const history = [...requests.data, ...automatic]
+            .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)).slice(0, 10);
+          return reply({ ok: true, wallet_requests: history });
+        }
         return reply({ ok: true, staff, state: 'Approved', player: profile.data });
       }
 

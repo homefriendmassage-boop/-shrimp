@@ -149,7 +149,10 @@
 
       <div style="margin-bottom: 20px; display: block;" id="slipUploadSection">
         <label style="display: block; color: var(--text-muted); font-size: 0.9rem; margin-bottom: 5px;">แนบสลิปโอนเงิน (บังคับ)</label>
-        <input type="file" id="fileSlip" accept="image/*" style="width: 100%; box-sizing: border-box; background: #0f111a; border: 1px solid var(--card-border); color: white; padding: 10px; border-radius: 8px; font-family: 'Kanit'; font-size: 0.9rem; outline: none;">
+        <input type="file" id="fileSlip" accept="image/*" onchange="updateSlipPreview()" style="width: 100%; box-sizing: border-box; background: #0f111a; border: 1px solid var(--card-border); color: white; padding: 10px; border-radius: 8px; font-family: 'Kanit'; font-size: 0.9rem; outline: none;">
+        <img id="slipPreview" hidden alt="ตัวอย่างสลิปโอนเงินที่เลือก" onerror="clearInvalidSlipPreview()"
+             style="width: 100%; max-height: 240px; object-fit: contain; margin-top: 10px; border-radius: 8px; background: #0f111a;">
+        <small id="slipPreviewStatus" role="status" style="color: var(--text-muted);"></small>
       </div>
 
       <div style="margin-bottom: 20px; display: none;" id="withdrawOptionsSection">
@@ -164,6 +167,12 @@
         <button onclick="closeTopupModal()" style="flex: 1; background: transparent; border: 1px solid var(--text-muted); color: var(--text-muted); border-radius: 8px; padding: 12px; font-family: 'Kanit'; cursor: pointer;">ยกเลิก</button>
         <button id="btnSubmitTopup" onclick="submitTopupRequest()" style="flex: 1; background: var(--blue-main); border: none; color: white; border-radius: 8px; padding: 12px; font-family: 'Kanit'; font-weight: 600; cursor: pointer;">ส่งแจ้งแอดมิน</button>
       </div>
+      <section style="margin-top: 18px; border-top: 1px solid var(--card-border); padding-top: 12px;">
+        <h4 style="margin: 0 0 8px;">สถานะรายการ Wallet ล่าสุด</h4>
+        <button type="button" onclick="loadWalletRequests()" id="refreshWalletRequests">อัปเดตสถานะ</button>
+        <p id="walletRequestsStatus" role="status" style="color: var(--text-muted);"></p>
+        <ul id="walletRequests" style="padding-left: 20px; margin-bottom: 0;"></ul>
+      </section>
     </div>
   </div>
 
@@ -748,7 +757,7 @@
           uid: currentLineUserId,
           table_no: playMode === 'table' ? userTableNo : '-', 
           bet_type: selectedBetType, 
-          amount: parseFloat(amount),
+          amount: amountValue,
           status: 'Active', 
           play_mode: playMode, 
           payout: 0
@@ -809,11 +818,63 @@
     function openTopupModal() {
       if (currentUserStatus !== 'Active') { alert("บัญชียังไม่เปิดใช้งาน"); return; }
       document.getElementById('topupModal').classList.remove('hidden'); toggleOptions();
+      loadWalletRequests();
     }
     
+    async function loadWalletRequests() {
+      const button = document.getElementById('refreshWalletRequests');
+      if (button.disabled) return;
+      const list = document.getElementById('walletRequests');
+      const status = document.getElementById('walletRequestsStatus');
+      button.disabled = true;
+      list.replaceChildren();
+      status.textContent = 'กำลังโหลดรายการ…';
+      try {
+        const result = await readPlayerProfile('player_profile', { include_wallet_requests: true });
+        if (!Array.isArray(result.wallet_requests)) throw new Error('WALLET_REQUESTS_UNAVAILABLE');
+        const labels = new Map([['Pending', 'รอตรวจ'], ['Approved', 'อนุมัติแล้ว'], ['Rejected', 'ปฏิเสธ']]);
+        for (const request of result.wallet_requests) {
+          const row = document.createElement('li');
+          const amount = Number(request.amount).toLocaleString('th-TH', { style: 'currency', currency: 'THB' });
+          const date = new Date(request.created_at).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
+          row.textContent = request.type + ' ' + amount + ' · ' + (labels.get(request.status) ?? 'ไม่ทราบสถานะ') + ' · ' + date;
+          list.appendChild(row);
+        }
+        status.textContent = result.wallet_requests.length ? '' : 'ยังไม่มีรายการ Wallet';
+        fetchDashboard();
+      } catch {
+        status.textContent = 'โหลดสถานะรายการไม่ได้ กรุณากดอัปเดตอีกครั้ง';
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function updateSlipPreview() {
+      const input = document.getElementById('fileSlip');
+      const preview = document.getElementById('slipPreview');
+      const previousUrl = preview.getAttribute('src');
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+      preview.removeAttribute('src');
+      preview.hidden = true;
+      document.getElementById('slipPreviewStatus').textContent = '';
+
+      const file = input.files[0];
+      if (file) {
+        preview.src = URL.createObjectURL(file);
+        preview.hidden = false;
+      }
+    }
+
+    function clearInvalidSlipPreview() {
+      document.getElementById('fileSlip').value = '';
+      updateSlipPreview();
+      document.getElementById('slipPreviewStatus').textContent = 'เปิดรูปสลิปไม่ได้ กรุณาเลือกรูปใหม่';
+    }
+
     function closeTopupModal() { 
       document.getElementById('topupModal').classList.add('hidden'); 
       document.getElementById('txtTopupAmount').value = ''; document.getElementById('fileSlip').value = '';
+      updateSlipPreview();
       document.getElementById('btnSubmitTopup').disabled = false; document.getElementById('btnSubmitTopup').innerHTML = 'ส่งแจ้งแอดมิน';
     }
     
@@ -844,6 +905,40 @@
       }
     }
 
+    async function creditWalletSlip(image, amount) {
+      const token = liff.getIDToken();
+      if (!token) throw new Error('กรุณาเข้าสู่ระบบ LINE ใหม่');
+      const form = new FormData();
+      form.set('shop_id', currentShopId);
+      form.set('amount', amount);
+      form.set('image', image);
+      const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/wallet-topup', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, apikey: APP_CONFIG.SUPABASE_ANON_KEY },
+        body: form,
+        signal: AbortSignal.timeout(30000),
+      });
+      const result = await response.json();
+      if (result.code === 'AUTO_CREDIT_DISABLED') return false;
+      if (response.ok && (result.code === 'CREDITED' || result.code === 'ALREADY_CREDITED')) {
+        alert(result.code === 'CREDITED' ? 'เติม Wallet สำเร็จ' : 'สลิปนี้เติม Wallet สำเร็จไปแล้ว');
+        closeTopupModal();
+        fetchDashboard();
+        return true;
+      }
+
+      const messages = {
+        IMAGE_INVALID: 'กรุณาเลือกรูป JPG, PNG, GIF หรือ WebP ขนาดไม่เกิน 4 MB',
+        AMOUNT_INVALID: 'กรุณาระบุจำนวนเงินให้ถูกต้อง (ทศนิยมไม่เกิน 2 ตำแหน่ง)',
+        AMOUNT_MISMATCH: 'ยอดในสลิปไม่ตรงกับยอดที่ระบุ',
+        RECEIVER_MISMATCH: 'บัญชีผู้รับในสลิปไม่ตรงกับบัญชีของร้าน',
+        DUPLICATE_SLIP: 'สลิปนี้ถูกใช้ตรวจแล้ว กรุณาตรวจประวัติ Wallet หรือติดต่อแอดมิน',
+        SLIP_NOT_VERIFIED: 'ตรวจสลิปไม่ผ่าน กรุณาตรวจรูปสลิปหรือติดต่อแอดมิน',
+        PLAYER_ACCESS_REQUIRED: 'บัญชีนี้ยังใช้การเติมอัตโนมัติไม่ได้ กรุณาติดต่อแอดมิน',
+      };
+      throw new Error(messages[result.code] || 'ยังยืนยันผลการเติมไม่ได้ กรุณาตรวจประวัติ Wallet ก่อนส่งซ้ำ');
+    }
+
     async function submitTopupRequest() {
       const type = document.getElementById('selTransactionType').value;
       const amount = document.getElementById('txtTopupAmount').value;
@@ -851,20 +946,32 @@
       const feeOption = document.getElementById('selWithdrawFee').value;
       const btnSubmit = document.getElementById('btnSubmitTopup');
       
-      if (!amount || amount <= 0) { alert("ระบุจำนวนเงินให้ถูกต้อง"); return; }
-
-      btnSubmit.disabled = true; btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังส่งข้อมูล...';
-      
-      let slipUrl = "";
-      if (type === 'ฝากเงิน' && method === 'โอนเงิน') {
-         const fileInput = document.getElementById('fileSlip');
-         if (fileInput.files.length > 0) {
-            btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังอัปโหลดสลิป...';
-            slipUrl = await uploadSlipToSupabase(fileInput.files[0]);
-         }
+      if (btnSubmit.disabled) return;
+      const amountValue = Number(amount);
+      if (!Number.isFinite(amountValue) || amountValue <= 0) {
+        alert('ระบุจำนวนเงินให้ถูกต้อง');
+        return;
       }
 
+      const needsSlip = type === 'ฝากเงิน' && method === 'โอนเงิน';
+      const slipFile = needsSlip ? document.getElementById('fileSlip').files[0] : null;
+      if (needsSlip && !slipFile) {
+        alert('กรุณาแนบรูปสลิปโอนเงิน');
+        return;
+      }
+
+      btnSubmit.disabled = true;
+      btnSubmit.textContent = slipFile ? 'กำลังอัปโหลดสลิป…' : 'กำลังส่งข้อมูล…';
+
       try {
+         if (slipFile) {
+           btnSubmit.textContent = 'กำลังตรวจสลิป…';
+           if (await creditWalletSlip(slipFile, amount)) return;
+           btnSubmit.textContent = 'กำลังอัปโหลดสลิป…';
+         }
+         const slipUrl = slipFile ? await uploadSlipToSupabase(slipFile) : '';
+         if (slipFile && !slipUrl) throw new Error('อัปโหลดสลิปไม่สำเร็จ กรุณาลองอีกครั้ง');
+         btnSubmit.textContent = 'กำลังส่งข้อมูล…';
          // บันทึกลงตาราง topup_requests ใน Supabase โดยตรง (Supabase Trigger จะจัดการยิง LINE เองอัตโนมัติ)
          const { data: insertData, error: dbError } = await _supabase.from('topup_requests').insert([{
            shop_id: currentShopId,
@@ -882,7 +989,7 @@
          if (dbError) {
             throw new Error(dbError.message);
          } else {
-            alert(`ส่งแจ้ง ${type} สำเร็จ! ระบบได้ส่งแจ้งเตือนไปที่แอดมินแล้วครับ`); 
+            alert(`ส่งแจ้ง ${type} สำเร็จ! คำขออยู่ระหว่างรอแอดมินตรวจสอบ`); 
             closeTopupModal(); 
          }
       } catch (error) { 
