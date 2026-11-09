@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js"></script>
-  <script src="admin-api-client.js?v=2"></script>
+  <script src="admin-api-client.js?v=3"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -477,6 +477,15 @@
 
     async function initializeApp() {
       const urlParams = new URLSearchParams(window.location.search);
+      const state = urlParams.get('liff.state');
+      if (state) {
+        const restored = new URL(state, location.origin);
+        if (restored.origin === location.origin) {
+          for (const key of ['shop', 'tab']) if (!urlParams.has(key) && restored.searchParams.has(key)) {
+            urlParams.set(key, restored.searchParams.get(key));
+          }
+        }
+      }
       if (urlParams.get('shop')) {
           currentShopId = urlParams.get('shop');
       }
@@ -497,13 +506,13 @@
           currentAdminName = profile.displayName;
           await checkAdminAccess(currentOpId);
           if (document.getElementById('adminTabs').style.display === 'flex' &&
-              new URLSearchParams(window.location.search).get('tab') === 'pending') {
+              (new URLSearchParams(window.location.search).get('tab') || urlParams.get('tab')) === 'pending') {
             switchAdminTab('pending');
           }
           await loadGeneralMembershipRequests();
 
           let hashData = window.location.hash; 
-          if (['Admin', 'Superadmin', 'Operator'].includes(currentUserRole) && hashData && hashData.length > 1) {
+          if (['Admin', 'Superadmin', 'Operator'].includes(currentUserRole) && urlParams.get('tab') !== 'pending' && new URLSearchParams(window.location.search).get('tab') !== 'pending' && hashData && hashData.length > 1) {
              let payloadData = hashData.substring(1); 
              let dataParts = payloadData.split('_'); 
              if (dataParts.length === 3) {
@@ -913,12 +922,33 @@
                 ${slipBtn}
                 <div style="display: flex; gap: 10px; margin-top: 10px;">
                     <button class="btn btn-red" style="padding: 8px;" onclick="rejectPendingRequest(${r.id}, '${r.uid}', '${r.type}', ${r.amount})">ปฏิเสธ</button>
-                    <button class="btn btn-blue" style="padding: 8px;" onclick="handlePendingRequest(${r.id}, '${r.member_id}', ${r.amount}, '${r.type}')">จัดการรายการ</button>
+                    <button class="btn btn-blue" style="padding: 8px;" data-manage-wallet>จัดการรายการ</button>
                 </div>
              `;
+             const manage = card.querySelector('[data-manage-wallet]');
+             manage.addEventListener('click', () => {
+               if (r.type === 'ฝากเงิน') approveQueuedWalletDeposit(r, manage);
+               else handlePendingRequest(r.id, r.member_id, r.amount, r.type);
+             });
              listDiv.appendChild(card);
          });
        } catch (e) { console.error("Exception in loadPendingRequests:", e); }
+    }
+
+    async function approveQueuedWalletDeposit(request, button) {
+      if (button.disabled) return;
+      const amount = Number(request.amount).toLocaleString('th-TH');
+      if (!confirm('ยืนยันเติมเครดิต ฿' + amount + ' ให้สมาชิก ' + request.member_id + ' · ' + request.display_name + '?')) return;
+      button.disabled = true;
+      try {
+        await _supabase.approveWalletDeposit(request.id);
+        await loadPendingRequests();
+      } catch (error) {
+        if (error.message === 'REQUEST_NOT_PENDING') await loadPendingRequests();
+        showAdminApiError(error.message);
+      } finally {
+        button.disabled = false;
+      }
     }
 
     function handlePendingRequest(reqId, targetMemberId, amount, type) {
