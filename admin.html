@@ -201,6 +201,7 @@
           <button class="btn btn-green" id="btnOpenRound" onclick="controlRound('createRound')"><i class="fa-solid fa-play"></i> 1. เปิดรอบใหม่</button>
           <button class="btn btn-yellow" id="btnCloseBetting" onclick="prepareCloseBetting()"><i class="fa-solid fa-pause"></i> 2. ปิดรับแทง</button>
         </div>
+        <p id="roundNoticeStatus" role="status" style="color:var(--text-muted);margin:8px 0"></p>
         
         <div id="resolverStatusMsg" style="display: none; background: rgba(139, 92, 246, 0.2); border: 1px solid #8b5cf6; padding: 10px; border-radius: 8px; text-align: center; color: #8b5cf6; font-size: 0.9rem; margin-bottom: 15px;">
            <i class="fa-solid fa-check-circle"></i> ยืนยันการรับจบโดย: <span id="txtResolverName" style="font-weight: bold;">-</span>
@@ -463,7 +464,7 @@
   <script>
     const _supabase = createAdminApiClient(APP_CONFIG, () => currentShopId);
     
-    let currentShopId = "SHOP_001"; // ค่าเริ่มต้นสำหรับร้านค้า
+    let currentShopId = "SHOP_000"; // ค่าเริ่มต้นสำหรับร้านค้า
     let currentOpId = "", currentAdminName = "", creditMode = "private", currentUserRole = "Customer", selectedUserIdForManage = ""; 
     let targetEndTimeMs = null, isRoundOpen = false;
     let pendingFinalizeData = null; // เก็บข้อมูลรอบที่กำลังรออนุมัติส่วนต่าง
@@ -1162,6 +1163,8 @@
     }
 
     async function notifyRoundOpening(roundId) {
+      const status = document.getElementById('roundNoticeStatus');
+      status.textContent = 'กำลังตรวจผู้รับและส่งแจ้งเปิดรอบ…';
       try {
         const token = liff.getIDToken();
         if (!token) throw new Error('LINE_AUTH_INVALID');
@@ -1169,11 +1172,16 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + token },
           body: JSON.stringify({ shop_id: currentShopId, round_id: roundId }),
-          signal: AbortSignal.timeout(15000)
+          signal: AbortSignal.timeout(28000)
         });
         const result = await response.json();
         if (!response.ok || !result.ok) throw new Error(result.code || 'ROUND_NOTICE_FAILED');
-      } catch (error) { showAdminApiError('ROUND_NOTICE · ' + error.message); }
+        if (result.eligible === undefined) status.textContent = result.queued ? 'เข้าคิวส่งแจ้งเปิดรอบแล้ว' : 'ไม่มีรายการแจ้งเปิดรอบที่รอส่ง';
+        else if (result.eligible === 0) status.textContent = 'ไม่มีสมาชิกเข้าเกณฑ์แจ้งเตือนใน 12 ชั่วโมงล่าสุด';
+        else if (result.queued) status.textContent = 'เข้าคิวแจ้งเปิดรอบให้สมาชิก ' + (result.eligible ?? '') + ' คน';
+        else status.textContent = 'LINE API รับคำขอแจ้งเปิดรอบ ' + result.accepted + ' จาก ' + result.eligible + ' คน' +
+          (result.failed ? ' · ส่งไม่สำเร็จ ' + result.failed + ' คน กรุณาตรวจ Logs ของ round-notice' : '');
+      } catch (error) { status.textContent = 'เปิดรอบแล้ว แต่แจ้งเตือนไม่สำเร็จ [' + error.message + ']'; }
     }
 
     async function controlRound(cmd) {

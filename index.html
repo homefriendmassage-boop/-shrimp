@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>แอปผู้เล่น - บ่อตกกุ้ง</title>
   <script src="config.js"></script>
-  <script src="membership-notice-client.js"></script>
+  <script src="membership-notice-client.js?v=2"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -198,7 +198,7 @@
 
     <div id="pendingView" class="hidden" style="text-align: center; padding: 60px 20px; background: var(--bg-panel); border-radius: 16px; border: 1px solid var(--card-border);">
       <i class="fa-solid fa-lock" style="font-size: 4rem; color: var(--text-muted); margin-bottom: 20px;"></i>
-      <h2 style="margin: 0; color: var(--text-main);">รอการอนุมัติสิทธิ์</h2>
+      <h2 style="margin: 0; color: var(--text-main);" id="membershipGateTitle">รอการอนุมัติสิทธิ์</h2>
       <p id="membershipGateMessage" style="color: var(--text-muted); margin-top: 10px;">บัญชีของคุณยังไม่เปิดใช้งาน</p>
       <a id="membershipApplyLink" class="hidden" style="color:var(--blue-main)">สมัครสมาชิก</a>
       <button id="retryOwnerNotice" type="button" class="hidden" style="margin:14px auto;padding:12px;border:0;border-radius:8px;background:var(--blue-main);color:white;font:inherit">ส่งเตือนแอดมินอีกครั้ง</button>
@@ -332,7 +332,7 @@
     const supabaseKey = APP_CONFIG.SUPABASE_ANON_KEY;
     const _supabase = supabase.createClient(supabaseUrl, supabaseKey);
 
-    let currentShopId = "SHOP_001"; // ค่าเริ่มต้นร้านค้า
+    let currentShopId = "SHOP_000"; // ค่าเริ่มต้นร้านค้า
     let currentLineUserId = "";
     let currentDisplayName = "";
     let selectedBetType = "";
@@ -346,10 +346,24 @@
     let timerInterval = null;
     let isRoundOpen = false; 
 
+    function playerEntryParams() {
+      const params = new URLSearchParams(location.search);
+      const state = params.get('liff.state');
+      if (!state) return params;
+      try {
+        const restored = new URL(state, location.origin);
+        if (restored.origin !== location.origin) return params;
+        for (const key of ['shop', 'table', 'd', 'ref']) {
+          if (!params.has(key) && restored.searchParams.has(key)) params.set(key, restored.searchParams.get(key));
+        }
+      } catch { /* Explicit query values remain authoritative. */ }
+      return params;
+    }
+
     async function initializeApp() {
-      const urlParams = new URLSearchParams(window.location.search);
+      const urlParams = playerEntryParams();
       
-      // ดึง shop_id จาก URL ถ้ามี (เช่น ?shop=SHOP_001)
+      // ดึง shop_id จาก URL ถ้ามี (เช่น ?shop=SHOP_000)
       if (urlParams.get('shop')) {
         currentShopId = urlParams.get('shop');
       }
@@ -370,6 +384,10 @@
 
       try {
         await liff.init({ liffId: APP_CONFIG.LIFF_ID_PLAYER });
+        const restored = playerEntryParams();
+        if (restored.has('shop')) {
+          currentShopId = restored.get('shop');
+        }
         if (!liff.isLoggedIn()) { liff.login(); } 
         else {
           const profile = await liff.getProfile();
@@ -401,6 +419,8 @@
     }
 
     function showMembershipGate(message, code, canApply = false) {
+      document.getElementById('membershipGateTitle').textContent = canApply ? 'สมัครสมาชิกก่อนเข้าใช้งาน' : 'สถานะสมาชิก';
+      document.getElementById('pendingMemberId').parentElement.hidden = !code;
       document.getElementById('membershipGateMessage').textContent = message;
       document.getElementById('pendingMemberId').textContent = code || '-';
       document.getElementById('memberIdDisplay').textContent = code || '-';
@@ -451,6 +471,7 @@
     async function authenticateUser(profile) {
       try {
         const result = await readPlayerProfile();
+        if (result.shop_id) currentShopId = result.shop_id;
         if (result.staff && !result.state) {
           window.location.replace('admin.html?shop=' + encodeURIComponent(currentShopId));
           return;
@@ -466,7 +487,10 @@
             Pending: 'ส่งใบสมัครแล้ว กำลังรออนุมัติ',
             Rejected: 'ใบสมัครยังไม่ได้รับอนุมัติ กรุณาติดต่อผู้ดูแลร้าน'
           };
-          if (result.state === 'Pending') syncOwnerNotice(ownerNoticeButton, ownerNoticeStatus, 'status');
+          if (result.state === 'Pending') {
+            ownerNoticeButton.classList.remove('hidden');
+            syncOwnerNotice(ownerNoticeButton, ownerNoticeStatus, 'status');
+          }
           showMembershipGate(messages[result.state] || 'กรุณาติดต่อผู้ดูแลร้าน', result.member_id, result.state === 'NotApplied');
           return;
         }
