@@ -6,6 +6,7 @@
 <div style="margin:18px 0;padding:14px;border:1px solid #45627c;border-radius:10px"><small>ร้านที่สมัครสมาชิก</small><div id="shopName" style="font-size:1.25rem;font-weight:700;margin-top:4px" aria-live="polite">กำลังตรวจสอบชื่อร้าน…</div></div>
 <label>ชื่อแสดงในระบบ<input id="name" maxlength="80" placeholder="ชื่อสมาชิก"></label>
 <div id="actions" hidden><button id="apply" disabled>ส่งคำขอสมัครสมาชิก</button></div>
+<button id="retryNotification" hidden disabled>ลองส่งแจ้งเตือนอีกครั้ง</button>
 <div id="result" role="status">กำลังเข้าสู่ระบบ LINE…</div></div>
 <script>
 const $=x=>document.getElementById(x);let logged=false;
@@ -16,8 +17,10 @@ async function fetchWithDeadline(url,options,ms=12000){
   finally{clearTimeout(timer)}
 }
 const shopId=new URLSearchParams(location.search).get('shop')||'';
-async function request(action){
- $('result').textContent='กำลังตรวจสอบสมาชิก…';$('apply').disabled=true;
+async function request(action, retryNotification=false){
+ const retry=$('retryNotification');
+ $('result').textContent=retryNotification?'กำลังลองส่งแจ้งเตือน…':'กำลังตรวจสอบสมาชิก…';
+ $('apply').disabled=true;retry.disabled=true;
  try{
   const body={action,shop_id:shopId};if(action==='apply')body.display_name=$('name').value.trim();
   const r=await fetchWithDeadline('https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval',{
@@ -25,6 +28,7 @@ async function request(action){
   });
   const j=await r.json();if(!r.ok||!j.ok)throw Error(j.code||r.status);
   const state=j.application?.state||'NotApplied';
+  retry.hidden=state!=='Pending';
   if(state==='Approved'){
    $('actions').hidden=true;
    $('name').parentElement.hidden=true;
@@ -35,10 +39,12 @@ async function request(action){
   $('name').parentElement.hidden=state!=='NotApplied';
   const names={Pending:'รอแอดมินอนุมัติ',Approved:'อนุมัติสมาชิกทั่วไปแล้ว',Rejected:'ไม่ผ่านการอนุมัติ',NotApplied:'ยังไม่ได้สมัคร'};
   $('result').textContent=(names[state]||state)+(j.application?.member_id?'\nเลขสมาชิก: '+j.application.member_id:'')+(j.application?.id?'\nเลขคำขอ: '+j.application.id:'');
+  if(retryNotification && state==='Pending') $('result').textContent+='\nเรียกลองส่งแล้ว กรุณาเช็กแชต LINE OA ในบัญชีเจ้าของร้าน';
  }catch(e){$('result').textContent='ตรวจสอบสมาชิกไม่สำเร็จ: '+(e.name==='AbortError'?'เซิร์ฟเวอร์ตอบช้า กรุณาเปิดหน้าใหม่':e.message)}
- finally{$('apply').disabled=!logged}
+ finally{$('apply').disabled=!logged;retry.disabled=!logged}
 }
 $('apply').onclick=()=>request('apply');
+$('retryNotification').onclick=()=>request('status',true);
 (async()=>{try{
  if(!shopId)throw Error('กรุณาเปิดผ่านลิงก์ร้านที่ถูกต้อง');
  await liff.init({liffId:APP_CONFIG.LIFF_ID_PLAYER});
