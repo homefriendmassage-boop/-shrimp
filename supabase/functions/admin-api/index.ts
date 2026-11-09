@@ -99,7 +99,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
       if (!/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
@@ -128,6 +128,18 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (shop.error) fail('DATABASE_ERROR', 500);
       if (!shop.data || String(shop.data.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
       if (input.action === 'access') return reply({ ok: true, staff: staff.data });
+      if (input.action === 'membership_summary') {
+        if (!['Admin', 'Superadmin'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
+        const states = ['Approved', 'Pending', 'Rejected'];
+        const results = await Promise.all(states.map(state =>
+          db.from('membership_applications').select('id', { count: 'exact', head: true })
+            .eq('shop_id', shopId).eq('state', state)
+        ));
+        if (results.some(result => result.error || typeof result.count !== 'number')) fail('DATABASE_ERROR', 500);
+        const counts = Object.fromEntries(states.map((state, index) => [state, results[index].count]));
+        counts.Total = counts.Approved + counts.Pending + counts.Rejected;
+        return reply({ ok: true, counts });
+      }
       const spec = validateQuery(input, staff.data.role, shopId);
       let query = db.from(spec.table);
       if (spec.operation === 'select') query = query.select(spec.columns);
