@@ -57,11 +57,13 @@ async function recordWebhook(req, shop) {
   return reply({ ok: true });
 }
 
-function roundFlex(shop, round) {
+const noticeStates = { opened: 'Open', closed: 'Closed', result: 'Ended' };
+
+function roundFlex(shop, round, kind) {
   const liffId = shop.liff_id_player || Deno.env.get('MEMBERSHIP_LIFF_ID_PLAYER') || '2012454809-UFGeUGbW';
   if (!/^\d+-[A-Za-z0-9]+$/.test(liffId)) throw new Error('PLAYER_LIFF_INVALID');
   const url = 'https://liff.line.me/' + liffId + '?shop=' + encodeURIComponent(shop.shop_id);
-  const title = 'เปิดรอบใหม่แล้ว';
+  const title = { opened: 'เปิดรอบใหม่แล้ว', closed: 'ปิดรับรอบนี้แล้ว', result: 'ประกาศผลชั่งกุ้ง' }[kind];
   return {
     type: 'flex', altText: title,
     contents: {
@@ -69,7 +71,8 @@ function roundFlex(shop, round) {
       body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [
         { type: 'text', text: title, weight: 'bold', size: 'lg', wrap: true },
         { type: 'text', text: String(shop.shop_name || 'บ่อตกกุ้ง').slice(0, 100), wrap: true },
-        { type: 'text', text: 'รอบ ' + round.round_id, wrap: true }
+        { type: 'text', text: 'รอบ ' + round.round_id, wrap: true },
+        ...(kind === 'result' ? [{ type: 'text', text: 'ผล ' + round.result + ' · น้ำหนัก ' + round.weight + ' กรัม', wrap: true }] : [])
       ] },
       footer: { type: 'box', layout: 'vertical', contents: [
         { type: 'button', style: 'primary', action: { type: 'uri', label: 'เปิดหน้าเล่น', uri: url } }
@@ -78,14 +81,14 @@ function roundFlex(shop, round) {
   };
 }
 
-async function dispatch(db, shop, round, batches) {
-  const message = roundFlex(shop, round);
+async function dispatch(db, shop, round, batches, kind) {
+  const message = roundFlex(shop, round, kind);
   let accepted = 0;
   let failed = 0;
   for (const batch of batches) {
-    if (Date.now() >= Number(round.end_time_ms)) break;
+    if (kind === 'opened' && Date.now() >= Number(round.end_time_ms)) break;
     const current = await db.from('rounds').select('status').eq('shop_id', shop.shop_id).eq('round_id', round.round_id).maybeSingle();
-    if (current.error || current.data?.status !== 'Open') break;
+    if (current.error || current.data?.status !== noticeStates[kind]) break;
     const to = batch.recipients.filter(validUid);
     if (!to.length) continue;
     try {
@@ -123,6 +126,8 @@ Deno.serve(async req => {
     if (url.searchParams.has('webhook_shop')) return await recordWebhook(req, url.searchParams.get('webhook_shop'));
     if (req.headers.get('origin') && req.headers.get('origin') !== origin) return fail('ORIGIN_NOT_ALLOWED', 403);
     const input = await req.json();
+    const kind = input?.kind ?? 'opened';
+    if (!Object.hasOwn(noticeStates, kind)) return fail('INVALID_NOTICE_KIND');
     if (!input || !/^SHOP_[0-9]{3,}$/.test(input.shop_id) || typeof input.round_id !== 'string' ||
         !/^[A-Za-z0-9_-]{1,80}$/.test(input.round_id)) return fail('INVALID_ROUND');
     const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
@@ -139,13 +144,15 @@ Deno.serve(async req => {
     if (staff.error) return fail('DATABASE_ERROR', 500);
     if (staff.data?.status !== 'Active' || !['Admin', 'Superadmin', 'Operator'].includes(staff.data.role)) return fail('ADMIN_REQUIRED', 403);
     const shop = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,liff_id_player').eq('shop_id', input.shop_id).maybeSingle();
-    const round = await db.from('rounds').select('round_id,status,end_time_ms').eq('shop_id', input.shop_id).eq('round_id', input.round_id).maybeSingle();
+    const round = await db.from('rounds').select('round_id,status,end_time_ms,result,weight').eq('shop_id', input.shop_id).eq('round_id', input.round_id).maybeSingle();
     if (shop.error || round.error) return fail('DATABASE_ERROR', 500);
-    if (shop.data?.status !== 'active' || round.data?.status !== 'Open' || !(Number(round.data.end_time_ms) > Date.now())) {
-      return fail('ROUND_NOT_OPEN', 409);
+    if (shop.data?.status !== 'active' || round.data?.status !== noticeStates[kind] ||
+        (kind === 'opened' && !(Number(round.data.end_time_ms) > Date.now()))) {
+      return fail('ROUND_STATE_CHANGED', 409);
     }
+    if (kind === 'result' && (round.data.result == null || round.data.weight == null)) return fail('ROUND_RESULT_MISSING', 409);
     const batches = await db.from('round_notice_batches').select('id,recipients,sent_at')
-      .eq('shop_id', input.shop_id).eq('round_id', input.round_id).order('batch_no');
+      .eq('shop_id', input.shop_id).eq('round_id', input.round_id).eq('kind', kind).order('batch_no');
     if (batches.error) return fail('DATABASE_ERROR', 500);
     const jobs = batches.data ?? [];
     const eligible = jobs.reduce((count, job) => count + job.recipients.length, 0);
@@ -154,10 +161,10 @@ Deno.serve(async req => {
     if (!unsent.length) return reply({ ok: true, eligible, accepted: alreadyAccepted, failed: 0 });
     if (!shop.data.line_oa_token) return fail('SHOP_OA_TOKEN_MISSING', 422);
     if (unsent.length <= 2) {
-      const result = await dispatch(db, shop.data, round.data, unsent);
+      const result = await dispatch(db, shop.data, round.data, unsent, kind);
       return reply({ ok: true, eligible, accepted: alreadyAccepted + result.accepted, failed: result.failed });
     }
-    EdgeRuntime.waitUntil(dispatch(db, shop.data, round.data, unsent).catch(() => console.error('round notice dispatch failed')));
+    EdgeRuntime.waitUntil(dispatch(db, shop.data, round.data, unsent, kind).catch(() => console.error('round notice dispatch failed')));
     return reply({ ok: true, eligible, accepted: alreadyAccepted, queued: true });
   } catch {
     console.error('round notice request failed');

@@ -1162,26 +1162,27 @@
       }
     }
 
-    async function notifyRoundOpening(roundId) {
+    async function notifyRoundEvent(roundId, kind) {
+      const label = { opened: 'เปิดรอบ', closed: 'ปิดรับ', result: 'ผลชั่งกุ้ง' }[kind];
       const status = document.getElementById('roundNoticeStatus');
-      status.textContent = 'กำลังตรวจผู้รับและส่งแจ้งเปิดรอบ…';
+      status.textContent = 'กำลังตรวจผู้รับและส่งแจ้ง' + label + '…';
       try {
         const token = liff.getIDToken();
         if (!token) throw new Error('LINE_AUTH_INVALID');
         const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/round-notice', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + token },
-          body: JSON.stringify({ shop_id: currentShopId, round_id: roundId }),
+          body: JSON.stringify({ shop_id: currentShopId, round_id: roundId, kind }),
           signal: AbortSignal.timeout(28000)
         });
         const result = await response.json();
         if (!response.ok || !result.ok) throw new Error(result.code || 'ROUND_NOTICE_FAILED');
-        if (result.eligible === undefined) status.textContent = result.queued ? 'เข้าคิวส่งแจ้งเปิดรอบแล้ว' : 'ไม่มีรายการแจ้งเปิดรอบที่รอส่ง';
+        if (result.eligible === undefined) status.textContent = result.queued ? 'เข้าคิวส่งแจ้ง' + label + 'แล้ว' : 'ไม่มีรายการแจ้ง' + label + 'ที่รอส่ง';
         else if (result.eligible === 0) status.textContent = 'ไม่มีสมาชิกเข้าเกณฑ์แจ้งเตือนใน 12 ชั่วโมงล่าสุด';
-        else if (result.queued) status.textContent = 'เข้าคิวแจ้งเปิดรอบให้สมาชิก ' + (result.eligible ?? '') + ' คน';
-        else status.textContent = 'LINE API รับคำขอแจ้งเปิดรอบ ' + result.accepted + ' จาก ' + result.eligible + ' คน' +
+        else if (result.queued) status.textContent = 'เข้าคิวแจ้ง' + label + 'ให้สมาชิก ' + (result.eligible ?? '') + ' คน';
+        else status.textContent = 'LINE API รับคำขอแจ้ง' + label + ' ' + result.accepted + ' จาก ' + result.eligible + ' คน' +
           (result.failed ? ' · ส่งไม่สำเร็จ ' + result.failed + ' คน กรุณาตรวจ Logs ของ round-notice' : '');
-      } catch (error) { status.textContent = 'เปิดรอบแล้ว แต่แจ้งเตือนไม่สำเร็จ [' + error.message + ']'; }
+      } catch (error) { status.textContent = 'บันทึก' + label + 'แล้ว แต่แจ้งเตือนไม่สำเร็จ [' + error.message + ']'; }
     }
 
     async function controlRound(cmd) {
@@ -1198,7 +1199,7 @@
           let duration = set ? set.round_duration : 15;
           await _supabase.from('rounds').insert([{ shop_id: currentShopId, round_id: rndName, status: 'Open', end_time_ms: new Date().getTime() + (duration * 60000), resolver_type: 'none' }]);
           
-          notifyRoundOpening(rndName);
+          notifyRoundEvent(rndName, 'opened');
           
           document.getElementById('resolverStatusMsg').style.display = 'none';
           alert(`เปิดรอบ ${rndName} สำเร็จ!`);
@@ -1222,11 +1223,7 @@
             // อัปเดตสถานะบ่อเป็น Closed ทันที เพื่อไม่ให้คนแทงเพิ่มได้อีก
             await _supabase.from('rounds').update({ status: 'Closed' }).eq('shop_id', currentShopId).eq('round_id', roundId);
             
-            // ยกเลิกใช้ GAS
-            // let todayStr = new Date().toISOString().split('T')[0];
-            // const { data: activeBets } = await _supabase.from('bets').select('uid').gte('created_at', todayStr + 'T00:00:00Z');
-            // let activeUids = []; if (activeBets) activeUids = Array.from(new Set(activeBets.map(b => b.uid)));
-            // notifyGAS('notifyRoundStatusToUsers', { status: 'Closed', roundId: roundId, targetUids: activeUids });
+            notifyRoundEvent(roundId, 'closed');
 
             if (lr[0].resolver_type !== 'none' && lr[0].resolver_type !== null) {
                 fetchAdminDashboard();
@@ -1378,6 +1375,7 @@
         }
         
         await _supabase.from('rounds').update({ status: 'Ended', weight: w, result: res }).eq('shop_id', currentShopId).eq('round_id', roundId);
+        notifyRoundEvent(roundId, 'result');
         let d = new Date(); let tzOffset = d.getTimezoneOffset() * 60000; let localISOTime = (new Date(d - tzOffset)).toISOString().slice(0, -1); let todayStr = localISOTime.split('T')[0];
         
         // ยกเลิกใช้ GAS
