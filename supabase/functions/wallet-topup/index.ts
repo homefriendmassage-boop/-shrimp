@@ -115,7 +115,42 @@ Deno.serve(async (req) => {
       p_amount: amount, p_bank: bank, p_number: normalizedNumber, p_path: path, p_slip_at: new Date(time).toISOString(),
     });
     if (credit.error) return reply("WALLET_UNAVAILABLE", 503);
-    if (credit.data === "CREDITED") return reply("CREDITED", 200);
+    if (credit.data === "CREDITED") {
+      try {
+        const settings = await db.from("shops").select("line_oa_token,admin_group_id,liff_id_player")
+          .eq("shop_id", shop).maybeSingle();
+        const token = settings.data?.line_oa_token;
+        const playerLiff = settings.data?.liff_id_player || env("MEMBERSHIP_LIFF_ID_PLAYER") || "2012454809-UFGeUGbW";
+        if (token) {
+          const title = "เติม Wallet สำเร็จ";
+          const message = { type: "flex", altText: title, contents: {
+            type: "bubble",
+            body: { type: "box", layout: "vertical", spacing: "sm", contents: [
+              { type: "text", text: title, weight: "bold", wrap: true },
+              { type: "text", text: "สมาชิก " + member.data.member_id + " · ฿" + Number(amount).toLocaleString("th-TH"), wrap: true },
+            ] },
+          } };
+          const recipients = [uid];
+          const admin = settings.data?.admin_group_id;
+          if (/^[CUR][0-9a-f]{32}$/i.test(admin ?? "") && admin !== uid) recipients.push(admin);
+          await Promise.allSettled(recipients.map(async to => {
+            const flex = to === uid && /^\d+-[a-zA-Z0-9]+$/.test(playerLiff) ? {
+              ...message, contents: { ...message.contents, footer: { type: "box", layout: "vertical", contents: [{
+                type: "button", style: "primary", action: {
+                  type: "uri", label: "เปิดหน้า Player", uri: "https://liff.line.me/" + playerLiff + "?shop=" + encodeURIComponent(shop),
+                },
+              }] } },
+            } : message;
+            const sent = await fetch("https://api.line.me/v2/bot/message/push", {
+              method: "POST", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+              body: JSON.stringify({ to, messages: [flex] }), signal: AbortSignal.timeout(3000),
+            });
+            if (!sent.ok) console.error("wallet automatic credit LINE notification rejected", sent.status);
+          }));
+        }
+      } catch { console.error("wallet automatic credit LINE notification unavailable"); }
+      return reply("CREDITED", 200);
+    }
     await bucket.remove([path]);
     if (credit.data === "ALREADY_CREDITED") return reply(credit.data, 200);
     return reply(credit.data, credit.data === "DUPLICATE_SLIP" ? 409 : 422);

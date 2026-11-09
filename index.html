@@ -155,13 +155,7 @@
         <small id="slipPreviewStatus" role="status" style="color: var(--text-muted);"></small>
       </div>
 
-      <div style="margin-bottom: 20px; display: none;" id="withdrawOptionsSection">
-        <label style="display: block; color: var(--text-muted); font-size: 0.9rem; margin-bottom: 5px;">เงื่อนไขการถอน</label>
-        <select id="selWithdrawFee" style="width: 100%; box-sizing: border-box; background: #0f111a; border: 1px solid var(--card-border); color: white; padding: 12px; border-radius: 8px; font-family: 'Kanit'; font-size: 1rem; outline: none;">
-          <option value="หักค่าน้ำ">ถอนแบบปกติ (หักค่าน้ำตามระบบ)</option>
-          <option value="ไม่หักค่าน้ำ">ถอนเต็มจำนวน (ไม่หักค่าน้ำ)</option>
-        </select>
-      </div>
+      <p id="withdrawOptionsSection" style="display:none;color:var(--text-muted);">เงื่อนไขการถอนเป็นไปตามที่ร้านตั้งไว้</p>
 
       <div style="display: flex; gap: 10px;">
         <button onclick="closeTopupModal()" style="flex: 1; background: transparent; border: 1px solid var(--text-muted); color: var(--text-muted); border-radius: 8px; padding: 12px; font-family: 'Kanit'; cursor: pointer;">ยกเลิก</button>
@@ -943,7 +937,6 @@
       const type = document.getElementById('selTransactionType').value;
       const amount = document.getElementById('txtTopupAmount').value;
       const method = type === 'ถอนเงิน' ? 'โอนเงิน' : document.getElementById('selTopupMethod').value;
-      const feeOption = document.getElementById('selWithdrawFee').value;
       const btnSubmit = document.getElementById('btnSubmitTopup');
       
       if (btnSubmit.disabled) return;
@@ -972,26 +965,9 @@
          const slipUrl = slipFile ? await uploadSlipToSupabase(slipFile) : '';
          if (slipFile && !slipUrl) throw new Error('อัปโหลดสลิปไม่สำเร็จ กรุณาลองอีกครั้ง');
          btnSubmit.textContent = 'กำลังส่งข้อมูล…';
-         // บันทึกลงตาราง topup_requests ใน Supabase โดยตรง (Supabase Trigger จะจัดการยิง LINE เองอัตโนมัติ)
-         const { data: insertData, error: dbError } = await _supabase.from('topup_requests').insert([{
-           shop_id: currentShopId,
-           uid: currentLineUserId,
-           member_id: memberId,
-           display_name: currentDisplayName,
-           type: type,
-           amount: parseFloat(amount),
-           method: method,
-           fee_option: (type === 'ถอนเงิน') ? feeOption : '-',
-           slip_url: slipUrl,
-           status: 'Pending'
-         }]).select(); 
-
-         if (dbError) {
-            throw new Error(dbError.message);
-         } else {
-            alert(`ส่งแจ้ง ${type} สำเร็จ! คำขออยู่ระหว่างรอแอดมินตรวจสอบ`); 
-            closeTopupModal(); 
-         }
+         await readPlayerProfile('wallet_request', { type, method, amount, slip_url: slipUrl });
+         alert(`ส่งแจ้ง ${type} สำเร็จ! คำขออยู่ระหว่างรอแอดมินตรวจสอบ`);
+         closeTopupModal();
       } catch (error) { 
           console.error("Supabase Insert Error:", error);
           alert('เกิดข้อผิดพลาดในการบันทึกข้อมูล: ' + error.message); 
