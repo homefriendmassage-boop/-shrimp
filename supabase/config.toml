@@ -1,2 +1,8 @@
 [functions.admin-api]
 verify_jwt = false
+
+[functions.member-approval]
+verify_jwt = false
+
+[functions.round-notice]
+verify_jwt = false

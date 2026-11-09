@@ -37,7 +37,25 @@ async function verifyToken(token, channel) {
   if (!response.ok) return null;
   const claims = await response.json();
   return typeof claims.sub === 'string' && claims.aud === clientId && Number(claims.exp) * 1000 > Date.now()
-    ? claims.sub : null;
+    ? { uid: claims.sub, picture: linePicture(claims.picture) } : null;
+}
+
+function linePicture(value) {
+  if (typeof value !== 'string' || value.length > 1000) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'profile.line-scdn.net' ? url.toString() : null;
+  } catch { return null; }
+}
+async function readOaPicture(shop, uid) {
+  if (!shop.line_oa_token || !/^U[0-9a-f]{32}$/i.test(uid)) return null;
+  try {
+    const response = await fetch('https://api.line.me/v2/bot/profile/' + uid, {
+      headers: { Authorization: 'Bearer ' + shop.line_oa_token },
+      signal: AbortSignal.timeout(3000)
+    });
+    return response.ok ? linePicture((await response.json()).pictureUrl) : null;
+  } catch { return null; }
 }
 
 function membershipFlex(shop, application, kind) {
@@ -60,6 +78,7 @@ function membershipFlex(shop, application, kind) {
     type: 'flex', altText: title,
     contents: {
       type: 'bubble',
+      ...(submitted && linePicture(application.profile_pic) ? { hero: { type: 'image', url: linePicture(application.profile_pic), size: 'full', aspectRatio: '2:1', aspectMode: 'cover' } } : {}),
       body: {
         type: 'box', layout: 'vertical', spacing: 'md',
         contents: [
@@ -75,46 +94,55 @@ function membershipFlex(shop, application, kind) {
   };
 }
 
-async function deliverNotification(db, shop, application, kind) {
-  if (!application?.id) return;
+async function noticeWindow(db, applicationId) {
+  const result = await db.from('membership_notification_outbox').select('last_attempt_at,sent_at')
+    .eq('application_id', applicationId).eq('kind', 'submitted').maybeSingle();
+  if (result.error || !result.data) return null;
+  return {
+    retry_at: result.data.last_attempt_at
+      ? new Date(Date.parse(result.data.last_attempt_at) + 30 * 60 * 1000).toISOString() : null,
+    accepted: !!result.data.sent_at
+  };
+}
+async function deliverNotification(db, shop, application, kind, manual = false) {
+  if (!application?.id) return 'unavailable';
   try {
-    const { data: job, error: readError } = await db.from('membership_notification_outbox')
-      .select('id,first_attempt_at').eq('application_id', application.id).eq('kind', kind).is('sent_at', null).maybeSingle();
-    if (readError) throw new Error('OUTBOX_READ_FAILED');
-    if (!job) return;
-    const owners = kind === 'submitted' ? JSON.parse(Deno.env.get('MEMBERSHIP_OWNER_UIDS') || '{}') : null;
-    const to = kind === 'submitted' ? owners[shop.shop_id] : application.line_uid;
+    const claim = await db.rpc('claim_membership_notice', {
+      p_application: application.id, p_kind: kind, p_manual: manual
+    });
+    if (claim.error) throw new Error('OUTBOX_CLAIM_FAILED');
+    const [job] = claim.data ?? [];
+    if (!job) return 'waiting';
+
+    let to = application.line_uid;
+    if (kind === 'submitted') {
+      try {
+        const owners = JSON.parse(Deno.env.get('MEMBERSHIP_OWNER_UIDS') || '{}');
+        to = owners?.[shop.shop_id];
+      } catch { throw new Error('MEMBERSHIP_OWNER_UIDS_INVALID'); }
+    }
     const token = shop.line_oa_token;
     if (typeof to !== 'string' || !/^U[0-9a-f]{32}$/i.test(to) || !token) {
       throw new Error('MEMBERSHIP_LINE_CONFIGURATION_MISSING');
     }
     const message = membershipFlex(shop, application, kind);
-    let firstAttempt = job.first_attempt_at;
-    if (!firstAttempt) {
-      const claimed = await db.from('membership_notification_outbox').update({ first_attempt_at: new Date().toISOString() })
-        .eq('id', job.id).is('first_attempt_at', null).select('first_attempt_at').maybeSingle();
-      if (claimed.error) throw new Error('OUTBOX_CLAIM_FAILED');
-      if (!claimed.data) return;
-      firstAttempt = claimed.data.first_attempt_at;
-    }
-    // LINE keeps retry keys for 24 hours. Keep a margin to avoid late duplicates.
-    if (Date.now() - Date.parse(firstAttempt) >= 23 * 60 * 60 * 1000) {
-      throw new Error('MEMBERSHIP_NOTIFICATION_RETRY_EXPIRED');
-    }
     const response = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
       headers: {
-        Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'X-Line-Retry-Key': job.id
+        Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'X-Line-Retry-Key': job.retry_key
       },
       body: JSON.stringify({ to, messages: [message] }),
       signal: AbortSignal.timeout(4000)
     });
     const alreadyAccepted = response.status === 409 && response.headers.has('x-line-accepted-request-id');
     if (!response.ok && !alreadyAccepted) throw new Error('LINE_PUSH_HTTP_' + response.status);
-    const saved = await db.from('membership_notification_outbox').update({ sent_at: new Date().toISOString() }).eq('id', job.id);
+    const saved = await db.from('membership_notification_outbox').update({ sent_at: new Date().toISOString() })
+      .eq('id', job.id).eq('retry_key', job.retry_key);
     if (saved.error) throw new Error('OUTBOX_MARK_SENT_FAILED');
+    return 'accepted';
   } catch (failure) {
     console.error('membership notification', kind, failure instanceof Error ? failure.message : 'UNKNOWN_ERROR');
+    return 'failed';
   }
 }
 
@@ -127,14 +155,15 @@ Deno.serve(async req => {
   try { input = await req.json(); } catch { return error('INVALID_JSON'); }
   if (!input || typeof input !== 'object' || Array.isArray(input)) return error('INVALID_JSON');
   const action = input.action;
-  if (!['apply', 'status', 'queue', 'decide', 'shop'].includes(action)) return error('INVALID_ACTION');
+  if (!['apply', 'status', 'retry_notice', 'queue', 'decide', 'shop'].includes(action)) return error('INVALID_ACTION');
   const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
   if (!/^[\w-]{1,80}$/.test(shopId)) return error('SHOP_INVALID');
   const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
   try {
     const isAdmin = action === 'queue' || action === 'decide';
-    const uid = await verifyToken(token, isAdmin ? 'ADMIN' : 'PLAYER');
-    if (!uid) return error('LINE_AUTH_INVALID', 401);
+    const identity = await verifyToken(token, isAdmin ? 'ADMIN' : 'PLAYER');
+    if (!identity) return error('LINE_AUTH_INVALID', 401);
+    const { uid, picture } = identity;
     const dbUrl = Deno.env.get('SUPABASE_URL');
     if (!dbUrl) return error('SUPABASE_URL_MISSING', 503);
     const key = getPrivilegedKey();
@@ -156,10 +185,18 @@ Deno.serve(async req => {
       if (grant.error) return error('ADMIN_GRANTS_UNAVAILABLE', 503);
       if (!legacyAdmin && !grant.data) return error('ADMIN_REQUIRED', 403);
       if (action === 'queue') {
-        const result = await db.from('membership_applications').select('id,member_id,display_name,state,requested_at,decided_at,reason')
+        const result = await db.from('membership_applications').select('id,member_id,display_name,state,requested_at,decided_at,reason,profile_pic,line_uid')
           .eq('shop_id', shopId).order('requested_at', { ascending: false }).limit(100);
         if (result.error) return error('DATABASE_ERROR', 500);
-        return reply({ ok: true, entries: result.data ?? [] });
+        const entries = result.data ?? [];
+        const missing = entries.filter(item => item.state === 'Pending' && !item.profile_pic).slice(0, 10);
+        await Promise.all(missing.map(async item => {
+          const image = await readOaPicture(shop, item.line_uid);
+          if (!image) return;
+          item.profile_pic = image;
+          await db.from('membership_applications').update({ profile_pic: image }).eq('shop_id', shopId).eq('id', item.id);
+        }));
+        return reply({ ok: true, entries: entries.map(({ line_uid, ...item }) => item) });
       }
       const id = typeof input.id === 'string' ? input.id : '';
       const decision = input.decision;
@@ -169,7 +206,7 @@ Deno.serve(async req => {
       const result = await db.from('membership_applications').update({
         state: decision, decided_by: uid, decided_at: new Date().toISOString()
       }).eq('id', id).eq('shop_id', shopId).eq('state', 'Pending')
-        .select('id,member_id,state,line_uid,display_name').maybeSingle();
+        .select('id,member_id,state,line_uid,display_name,profile_pic').maybeSingle();
       if (result.error) return error('DATABASE_ERROR', 500);
       if (!result.data) return error('ALREADY_PROCESSED', 409);
       const { line_uid, display_name, ...application } = result.data;
@@ -177,22 +214,33 @@ Deno.serve(async req => {
       return reply({ ok: true, application });
     }
     const ownApplication = () => db.from('membership_applications')
-      .select('id,member_id,state,requested_at,decided_at,line_uid,display_name')
+      .select('id,member_id,state,requested_at,decided_at,line_uid,display_name,profile_pic')
       .eq('shop_id', shopId).eq('line_uid', uid).maybeSingle();
     if (action === 'apply') {
       const displayName = typeof input.display_name === 'string' ? input.display_name.trim().slice(0, 80) : '';
       const result = await db.from('membership_applications').upsert({
-        shop_id: shopId, line_uid: uid, display_name: displayName, state: 'Pending'
+        shop_id: shopId, line_uid: uid, display_name: displayName, profile_pic: picture, state: 'Pending'
       }, { onConflict: 'shop_id,line_uid', ignoreDuplicates: true });
       if (result.error) return error('DATABASE_ERROR', 500);
     }
     const result = await ownApplication();
     if (result.error) return error('DATABASE_ERROR', 500);
     if (!result.data) return reply({ ok: true, application: null });
-    if (result.data.state === 'Pending') await deliverNotification(db, shop, result.data, 'submitted');
-    if (result.data.state === 'Approved') await deliverNotification(db, shop, result.data, 'approved');
-    const { line_uid, display_name, ...application } = result.data;
-    return reply({ ok: true, application });
+    const own = result.data;
+    if (!own.profile_pic && (picture || input.action === 'retry_notice' || input.action === 'apply')) {
+      const image = picture || await readOaPicture(shop, uid);
+      if (image) {
+        own.profile_pic = image;
+        await db.from('membership_applications').update({ profile_pic: image }).eq('id', own.id).eq('shop_id', shopId);
+      }
+    }
+    let delivery;
+    if (own.state === 'Pending' && ['apply', 'retry_notice'].includes(input.action)) {
+      delivery = await deliverNotification(db, shop, own, 'submitted', input.action === 'retry_notice');
+    }
+    const { line_uid, display_name, ...application } = own;
+    const notice = own.state === 'Pending' ? await noticeWindow(db, own.id) : null;
+    return reply({ ok: true, application, notice, delivery });
   } catch (failure) {
     if (failure instanceof Error && failure.message === 'LINE_VERIFY_UNAVAILABLE') return error('LINE_VERIFY_UNAVAILABLE', 503);
     console.error('member-approval failure', action, failure instanceof Error ? failure.name : 'UNKNOWN_ERROR');

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>แอปผู้เล่น - บ่อตกกุ้ง</title>
   <script src="config.js"></script>
+  <script src="membership-notice-client.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -412,34 +413,40 @@
       apply.classList.toggle('hidden', !canApply);
     }
 
-    document.getElementById('retryOwnerNotice').onclick = async function () {
-      const status = document.getElementById('retryOwnerNoticeResult');
-      this.disabled = true;
-      status.textContent = 'กำลังลองส่งแจ้งเตือน…';
+    async function readOwnerNotice(action) {
+      const token = liff.getIDToken();
+      if (!token) throw new Error('LINE_AUTH_INVALID');
+      const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/member-approval', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json', Authorization: 'Bearer ' + token,
+          apikey: APP_CONFIG.SUPABASE_ANON_KEY
+        },
+        body: JSON.stringify({ action, shop_id: currentShopId }),
+        signal: AbortSignal.timeout(20000)
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.code || 'RETRY_FAILED');
+      return result;
+    }
+
+    async function syncOwnerNotice(button, status, action) {
+      button.disabled = true;
+      if (action === 'retry_notice') status.textContent = 'กำลังลองส่งแจ้งเตือน…';
       try {
-        const token = liff.getIDToken();
-        if (!token) throw new Error('LINE_AUTH_INVALID');
-        const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/member-approval', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: 'Bearer ' + token,
-            apikey: APP_CONFIG.SUPABASE_ANON_KEY
-          },
-          body: JSON.stringify({ action: 'status', shop_id: currentShopId }),
-          signal: AbortSignal.timeout(20000)
-        });
-        const result = await response.json();
-        if (!response.ok || !result.ok) throw new Error(result.code || 'RETRY_FAILED');
-        status.textContent = result.application?.state === 'Pending'
-          ? 'เรียกลองส่งแล้ว กรุณาเช็กแชต LINE OA ในบัญชีเจ้าของร้าน'
-          : 'ใบสมัครไม่ได้อยู่ในสถานะรออนุมัติแล้ว กรุณาเปิดหน้าใหม่';
+        const result = await readOwnerNotice(action);
+        button.classList.toggle('hidden', result.application?.state !== 'Pending');
+        applyMembershipRetryWindow(button, result.notice?.retry_at);
+        if (action === 'retry_notice') status.textContent = membershipRetryFeedback(result);
       } catch (error) {
-        status.textContent = 'เรียกลองส่งไม่สำเร็จ [' + error.message + ']';
-      } finally {
-        this.disabled = false;
+        status.textContent = 'ตรวจสอบการแจ้งเตือนไม่สำเร็จ [' + error.message + ']';
+        applyMembershipRetryWindow(button, null);
       }
-    };
+    }
+
+    const ownerNoticeButton = document.getElementById('retryOwnerNotice');
+    const ownerNoticeStatus = document.getElementById('retryOwnerNoticeResult');
+    ownerNoticeButton.onclick = () => syncOwnerNotice(ownerNoticeButton, ownerNoticeStatus, 'retry_notice');
 
     async function authenticateUser(profile) {
       try {
@@ -459,7 +466,7 @@
             Pending: 'ส่งใบสมัครแล้ว กำลังรออนุมัติ',
             Rejected: 'ใบสมัครยังไม่ได้รับอนุมัติ กรุณาติดต่อผู้ดูแลร้าน'
           };
-          document.getElementById('retryOwnerNotice').classList.toggle('hidden', result.state !== 'Pending');
+          if (result.state === 'Pending') syncOwnerNotice(ownerNoticeButton, ownerNoticeStatus, 'status');
           showMembershipGate(messages[result.state] || 'กรุณาติดต่อผู้ดูแลร้าน', result.member_id, result.state === 'NotApplied');
           return;
         }
