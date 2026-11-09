@@ -123,28 +123,35 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
     const token = shop.data?.line_oa_token;
     if (!token) return;
     const credited = request.status === 'Approved' && request.type === 'ฝากเงิน';
+    const rejectedDeposit = request.status === 'Rejected' && request.type === 'ฝากเงิน';
     const profile = credited && request.member_id ? null : await db.from('users').select('display_name,member_id,profile_pic')
       .eq('shop_id', shopId).eq('uid', request.uid).maybeSingle();
     const name = String(request.display_name || profile?.data?.display_name || 'สมาชิก').slice(0, 100);
     const member = request.member_id || profile?.data?.member_id;
     const picture = lineProfilePicture(request.profile_pic || profile?.data?.profile_pic);
     const titles = { Pending: 'ได้รับคำขอ', Approved: 'ทำรายการสำเร็จ', Rejected: 'คำขอถูกปฏิเสธ' };
-    const title = credited ? '🎉 เติมเครดิตสำเร็จ' : titles[request.status] + ' · ' + request.type;
+    const title = credited ? '🎉 เติมเครดิตสำเร็จ' : rejectedDeposit ? '❌ เติมเงินไม่สำเร็จ' : titles[request.status] + ' · ' + request.type;
     const adminLiff = shop.data?.liff_id_admin || env('MEMBERSHIP_LIFF_ID_ADMIN') || '2012454809-41EMnP1K';
     const opensQueue = request.status === 'Pending' && request.staff_recipient === true;
     const playerLiff = shop.data?.liff_id_player || env('MEMBERSHIP_LIFF_ID_PLAYER') || '2012454809-UFGeUGbW';
     const bubble = { type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
-      { type: 'text', text: title, weight: 'bold', wrap: true },
-      ...(!credited && picture ? [{ type: 'image', url: picture, size: 'sm', aspectRatio: '1:1', aspectMode: 'cover', align: 'start' }] : []),
+      { type: 'text', text: title, weight: 'bold', wrap: true,
+        ...(rejectedDeposit ? { color: '#B91C1C', size: 'lg' } : {}) },
+      ...(!credited && !rejectedDeposit && picture ? [{ type: 'image', url: picture, size: 'sm', aspectRatio: '1:1', aspectMode: 'cover', align: 'start' }] : []),
       ...(credited ? (member ? [{ type: 'text', text: 'สมาชิก ' + member, wrap: true }] : [])
         : [{ type: 'text', text: name + (member ? ' · สมาชิก ' + member : ''), wrap: true }]),
       { type: 'text', text: (credited ? 'ยอดที่เติม ฿' : 'ยอดรายการ ฿') + Number(request.amount).toLocaleString('th-TH', { maximumFractionDigits: 2 }),
         ...(credited ? { size: 'xl', weight: 'bold', color: '#047857' } : {}), wrap: true },
+      ...(rejectedDeposit ? [{ type: 'box', layout: 'vertical', spacing: 'xs', paddingAll: '12px',
+        backgroundColor: '#FEE2E2', cornerRadius: 'md', contents: [
+          { type: 'text', text: 'เหตุผลที่แอดมินปฏิเสธ', color: '#991B1B', weight: 'bold', wrap: true },
+          { type: 'text', text: request.rejection_reason || 'แอดมินไม่ได้ระบุเหตุผล', color: '#991B1B', wrap: true },
+        ] }] : []),
     ] } };
     const liff = opensQueue ? adminLiff : playerLiff;
     if (/^\d+-[a-zA-Z0-9]+$/.test(liff)) {
       bubble.footer = { type: 'box', layout: 'vertical', contents: [{
-        type: 'button', style: 'primary', action: {
+        type: 'button', style: 'primary', ...(rejectedDeposit ? { color: '#B91C1C' } : {}), action: {
           type: 'uri', label: opensQueue ? 'ตรวจสอบรายการ' : credited ? 'เข้าหน้าใช้งาน' : 'เปิดหน้า Player', uri: 'https://liff.line.me/' + liff + '?shop=' + encodeURIComponent(shopId) + (opensQueue ? '&tab=pending' : ''),
         },
       }] };
@@ -362,7 +369,11 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         fail('ADMIN_DATABASE_ERROR', 500);
       }
       if (walletDecision) {
-        for (const request of result.data ?? []) await notifyWalletPlayer(db, fetcher, env, shopId, request);
+        const rejectionReason = input.values.status === 'Rejected' && typeof input.rejection_reason === 'string'
+          ? input.rejection_reason.trim().slice(0, 300) : '';
+        for (const request of result.data ?? []) {
+          await notifyWalletPlayer(db, fetcher, env, shopId, { ...request, rejection_reason: rejectionReason });
+        }
       }
       const profileLookup = spec.table === 'users' && spec.operation === 'select' && input.limit === 2 &&
         spec.filters.some(filter => filter.op === 'eq' && ['uid', 'member_id'].includes(filter.column));
