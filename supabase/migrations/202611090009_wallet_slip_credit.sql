@@ -15,7 +15,7 @@ grant select on public.wallet_slip_credits to service_role;
 
 create function public.credit_verified_wallet_slip(
   p_id uuid, p_shop text, p_uid text, p_ref text, p_hash text,
-  p_amount numeric, p_bank text, p_number text, p_path text
+  p_amount numeric, p_bank text, p_number text, p_path text, p_slip_at timestamptz
 ) returns text
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -32,6 +32,8 @@ begin
     join public.shops s on s.shop_id = a.shop_id
     where a.shop_id = p_shop and a.enabled and lower(s.status) = 'active'
       and a.bank_code = p_bank and a.bank_number = p_number
+      and a.auto_credit_from <= now() and p_slip_at >= a.auto_credit_from
+      and p_slip_at <= now() + interval '1 minute'
   ) then
     return 'RECEIVER_MISMATCH';
   end if;
@@ -81,9 +83,9 @@ begin
 end;
 $$;
 
-revoke all on function public.credit_verified_wallet_slip(uuid,text,text,text,text,numeric,text,text,text)
+revoke all on function public.credit_verified_wallet_slip(uuid,text,text,text,text,numeric,text,text,text,timestamptz)
   from public, anon, authenticated;
-grant execute on function public.credit_verified_wallet_slip(uuid,text,text,text,text,numeric,text,text,text)
+grant execute on function public.credit_verified_wallet_slip(uuid,text,text,text,text,numeric,text,text,text,timestamptz)
   to service_role;
 
 commit;
