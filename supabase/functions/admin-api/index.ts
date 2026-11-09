@@ -119,14 +119,21 @@ function serverKey(env) {
 async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
   if (!/^U[0-9a-f]{32}$/i.test(request.uid) || !['ฝากเงิน', 'ถอนเงิน'].includes(request.type)) return;
   try {
-    const shop = await db.from('shops').select('line_oa_token,liff_id_player').eq('shop_id', shopId).maybeSingle();
+    const shop = await db.from('shops').select('line_oa_token,liff_id_player,liff_id_admin,admin_group_id').eq('shop_id', shopId).maybeSingle();
     const token = shop.data?.line_oa_token;
     if (!token) return;
+    const profile = await db.from('users').select('display_name,member_id,profile_pic')
+      .eq('shop_id', shopId).eq('uid', request.uid).maybeSingle();
+    const name = String(request.display_name || profile.data?.display_name || 'สมาชิก').slice(0, 100);
+    const member = request.member_id || profile.data?.member_id;
+    const picture = lineProfilePicture(request.profile_pic || profile.data?.profile_pic);
     const titles = { Pending: 'ได้รับคำขอ', Approved: 'ทำรายการสำเร็จ', Rejected: 'คำขอถูกปฏิเสธ' };
-    const title = titles[request.status] + ' · ' + request.type;
+    const title = request.status === 'Approved' && request.type === 'ฝากเงิน' ? 'เติมเครดิตเรียบร้อย' : titles[request.status] + ' · ' + request.type;
     const liff = shop.data?.liff_id_player || env('MEMBERSHIP_LIFF_ID_PLAYER') || '2012454809-UFGeUGbW';
     const bubble = { type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
       { type: 'text', text: title, weight: 'bold', wrap: true },
+      ...(picture ? [{ type: 'image', url: picture, size: 'sm', aspectRatio: '1:1', aspectMode: 'cover', align: 'start' }] : []),
+      { type: 'text', text: name + (member ? ' · สมาชิก ' + member : ''), wrap: true },
       { type: 'text', text: 'ยอดรายการ ฿' + Number(request.amount).toLocaleString('th-TH'), wrap: true },
     ] } };
     if (/^\d+-[a-zA-Z0-9]+$/.test(liff)) {
@@ -142,6 +149,23 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
       signal: AbortSignal.timeout(3000),
     });
     if (!result.ok) console.error('wallet LINE notification rejected', result.status);
+    const group = shop.data?.admin_group_id;
+    const adminLiff = shop.data?.liff_id_admin || env('MEMBERSHIP_LIFF_ID_ADMIN') || '2012454809-41EMnP1K';
+    if (request.status === 'Pending' && /^[CUR][0-9a-f]{32}$/i.test(group || '') && group !== request.uid &&
+        /^\d+-[a-zA-Z0-9]+$/.test(adminLiff)) {
+      const adminBubble = { ...bubble, footer: { type: 'box', layout: 'vertical', contents: [{
+        type: 'button', style: 'primary', action: {
+          type: 'uri', label: 'เปิดคิวรอดำเนินการ',
+          uri: 'https://liff.line.me/' + adminLiff + '?shop=' + encodeURIComponent(shopId) + '&tab=pending',
+        },
+      }] } };
+      const notice = await fetcher('https://api.line.me/v2/bot/message/push', {
+        method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: group, messages: [{ type: 'flex', altText: title, contents: adminBubble }] }),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!notice.ok) console.error('wallet admin LINE notification rejected', notice.status);
+    }
   } catch { console.error('wallet LINE notification unavailable'); }
 }
 
@@ -165,7 +189,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request', 'wallet_approve_deposit'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
       if (!/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
@@ -239,7 +263,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             console.error('wallet request insert error', result.error.code);
             fail('WALLET_REQUEST_UNAVAILABLE', 500);
           }
-          await notifyWalletPlayer(db, fetcher, env, shopId, { uid: claims.sub, type, amount, status: 'Pending' });
+          await notifyWalletPlayer(db, fetcher, env, shopId, { uid: claims.sub, type, amount, status: 'Pending', member_id: code, display_name: claims.name, profile_pic: claims.picture });
           return reply({ ok: true, status: 'Pending' });
         }
         if (input.include_wallet_requests === true) {
@@ -274,6 +298,17 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const picture = lineProfilePicture(claims.picture);
         if (picture) await db.from('users').update({ profile_pic: picture }).eq('shop_id', shopId).eq('uid', claims.sub);
         return reply({ ok: true, staff: staff.data });
+      }
+      if (input.action === 'wallet_approve_deposit') {
+        const id = String(input.request_id ?? '');
+        if (!/^(?:\d{1,20}|[a-f0-9-]{36})$/i.test(id)) fail('WALLET_REQUEST_INVALID');
+        const approval = await db.rpc('approve_wallet_deposit', {
+          p_shop: shopId, p_request: id, p_staff: claims.sub,
+        });
+        if (approval.error) fail('WALLET_REQUEST_UNAVAILABLE', 500);
+        if (approval.data?.code !== 'APPROVED') fail(approval.data?.code || 'WALLET_REQUEST_UNAVAILABLE', 409);
+        await notifyWalletPlayer(db, fetcher, env, shopId, approval.data);
+        return reply({ ok: true });
       }
       if (input.action === 'membership_summary') {
         if (!['Admin', 'Superadmin'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
