@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js"></script>
-  <script src="admin-api-client.js?v=3"></script>
+  <script src="admin-api-client.js?v=4"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -1055,18 +1055,19 @@
     }
 
     async function rejectPendingRequest(id, uid, type, amount) {
-        let reason = prompt("ระบุเหตุผลที่ปฏิเสธ:", "ข้อมูลไม่ถูกต้อง");
-        if(reason === null) return; 
+        const reason = prompt("ระบุเหตุผลที่ปฏิเสธ (ไม่เกิน 300 ตัวอักษร):", type === 'ฝากเงิน' ? '' : 'ข้อมูลไม่ถูกต้อง')?.trim();
+        if (reason === undefined) return;
+        if (type === 'ฝากเงิน' && (!reason || reason.length > 300)) {
+            alert("กรุณาระบุเหตุผลที่ปฏิเสธ 1–300 ตัวอักษร");
+            return;
+        }
         try {
             if (type === 'ถอนค่าคอม') {
                 const { data: u } = await _supabase.from('users').select('commission_balance').eq('shop_id', currentShopId).eq('uid', uid).single();
                 if(u) await _supabase.from('users').update({ commission_balance: u.commission_balance + amount }).eq('shop_id', currentShopId).eq('uid', uid);
             }
-            await _supabase.from('topup_requests').update({ status: 'Rejected', admin_name: currentAdminName }).eq('shop_id', currentShopId).eq('id', id);
+            await _supabase.from('topup_requests').update({ status: 'Rejected', admin_name: currentAdminName }, { rejectionReason: reason }).eq('shop_id', currentShopId).eq('id', id);
             
-            // ยกเลิกใช้ GAS แจ้งปฏิเสธ เพื่อรองรับ Multi-tenant
-            // ระบบควรอัปเดต Trigger ให้รองรับการปฏิเสธ หรือส่ง Line ด้วยวิธีอื่น
-            // notifyGAS('rejectTopup', { uid: uid, type: type, amount: amount, reason: reason });
             
             alert("ปฏิเสธรายการแล้ว"); loadPendingRequests();
         } catch (e) { alert("ข้อผิดพลาด: " + e.message); }
