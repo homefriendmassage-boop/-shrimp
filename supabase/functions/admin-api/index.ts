@@ -356,7 +356,12 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         }
         let update = db.from('shops').update(values).eq('shop_id', target);
         if (input.setting === 'service_enabled' && input.enabled) {
-          update = update.or('line_oa_bot_uid.not.is.null,and(line_oa_token.not.is.null,line_oa_token.neq.)');
+          const plan = await db.from('platform_shop_plan_requests').select('plan_code')
+            .eq('shop_id', target).maybeSingle();
+          if (plan.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+          if (plan.data?.plan_code !== 'free') {
+            update = update.or('line_oa_bot_uid.not.is.null,and(line_oa_token.not.is.null,line_oa_token.neq.)');
+          }
         }
         const saved = await update.select('shop_id').maybeSingle();
         if (saved.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
