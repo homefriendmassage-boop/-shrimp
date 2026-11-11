@@ -47,7 +47,10 @@ function linePicture(value) {
     return url.protocol === 'https:' && url.hostname === 'profile.line-scdn.net' ? url.toString() : null;
   } catch { return null; }
 }
-async function readOaPicture(shop, uid) {
+async function readOaPicture(db, shop, uid) {
+  const target = await db.rpc('resolve_shop_oa_recipient', { p_shop: shop.shop_id, p_member: uid });
+  if (target.error || !target.data) return null;
+  uid = target.data;
   if (!shop.line_oa_token || !/^U[0-9a-f]{32}$/i.test(uid)) return null;
   try {
     const response = await fetch('https://api.line.me/v2/bot/profile/' + uid, {
@@ -108,7 +111,13 @@ async function deliverNotification(db, shop, application, kind, manual = false) 
   if (!application?.id) return { status: 'failed', code: 'APPLICATION_NOT_FOUND' };
   if (shop.line_notifications_enabled === false) return { status: 'disabled' };
   try {
-    let to = application.line_uid;
+    let to;
+    if (kind !== 'submitted') {
+      const target = await db.rpc('resolve_shop_oa_recipient', { p_shop: shop.shop_id, p_member: application.line_uid });
+      if (target.error) throw new Error('OA_RECIPIENT_LOOKUP_FAILED');
+      if (!target.data) return { status: 'failed', code: 'OA_ACCOUNT_NOT_LINKED' };
+      to = target.data;
+    }
     if (kind === 'submitted') {
       to = shop.membership_notice_recipient_uid;
       if (!to) try {
@@ -200,7 +209,7 @@ Deno.serve(async req => {
         const entries = result.data ?? [];
         const missing = entries.filter(item => item.state === 'Pending' && !item.profile_pic).slice(0, 10);
         await Promise.all(missing.map(async item => {
-          const image = await readOaPicture(shop, item.line_uid);
+          const image = await readOaPicture(db, shop, item.line_uid);
           if (!image) return;
           item.profile_pic = image;
           await db.from('membership_applications').update({ profile_pic: image }).eq('shop_id', shopId).eq('id', item.id);
@@ -237,7 +246,7 @@ Deno.serve(async req => {
     if (!result.data) return reply({ ok: true, application: null });
     const own = result.data;
     if (!own.profile_pic && (picture || input.action === 'retry_notice' || input.action === 'apply')) {
-      const image = picture || await readOaPicture(shop, uid);
+      const image = picture || await readOaPicture(db, shop, uid);
       if (image) {
         own.profile_pic = image;
         await db.from('membership_applications').update({ profile_pic: image }).eq('id', own.id).eq('shop_id', shopId);
@@ -246,6 +255,11 @@ Deno.serve(async req => {
     let delivery;
     if (own.state === 'Pending' && ['apply', 'retry_notice'].includes(input.action)) {
       delivery = await deliverNotification(db, shop, own, 'submitted', input.action === 'retry_notice');
+    }
+    if (own.state === 'Approved' && input.action === 'status' && shop.shop_id !== 'SHOP_000') {
+      const pending = await db.from('membership_notification_outbox').select('sent_at')
+        .eq('application_id', own.id).eq('kind', 'approved').maybeSingle();
+      if (pending.data && !pending.data.sent_at) delivery = await deliverNotification(db, shop, own, 'approved', true);
     }
     const { line_uid, display_name, ...application } = own;
     const notice = own.state === 'Pending' ? await noticeWindow(db, own.id) : null;
