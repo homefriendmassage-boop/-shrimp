@@ -119,7 +119,7 @@ function serverKey(env) {
 async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
   if (!/^U[0-9a-f]{32}$/i.test(request.uid) || !['ฝากเงิน', 'ถอนเงิน'].includes(request.type)) return;
   try {
-    const shop = await db.from('shop_oa_runtime').select('line_oa_token,liff_id_player,liff_id_admin,admin_group_id,line_notifications_enabled').eq('shop_id', shopId).maybeSingle();
+    const shop = await db.from('shop_oa_runtime').select('line_oa_token,liff_id_player,liff_id_admin,admin_group_id,line_notifications_enabled,membership_notice_recipient_uid').eq('shop_id', shopId).maybeSingle();
     const token = shop.data?.line_oa_token;
     if (!token || shop.data?.line_notifications_enabled === false) return;
     const credited = request.status === 'Approved' && request.type === 'ฝากเงิน';
@@ -156,14 +156,20 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
         },
       }] };
     }
-    const result = await fetcher('https://api.line.me/v2/bot/message/push', {
-      method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: request.uid, messages: [{ type: 'flex', altText: title, contents: bubble }] }),
-      signal: AbortSignal.timeout(3000),
-    });
-    if (!result.ok) console.error('wallet LINE notification rejected', result.status);
-    const group = shop.data?.admin_group_id;
-    if (request.status === 'Pending' && /^[CUR][0-9a-f]{32}$/i.test(group || '') && group !== request.uid &&
+    const target = await db.rpc('resolve_shop_oa_recipient', { p_shop: shopId, p_member: request.uid });
+    if (target.error) console.error('wallet LINE recipient lookup failed');
+    if (target.data) {
+      try {
+        const result = await fetcher('https://api.line.me/v2/bot/message/push', {
+          method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: target.data, messages: [{ type: 'flex', altText: title, contents: bubble }] }),
+          signal: AbortSignal.timeout(3000),
+        });
+        if (!result.ok) console.error('wallet LINE notification rejected', result.status);
+      } catch { console.error('wallet LINE notification unavailable'); }
+    }
+    const group = shop.data?.admin_group_id || shop.data?.membership_notice_recipient_uid;
+    if (request.status === 'Pending' && /^[CUR][0-9a-f]{32}$/i.test(group || '') && group !== target.data &&
         /^\d+-[a-zA-Z0-9]+$/.test(adminLiff)) {
       const adminBubble = { ...bubble, footer: { type: 'box', layout: 'vertical', contents: [{
         type: 'button', style: 'primary', action: {
