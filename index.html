@@ -6,6 +6,7 @@
   <title>แอปผู้เล่น - บ่อตกกุ้ง</title>
   <script src="config.js?v=member-code-1"></script>
   <script src="membership-notice-client.js?v=2"></script>
+  <script src="oa-link-client.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -22,6 +23,7 @@
     }
     body { font-family: 'Kanit', sans-serif; background-color: var(--bg-dark); color: var(--text-main); margin: 0; padding: 0; padding-bottom: 80px; -webkit-font-smoothing: antialiased; }
     .container { max-width: 480px; margin: 0 auto; padding: 20px; }
+    .oa-link { margin: 0 0 14px; }
     .shop-name { margin: 0 0 12px; font-size: 1.25rem; line-height: 1.4; overflow-wrap: anywhere; }
     .header-card { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
     .header-box { background: var(--bg-panel); padding: 12px 15px; border-radius: 12px; border: 1px solid var(--card-border); flex: 1; }
@@ -173,6 +175,7 @@
 
   <div class="container">
     <h1 id="playerShopName" class="shop-name" hidden></h1>
+    <div id="oaLink" class="oa-link" hidden></div>
     <div class="header-card">
       <div class="header-box" style="display: flex; align-items: center; gap: 12px; padding: 8px 15px;">
         <img id="profileImage" src="https://via.placeholder.com/150/1c1e2b/ffffff?text=U" style="width: 45px; height: 45px; border-radius: 50%; border: 2px solid var(--blue-main); object-fit: cover;">
@@ -516,6 +519,9 @@
           const adminLink = document.getElementById('switchToAdmin');
           adminLink.href = 'https://liff.line.me/' + APP_CONFIG.LIFF_ID_ADMIN + '?shop=' + encodeURIComponent(currentShopId);
           adminLink.classList.remove('hidden');
+        }
+        if (['Pending', 'Approved'].includes(result.state)) {
+          mountShopOaLink(document.getElementById('oaLink'), currentShopId);
         }
         if (result.state !== 'Approved') {
           const messages = {
