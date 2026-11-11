@@ -201,9 +201,9 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request', 'wallet_approve_deposit'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request', 'wallet_approve_deposit', 'platform_create_shop'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
-      if (!/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
+      if (input.action !== 'platform_create_shop' && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'wallet_request'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
@@ -215,6 +215,26 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       const key = serverKey(env);
       if (!url || !key) fail('SUPABASE_SERVER_CONFIG_MISSING', 503);
       const db = createDb(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+      if (input.action === 'platform_create_shop') {
+        const allowed = (env('SAAS_PLATFORM_ADMIN_UIDS') || '').split(',').map(uid => uid.trim());
+        if (!allowed.includes(claims.sub)) fail('PLATFORM_ADMIN_REQUIRED', 403);
+
+        const shopName = typeof input.shop_name === 'string' ? input.shop_name.trim() : '';
+        const ownerName = typeof input.owner_name === 'string' ? input.owner_name.trim() : '';
+        const ownerUid = typeof input.owner_uid === 'string' ? input.owner_uid.trim() : '';
+        const newShopId = typeof input.new_shop_id === 'string' ? input.new_shop_id.trim().toUpperCase() : '';
+        if (!/^SHOP_[A-Z0-9]{3,24}$/.test(newShopId) || !shopName || shopName.length > 100 ||
+            !ownerName || ownerName.length > 100 || !/^U[0-9a-f]{32}$/i.test(ownerUid)) {
+          fail('SHOP_DETAILS_INVALID');
+        }
+        const result = await db.rpc('create_platform_shop', {
+          p_shop: newShopId, p_name: shopName, p_owner: ownerUid, p_owner_name: ownerName,
+        });
+        if (result.error) fail('SHOP_CREATE_FAILED', 500);
+        if (result.data === 'SHOP_EXISTS' || result.data === 'OWNER_UID_IN_USE') fail(result.data, 409);
+        if (result.data !== 'CREATED') fail('SHOP_CREATE_FAILED', 500);
+        return reply({ ok: true, shop_id: newShopId, status: 'Inactive' });
+      }
       if (input.action === 'player_state') {
         const table = input.table_no;
         if (table != null && (typeof table !== 'string' || table.length > 40)) fail('TABLE_INVALID');
