@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Backer Dashboard - บัญชีคนรับจบ</title>
-  <script src="config.js"></script>
+  <script src="config.js?v=member-code-1"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -174,7 +174,7 @@
         
         document.getElementById('backerPic').src = currentUser.profile_pic;
         document.getElementById('backerName').innerText = user.display_name;
-        document.getElementById('backerMemberId').innerText = user.member_id;
+        document.getElementById('backerMemberId').innerText = formatMemberCode(currentShopId, user.member_id);
         document.getElementById('backerWalletBal').innerText = `฿${(user.backer_wallet || 0).toLocaleString()}`;
         document.getElementById('backerSharePct').innerText = user.backer_share || 0;
         document.getElementById('backerFeePct').innerText = user.backer_water_fee !== null ? user.backer_water_fee : 10;

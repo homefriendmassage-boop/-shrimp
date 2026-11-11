@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>แอปผู้เล่น - บ่อตกกุ้ง</title>
-  <script src="config.js"></script>
+  <script src="config.js?v=member-code-1"></script>
   <script src="membership-notice-client.js?v=2"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -390,15 +390,17 @@
         }
       }
 
-      if(urlParams.get('ref')) {
-         sessionStorage.setItem('referrer_id', urlParams.get('ref'));
-      }
 
       try {
         await liff.init({ liffId: APP_CONFIG.LIFF_ID_PLAYER });
         const restored = playerEntryParams();
         if (restored.has('shop')) {
           currentShopId = restored.get('shop');
+        }
+        if (restored.has('ref')) {
+          const referrer = parseMemberCode(currentShopId, restored.get('ref'));
+          if (referrer) sessionStorage.setItem('referrer_id', referrer);
+          else sessionStorage.removeItem('referrer_id');
         }
         if (!liff.isLoggedIn()) { liff.login(); } 
         else {
@@ -436,8 +438,8 @@
       document.getElementById('membershipGateTitle').textContent = canApply ? 'สมัครสมาชิกก่อนเข้าใช้งาน' : 'สถานะสมาชิก';
       document.getElementById('pendingMemberId').parentElement.hidden = !code;
       document.getElementById('membershipGateMessage').textContent = message;
-      document.getElementById('pendingMemberId').textContent = code || '-';
-      document.getElementById('memberIdDisplay').textContent = code || '-';
+      document.getElementById('pendingMemberId').textContent = formatMemberCode(currentShopId, code) || '-';
+      document.getElementById('memberIdDisplay').textContent = formatMemberCode(currentShopId, code) || '-';
       document.getElementById('tableDisplay').textContent = currentDisplayName || 'บัญชีส่วนตัว';
       document.getElementById('pendingView').classList.remove('hidden');
       for (const id of ['bettingView', 'historyView', 'statsView']) document.getElementById(id).classList.add('hidden');
@@ -519,7 +521,7 @@
           return;
         }
 
-        document.getElementById('memberIdDisplay').textContent = memberId;
+        document.getElementById('memberIdDisplay').textContent = formatMemberCode(currentShopId, memberId);
         document.getElementById('tableDisplay').textContent = currentDisplayName || 'บัญชีส่วนตัว';
         document.getElementById('creditDisplay').textContent = `฿${(user.credit_balance || 0).toLocaleString()}`;
         if (currentUserRole === 'Backer') document.getElementById('btnBackerMenu').style.display = 'block';

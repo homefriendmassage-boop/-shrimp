@@ -129,7 +129,7 @@ Deno.serve(async (req) => {
             type: "bubble",
             body: { type: "box", layout: "vertical", spacing: "sm", contents: [
               { type: "text", text: title, weight: "bold", wrap: true },
-              { type: "text", text: "สมาชิก " + member.data.member_id, wrap: true },
+              { type: "text", text: "สมาชิก " + formatMemberCode(shop, member.data.member_id), wrap: true },
               { type: "text", text: "ยอดที่เติม ฿" + Number(amount).toLocaleString("th-TH", { maximumFractionDigits: 2 }), size: "xl", weight: "bold", color: "#047857", wrap: true },
             ] },
           } };
@@ -161,3 +161,10 @@ Deno.serve(async (req) => {
     return reply("WALLET_UNAVAILABLE", 503);
   }
 });
+
+function formatMemberCode(shopId, memberId) {
+  const shop = /^SHOP_([0-9]{3,})$/.exec(String(shopId ?? ''));
+  const member = /^M([0-9]{4,})$/.exec(String(memberId ?? ''));
+  if (!shop || !member) return memberId;
+  return 'M' + (shop[1] === '000' ? '' : shop[1]) + '-' + member[1];
+}

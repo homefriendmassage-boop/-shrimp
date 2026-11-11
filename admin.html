@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Admin Panel - บ่อตกกุ้ง</title>
-  <script src="config.js"></script>
+  <script src="config.js?v=member-code-1"></script>
   <script src="admin-api-client.js?v=4"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -299,8 +299,8 @@
         <input type="hidden" id="txtPendingRequestId" value="">
 
         <div class="form-group">
-          <label id="targetLabel">รหัสลูกค้า (M000X)</label>
-          <input type="text" id="txtTargetId" class="form-control" placeholder="ระบุเบอร์โต๊ะ หรือ รหัส M000X">
+          <label id="targetLabel">รหัสสมาชิก</label>
+          <input type="text" id="txtTargetId" class="form-control" placeholder="ระบุเบอร์โต๊ะหรือรหัสสมาชิก">
         </div>
         <div class="form-group">
           <label>จำนวนเงิน (บาท)</label>
@@ -613,10 +613,10 @@
                  let t_mid = dataParts[0]; let t_amt = dataParts[1]; let t_type_code = dataParts[2];
                  switchAdminTab('control');
                  document.getElementById('creditModePrivate').click(); 
-                 document.getElementById('txtTargetId').value = t_mid;
+                 document.getElementById('txtTargetId').value = formatMemberCode(currentShopId, t_mid);
                  document.getElementById('txtAmount').value = t_amt;
                  document.getElementById('cardCreditManage').scrollIntoView({ behavior: 'smooth' });
-                 alert(`มีคำขอรายการใหม่จาก LINE!\n\nรหัส: ${t_mid}\nยอด: ${t_amt} ฿\n\nระบบกรอกข้อมูลในช่อง เติม/ถอน ให้แล้ว โปรดตรวจสอบและกดยืนยันรายการครับ`);
+                 alert(`มีคำขอรายการใหม่จาก LINE!\n\nรหัส: ${formatMemberCode(currentShopId, t_mid)}\nยอด: ${t_amt} ฿\n\nระบบกรอกข้อมูลในช่อง เติม/ถอน ให้แล้ว โปรดตรวจสอบและกดยืนยันรายการครับ`);
                  history.replaceState(null, null, ' '); 
              }
           }
@@ -647,7 +647,7 @@
           
           let roleBadge = "พนักงาน (Operator)";
           if (['Superadmin', 'Admin'].includes(currentUserRole)) {
-            roleBadge = "แอดมินบ่อ · M0000";
+            roleBadge = "แอดมินบ่อ · " + formatMemberCode(currentShopId, 'M0000');
             const playerLink = document.getElementById('switchToPlayer');
             playerLink.href = 'https://liff.line.me/' + APP_CONFIG.LIFF_ID_PLAYER + '?shop=' + encodeURIComponent(currentShopId);
             playerLink.classList.remove('hidden');
@@ -736,7 +736,7 @@
           card.style.cssText='background:#0f111a;border:1px solid var(--card-border);border-radius:12px;padding:14px;margin:12px 0';
           const name=document.createElement('div');
           name.style.fontWeight='600';
-          name.textContent=(item.display_name||'สมาชิก')+' · '+(item.member_id||'ไม่พบเลขสมาชิก');
+          name.textContent=(item.display_name||'สมาชิก')+' · '+(formatMemberCode(currentShopId, item.member_id)||'ไม่พบเลขสมาชิก');
           const when=document.createElement('div');
           when.style.cssText='font-size:.8rem;color:var(--text-muted);margin-top:4px';
           when.textContent=new Date(item.requested_at).toLocaleString('th-TH');
@@ -848,7 +848,7 @@
         
         html += `
         <div style="background: #1a1e2f; padding: 15px; border-radius: 8px; border: 1px solid var(--blue-main);">
-            <div style="font-weight: bold; color: white; margin-bottom: 8px;">1. ${b1.display_name} <span style="font-size: 0.8rem; color: var(--text-muted);">(${b1.member_id})</span></div>
+            <div style="font-weight: bold; color: white; margin-bottom: 8px;">1. ${b1.display_name} <span style="font-size: 0.8rem; color: var(--text-muted);">(${formatMemberCode(currentShopId, b1.member_id)})</span></div>
             <div style="display: flex; gap: 10px; align-items: center;">
                 <div style="flex: 1;">
                     <label style="font-size: 0.8rem; color: var(--text-muted);">สัดส่วนรับจบ (%)</label>
@@ -864,7 +864,7 @@
         if (b2) {
             html += `
             <div style="background: #0f111a; padding: 15px; border-radius: 8px; border: 1px solid var(--card-border);">
-                <div style="font-weight: bold; color: white; margin-bottom: 8px;">2. ${b2.display_name} <span style="font-size: 0.8rem; color: var(--text-muted);">(${b2.member_id})</span></div>
+                <div style="font-weight: bold; color: white; margin-bottom: 8px;">2. ${b2.display_name} <span style="font-size: 0.8rem; color: var(--text-muted);">(${formatMemberCode(currentShopId, b2.member_id)})</span></div>
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <div style="flex: 1;">
                         <label style="font-size: 0.8rem; color: var(--text-muted);">สัดส่วนรับจบ (%)</label>
@@ -881,7 +881,7 @@
         if (b3) {
             html += `
             <div style="background: #0f111a; padding: 15px; border-radius: 8px; border: 1px solid var(--card-border);">
-                <div style="font-weight: bold; color: white; margin-bottom: 8px;">3. ${b3.display_name} <span style="font-size: 0.8rem; color: var(--text-muted);">(${b3.member_id})</span></div>
+                <div style="font-weight: bold; color: white; margin-bottom: 8px;">3. ${b3.display_name} <span style="font-size: 0.8rem; color: var(--text-muted);">(${formatMemberCode(currentShopId, b3.member_id)})</span></div>
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <div style="flex: 1;">
                         <label style="font-size: 0.8rem; color: var(--text-muted);">สัดส่วนรับจบ (%)</label>
@@ -940,9 +940,11 @@
         document.getElementById('userInfoContainer').style.display = 'none';
         if (!search) return;
         const column = /^U[0-9a-f]{32}$/i.test(search) ? 'uid' : 'member_id';
+        const lookup = column === 'uid' ? search : parseMemberCode(currentShopId, search);
+        if (!lookup) return alert('รหัสสมาชิกไม่ถูกต้องหรือเป็นของร้านอื่น');
         try {
             const { data: matches } = await _supabase.from('users').select('*').eq('shop_id', currentShopId)
-                .eq(column, column === 'uid' ? search : search.toUpperCase()).limit(2);
+                .eq(column, lookup).limit(2);
             if (matches.length > 1) return alert('พบรหัสซ้ำ กรุณาค้นหาด้วย LINE User ID');
             const [u] = matches;
             if(u) { 
@@ -952,7 +954,7 @@
                 picture.onerror = () => { picture.hidden = true; };
                 if (u.profile_pic) picture.src = u.profile_pic; 
                 document.getElementById('uManageName').innerText = u.display_name; 
-                document.getElementById('uManageId').innerText = u.member_id; 
+                document.getElementById('uManageId').innerText = formatMemberCode(currentShopId, u.member_id); 
                 document.getElementById('uManageStatus').innerText = u.status; 
                 document.getElementById('uManageStatus').style.color = u.status === 'Active' ? 'var(--green-main)' : 'var(--red-main)'; 
                 
@@ -1016,7 +1018,7 @@
              card.style.cssText = "background: #0f111a; border: 1px solid var(--card-border); border-radius: 12px; padding: 15px; display: flex; flex-direction: column; gap: 8px;";
              
              card.innerHTML = `
-                <div style="display: flex; justify-content: space-between;"><div style="color: white; font-weight: bold;">${r.display_name} <span style="color: var(--text-muted); font-size: 0.8rem;">(${r.member_id})</span></div><div style="color: ${typeColor}; font-weight: bold; font-size: 1.1rem;">${r.type} ฿${r.amount}</div></div>
+                <div style="display: flex; justify-content: space-between;"><div style="color: white; font-weight: bold;">${r.display_name} <span style="color: var(--text-muted); font-size: 0.8rem;">(${formatMemberCode(currentShopId, r.member_id)})</span></div><div style="color: ${typeColor}; font-weight: bold; font-size: 1.1rem;">${r.type} ฿${r.amount}</div></div>
                 <div style="font-size: 0.85rem; color: var(--text-muted);"><div>ช่องทาง: ${r.method}</div>${r.type === 'ถอนเงิน' ? '<div>เงื่อนไข: ' + (r.fee_option === 'ไม่หักค่าน้ำ' ? 'ไม่หักค่าน้ำ' : 'หักค่าน้ำ') + '</div>' : ''}<div>เวลา: ${new Date(r.created_at).toLocaleTimeString('th-TH')}</div></div>
                 ${slipBtn}
                 <div style="display: flex; gap: 10px; margin-top: 10px;">
@@ -1039,7 +1041,7 @@
       const amount = Number(request.amount).toLocaleString('th-TH');
       const dialog = document.getElementById('walletDepositDialog');
       if (dialog.open) return;
-      document.getElementById('walletDepositMember').textContent = 'สมาชิก ' + request.member_id + ' · ' + request.display_name;
+      document.getElementById('walletDepositMember').textContent = 'สมาชิก ' + formatMemberCode(currentShopId, request.member_id) + ' · ' + request.display_name;
       document.getElementById('walletDepositAmount').textContent = '฿' + amount;
       dialog.returnValue = '';
       button.disabled = true;
@@ -1061,7 +1063,7 @@
         document.getElementById('txtPendingRequestId').value = reqId; 
         switchAdminTab('control'); 
         document.getElementById('creditModePrivate').click(); 
-        document.getElementById('txtTargetId').value = targetMemberId;
+        document.getElementById('txtTargetId').value = formatMemberCode(currentShopId, targetMemberId);
         document.getElementById('txtAmount').value = amount;
         document.getElementById('cardCreditManage').scrollIntoView({ behavior: 'smooth' });
         
@@ -1536,8 +1538,8 @@
         document.getElementById('creditModePrivate').classList.remove('active'); 
         document.getElementById(m==='table'?'creditModeTable':'creditModePrivate').classList.add('active'); 
         
-        document.getElementById('targetLabel').innerText = m==='table'?"หมายเลขโต๊ะ":"รหัสลูกค้า (M000X)"; 
-        document.getElementById('txtTargetId').placeholder = m==='table'?"ระบุเบอร์โต๊ะ เช่น 4":"ระบุรหัส เช่น M0001";
+        document.getElementById('targetLabel').innerText = m==='table'?"หมายเลขโต๊ะ":"รหัสสมาชิก"; 
+        document.getElementById('txtTargetId').placeholder = m==='table'?"ระบุเบอร์โต๊ะ เช่น 4":"ระบุรหัสสมาชิก";
         
         if(!document.getElementById('txtPendingRequestId').value) {
            document.getElementById('txtTargetId').value = ""; 
@@ -1552,7 +1554,11 @@
       let pendingReqId = document.getElementById('txtPendingRequestId').value;
       
       if(!tId || !amountStr || isNaN(amount) || amount <= 0) return alert("กรุณากรอกข้อมูลให้ครบถ้วน"); 
-      if(!confirm(`ยืนยันการทำรายการ ${type === 'deposit' ? 'ฝาก' : 'ถอน'} ${amount} บาท ให้กับ ${creditMode === 'table' ? 'โต๊ะ' : 'รหัส'} ${tId}?`)) return;
+      if (creditMode !== 'table') {
+        tId = parseMemberCode(currentShopId, tId);
+        if (!tId) return alert('รหัสสมาชิกไม่ถูกต้องหรือเป็นของร้านอื่น');
+      }
+      if(!confirm(`ยืนยันการทำรายการ ${type === 'deposit' ? 'ฝาก' : 'ถอน'} ${amount} บาท ให้กับ ${creditMode === 'table' ? 'โต๊ะ ' + tId : 'รหัส ' + formatMemberCode(currentShopId, tId)}?`)) return;
       
       try {
         if(creditMode === 'table') {
@@ -1569,7 +1575,7 @@
           alert(`สำเร็จ!\nโต๊ะ: ${tId}\nเครดิตคงเหลือ: ฿${newBal.toLocaleString()}`);
         } else {
           const { data: u, error: userError } = await _supabase.from('users').select('uid, credit_balance, status, total_deposit, role, backer_wallet').eq('shop_id', currentShopId).eq('member_id', tId).single();
-          if(userError || !u) throw new Error("ไม่พบรหัสสมาชิกนี้ในระบบ (โปรดใส่รหัสแบบเต็ม เช่น M0001)");
+          if(userError || !u) throw new Error("ไม่พบรหัสสมาชิกนี้ในร้าน");
           if(u.status !== 'Active') throw new Error(`ไม่สามารถทำรายการได้! บัญชีลูกค้ารหัส ${tId} ถูกระงับ`);
           
           if (u.role === 'Backer') {

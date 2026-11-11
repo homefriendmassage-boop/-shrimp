@@ -127,7 +127,7 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
     const profile = credited && request.member_id ? null : await db.from('users').select('display_name,member_id,profile_pic')
       .eq('shop_id', shopId).eq('uid', request.uid).maybeSingle();
     const name = String(request.display_name || profile?.data?.display_name || 'สมาชิก').slice(0, 100);
-    const member = request.member_id || profile?.data?.member_id;
+    const member = formatMemberCode(shopId, request.member_id || profile?.data?.member_id);
     const picture = lineProfilePicture(request.profile_pic || profile?.data?.profile_pic);
     const titles = { Pending: 'ได้รับคำขอ', Approved: 'ทำรายการสำเร็จ', Rejected: 'คำขอถูกปฏิเสธ' };
     const title = credited ? '🎉 เติมเครดิตสำเร็จ' : rejectedDeposit ? '❌ เติมเงินไม่สำเร็จ' : titles[request.status] + ' · ' + request.type;
@@ -577,3 +577,10 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
 }
 
 Deno.serve(makeHandler({ env: name => Deno.env.get(name) }));
+
+function formatMemberCode(shopId, memberId) {
+  const shop = /^SHOP_([0-9]{3,})$/.exec(String(shopId ?? ''));
+  const member = /^M([0-9]{4,})$/.exec(String(memberId ?? ''));
+  if (!shop || !member) return memberId;
+  return 'M' + (shop[1] === '000' ? '' : shop[1]) + '-' + member[1];
+}

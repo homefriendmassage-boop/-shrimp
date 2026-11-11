@@ -72,7 +72,7 @@ function membershipFlex(shop, application, kind) {
   const details = [
     shop.shop_name || 'บ่อตกกุ้ง',
     'สมาชิก: ' + (application.display_name || 'สมาชิก'),
-    'รหัสสมาชิก: ' + (application.member_id || '—')
+    'รหัสสมาชิก: ' + (formatMemberCode(shop.shop_id, application.member_id) || '—')
   ];
   return {
     type: 'flex', altText: title,
@@ -256,3 +256,10 @@ Deno.serve(async req => {
     return error('SERVER_ERROR', 500);
   }
 });
+
+function formatMemberCode(shopId, memberId) {
+  const shop = /^SHOP_([0-9]{3,})$/.exec(String(shopId ?? ''));
+  const member = /^M([0-9]{4,})$/.exec(String(memberId ?? ''));
+  if (!shop || !member) return memberId;
+  return 'M' + (shop[1] === '000' ? '' : shop[1]) + '-' + member[1];
+}
