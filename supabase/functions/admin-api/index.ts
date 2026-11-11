@@ -201,11 +201,11 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request', 'wallet_approve_deposit', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-      const playerRequest = ['player_profile', 'player_state', 'wallet_request'].includes(input.action);
+      const playerRequest = ['player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
       const clientId = env(channelKey);
       if (!clientId) fail(channelKey + '_MISSING', 503);
@@ -384,12 +384,39 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           .eq('line_uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (application.error) fail('DATABASE_ERROR', 500);
         if (application.data?.state !== 'Approved') {
-          if (input.action === 'wallet_request') fail('PLAYER_ACCESS_REQUIRED', 403);
+          if (input.action !== 'player_profile') fail('PLAYER_ACCESS_REQUIRED', 403);
           return reply({ ok: true, staff, state: application.data?.state ?? 'NotApplied', member_id: application.data?.member_id ?? null });
         }
         const code = application.data.member_id;
         if (!profile.data || profile.data.member_id !== code || !/^M(0[0-9]{3}|[1-9][0-9]{3,})$/.test(code)) {
           fail('MEMBER_PROFILE_NOT_LINKED', 409);
+        }
+        if (['player_place_bet', 'player_cancel_bet', 'player_bet_history'].includes(input.action)) {
+          if (profile.data.status !== 'Active') fail('PLAYER_ACCESS_REQUIRED', 403);
+          if (input.action === 'player_bet_history') {
+            const history = await db.from('bets').select('bet_id,round_id,bet_type,amount,payout,status,play_mode,table_no,created_at')
+              .eq('shop_id', shopId).eq('uid', claims.sub).order('created_at', { ascending: false }).limit(20);
+            if (history.error) fail('BET_HISTORY_UNAVAILABLE', 500);
+            return reply({ ok: true, bets: history.data ?? [] });
+          }
+          const id = input.bet_id;
+          if (typeof id !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(id)) fail('BET_INVALID');
+          if (input.action === 'player_cancel_bet') {
+            const result = await db.rpc('cancel_player_private_bet', { p_shop: shopId, p_uid: claims.sub, p_id: id });
+            if (result.error) fail('BET_UNAVAILABLE', 500);
+            if (result.data !== 'CANCELLED') fail(result.data || 'BET_UNAVAILABLE', 409);
+            return reply({ ok: true });
+          }
+          if (typeof input.round_id !== 'string' || !input.round_id || input.round_id.length > 100 ||
+            typeof input.amount !== 'string' || !/^\d{1,9}(?:\.\d{1,2})?$/.test(input.amount) ||
+            !['คู่', 'คี่'].includes(input.bet_type)) fail('BET_INVALID');
+          const result = await db.rpc('place_player_private_bet', {
+            p_shop: shopId, p_uid: claims.sub, p_round: input.round_id, p_id: id, p_type: input.bet_type, p_amount: input.amount,
+          });
+          if (result.error) fail('BET_UNAVAILABLE', 500);
+          if (result.data?.code === 'BET_LIMIT') return reply({ ok: false, ...result.data }, 409);
+          if (result.data?.code !== 'PLACED') fail(result.data?.code || 'BET_UNAVAILABLE', 409);
+          return reply({ ok: true, bet_id: result.data.bet_id });
         }
         if (input.action === 'wallet_request') {
           if (profile.data.status !== 'Active') fail('PLAYER_ACCESS_REQUIRED', 403);
