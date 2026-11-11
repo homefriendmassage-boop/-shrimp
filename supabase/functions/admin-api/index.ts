@@ -252,6 +252,23 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           shop_id: shop.shop_id, shop_name: shop.shop_name, status: shop.status,
           oa_configured: Boolean(shop.line_oa_bot_uid || shop.line_oa_token?.trim()),
         }] : []);
+        let planQuery = db.from('platform_shop_plan_requests')
+          .select('shop_id,plan_code,trial_started_at,trial_ends_at');
+        if (!canInvite && shops.length) planQuery = planQuery.in('shop_id', shops.map(shop => shop.shop_id));
+        const planRequests = (canInvite || shops.length) ? await planQuery : { data: [] };
+        if (planRequests.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+        const plansByShop = new Map((planRequests.data ?? []).map(row => [row.shop_id, row]));
+        const now = Date.now();
+        const planDetails = shopId => {
+          const plan = plansByShop.get(shopId);
+          const trialEnd = plan?.trial_ends_at ?? null;
+          return {
+            requested_plan: plan?.plan_code ?? null,
+            trial_ends_at: trialEnd,
+            trial_state: plan?.plan_code !== 'free' ? null :
+              trialEnd ? (Date.parse(trialEnd) > now ? 'active' : 'expired') : 'pending',
+          };
+        };
         let invitations = [];
         let platformShops = [];
         if (canInvite) {
@@ -261,15 +278,16 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           if (issued.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
           invitations = issued.data ?? [];
           const managed = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,line_oa_bot_uid,live_enabled,line_notifications_enabled,membership_notice_recipient_uid').order('shop_id');
-          const planRequests = await db.from('platform_shop_plan_requests').select('shop_id,plan_code');
-          if (managed.error || planRequests.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
-          const plansByShop = new Map((planRequests.data ?? []).map(row => [row.shop_id, row.plan_code]));
+          if (managed.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
           platformShops = (managed.data ?? []).map(({ line_oa_token, line_oa_bot_uid, ...shop }) => ({
             ...shop, oa_configured: Boolean(line_oa_bot_uid || line_oa_token?.trim()),
-            requested_plan: plansByShop.get(shop.shop_id) ?? null,
+            ...planDetails(shop.shop_id),
           }));
         }
-        return reply({ ok: true, shops, can_invite: canInvite, invitations, platform_shops: platformShops });
+        return reply({
+          ok: true, shops: shops.map(shop => ({ ...shop, ...planDetails(shop.shop_id) })),
+          can_invite: canInvite, invitations, platform_shops: platformShops
+        });
       }
       if (input.action === 'platform_save_notice_recipient') {
         if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
