@@ -201,9 +201,9 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request', 'wallet_approve_deposit', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request', 'wallet_approve_deposit', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
-      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
+      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'wallet_request'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
@@ -237,22 +237,48 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           oa_configured: Boolean(shop.line_oa_token?.trim()),
         }] : []);
         let invitations = [];
+        let platformShops = [];
         if (canInvite) {
           const issued = await db.from('platform_shop_invites')
-            .select('expires_at,shop_id,referrer_shop_id,referral_tier,shop:shops!platform_shop_invites_shop_id_fkey(shop_name,status)')
+            .select('expires_at,shop_id,referrer_shop_id,shop:shops!platform_shop_invites_shop_id_fkey(shop_name,status)')
             .eq('created_by', claims.sub).order('expires_at', { ascending: false }).limit(50);
           if (issued.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
           invitations = issued.data ?? [];
+          const managed = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,live_enabled').order('shop_id');
+          if (managed.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+          platformShops = (managed.data ?? []).map(({ line_oa_token, ...shop }) => ({
+            ...shop, oa_configured: Boolean(line_oa_token?.trim()),
+          }));
         }
-        return reply({ ok: true, shops, can_invite: canInvite, invitations });
+        return reply({ ok: true, shops, can_invite: canInvite, invitations, platform_shops: platformShops });
+      }
+      if (input.action === 'platform_shop_control') {
+        if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
+        const target = input.target_shop_id;
+        if (typeof target !== 'string' || !/^[\w-]{1,80}$/.test(target)) fail('SHOP_INVALID');
+        let values;
+        if (input.setting === 'live_enabled' && typeof input.enabled === 'boolean') {
+          values = { live_enabled: input.enabled };
+        } else if (input.setting === 'service_enabled' && typeof input.enabled === 'boolean') {
+          values = { status: input.enabled ? 'active' : 'Inactive' };
+        } else {
+          fail('SHOP_SETTING_INVALID');
+        }
+        let update = db.from('shops').update(values).eq('shop_id', target);
+        if (input.setting === 'service_enabled' && input.enabled) {
+          update = update.not('line_oa_token', 'is', null).neq('line_oa_token', '');
+        }
+        const saved = await update.select('shop_id').maybeSingle();
+        if (saved.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+        if (!saved.data) fail('SHOP_OR_OA_NOT_READY', 409);
+        return reply({ ok: true });
       }
       if (input.action === 'platform_issue_shop_invite') {
         if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
 
         const referrer = typeof input.referrer_shop_id === 'string' ? input.referrer_shop_id.trim().toUpperCase() : '';
-        const tier = input.referral_tier || '';
-        if (referrer || tier) {
-          if (!/^SHOP_[A-Z0-9]{3,24}$/.test(referrer) || !['standard', 'group_lead'].includes(tier)) {
+        if (referrer) {
+          if (!/^SHOP_[A-Z0-9]{3,24}$/.test(referrer)) {
             fail('REFERRER_INVALID');
           }
           const shop = await db.from('shops').select('shop_id,status').eq('shop_id', referrer).maybeSingle();
@@ -260,7 +286,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           if (shop.data?.status?.toLowerCase() !== 'active') fail('REFERRER_INVALID');
         }
         const invite = await db.from('platform_shop_invites').insert({
-          created_by: claims.sub, referrer_shop_id: referrer || null, referral_tier: tier || null,
+          created_by: claims.sub, referrer_shop_id: referrer || null,
         })
           .select('invite_id,expires_at').single();
         if (invite.error || !invite.data) fail('INVITE_CREATE_FAILED', 500);
@@ -295,7 +321,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, snapshot: result.data });
       }
       if (playerRequest) {
-        const shop = await db.from('shops').select('status').eq('shop_id', shopId).maybeSingle();
+        const shop = await db.from('shops').select('status,live_enabled').eq('shop_id', shopId).maybeSingle();
         if (shop.error) fail('DATABASE_ERROR', 500);
         if (String(shop.data?.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
 
@@ -366,7 +392,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)).slice(0, 10);
           return reply({ ok: true, wallet_requests: history });
         }
-        return reply({ ok: true, staff, state: 'Approved', player: profile.data });
+        return reply({ ok: true, staff, state: 'Approved', player: profile.data, live_enabled: shop.data.live_enabled === true });
       }
 
       // Identity always comes from LINE verification, never from input.uid/role.
