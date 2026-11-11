@@ -192,10 +192,10 @@
     <!-- ปุ่มเมนูพิเศษ -->
     <div class="special-menu-container">
         <a id="switchToAdmin" class="hidden" style="display:block;color:var(--blue-main);padding:12px">สลับไปหน้า Admin</a>
-        <button id="btnBackerMenu" class="btn-special btn-backer" onclick="window.location.href='backer.html'">
+        <button id="btnBackerMenu" class="btn-special btn-backer" onclick="window.location.href='backer.html?shop=' + encodeURIComponent(currentShopId)">
             <i class="fa-solid fa-handshake-angle"></i> แดชบอร์ดรับจบ
         </button>
-        <button id="btnPromoterMenu" class="btn-special btn-promoter" onclick="window.location.href='promoter.html'">
+        <button id="btnPromoterMenu" class="btn-special btn-promoter" onclick="window.location.href='promoter.html?shop=' + encodeURIComponent(currentShopId)">
             <i class="fa-solid fa-share-nodes"></i> ระบบแนะนำเพื่อน
         </button>
     </div>
@@ -739,9 +739,9 @@
           if(!tData || tData.credit < amount) throw new Error("เครดิตที่โต๊ะไม่พอ กรุณาเติมเงินเข้าโต๊ะ");
           await _supabase.from('tables').update({ credit: tData.credit - amount }).eq('shop_id', currentShopId).eq('table_no', userTableNo);
         } else {
-          const { data: uData } = await _supabase.from('users').select('credit_balance').eq('uid', currentLineUserId).single();
+          const { data: uData } = await _supabase.from('users').select('credit_balance').eq('shop_id', currentShopId).eq('uid', currentLineUserId).single();
           if(!uData || uData.credit_balance < amount) throw new Error("เครดิตส่วนตัวไม่พอ กรุณาเติมเงิน");
-          await _supabase.from('users').update({ credit_balance: uData.credit_balance - amount }).eq('uid', currentLineUserId);
+          await _supabase.from('users').update({ credit_balance: uData.credit_balance - amount }).eq('shop_id', currentShopId).eq('uid', currentLineUserId);
         }
 
         await _supabase.from('bets').insert([{
@@ -794,13 +794,13 @@
       if(!isRoundOpen) { alert("หมดเวลาแทงแล้ว ไม่สามารถยกเลิกบิลได้ครับ"); return; }
       if(!confirm("ยกเลิกบิลนี้ และรับเครดิตคืน?")) return;
       try {
-        await _supabase.from('bets').update({ status: 'Cancelled' }).eq('bet_id', betId);
+        await _supabase.from('bets').update({ status: 'Cancelled' }).eq('shop_id', currentShopId).eq('uid', currentLineUserId).eq('bet_id', betId);
         if (pMode === 'table') {
           const { data: t } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', tNo).single();
           await _supabase.from('tables').update({ credit: t.credit + amount }).eq('shop_id', currentShopId).eq('table_no', tNo);
         } else {
-          const { data: u } = await _supabase.from('users').select('credit_balance').eq('uid', currentLineUserId).single();
-          await _supabase.from('users').update({ credit_balance: u.credit_balance + amount }).eq('uid', currentLineUserId);
+          const { data: u } = await _supabase.from('users').select('credit_balance').eq('shop_id', currentShopId).eq('uid', currentLineUserId).single();
+          await _supabase.from('users').update({ credit_balance: u.credit_balance + amount }).eq('shop_id', currentShopId).eq('uid', currentLineUserId);
         }
         alert("ยกเลิกบิลและคืนเครดิตสำเร็จ"); loadHistory(); fetchDashboard(); 
       } catch (error) { alert("ข้อผิดพลาด"); }
