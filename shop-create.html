@@ -134,7 +134,7 @@
     plan.addEventListener('change', () => {
       const detail = plans[plan.value];
       byId('plan-details').textContent = detail ? detail + (plan.value === 'free'
-        ? ' · ไม่ต้องชำระเงิน' : ' · ระบบชำระเงินยังไม่เปิดรับ สามารถบันทึกแพ็กเกจที่ต้องการได้') : '';
+        ? ' · เริ่มนับเมื่อเปิดร้าน · ไม่ต้องชำระเงิน' : ' · ระบบชำระเงินยังไม่เปิดรับ สามารถบันทึกแพ็กเกจที่ต้องการได้') : '';
     });
     const form = byId('shop-form');
     const newInvite = byId('new-invite');
@@ -305,6 +305,16 @@
       }
     });
 
+    function planSummary(shop) {
+      if (!Object.hasOwn(plans, shop.requested_plan)) return '';
+      if (shop.requested_plan !== 'free') return ' · แพ็กเกจที่ขอ ' + shop.requested_plan.toUpperCase();
+      if (!shop.trial_ends_at) return ' · Free 10 วัน เริ่มเมื่อเปิดร้าน';
+      const date = new Date(shop.trial_ends_at).toLocaleString('th-TH', {
+        dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok'
+      });
+      return ' · Free ' + (shop.trial_state === 'expired' ? 'ครบกำหนดแล้ว ' : 'ถึง ') + date + ' น.';
+    }
+
     async function loadPortal() {
       const data = await request('platform_shop_portal');
       const managed = byId('managed-shops');
@@ -316,7 +326,7 @@
         const params = { shop: shop.shop_id };
         appendRow(managed, shop.shop_name + ' · ' + shop.shop_id,
           (active ? 'เปิดใช้งาน' : 'ยังไม่เปิดใช้งาน') + ' · ' +
-          (shop.oa_configured ? 'ตั้งค่า LINE OA แล้ว' : 'รอเชื่อม LINE OA'),
+          (shop.oa_configured ? 'ตั้งค่า LINE OA แล้ว' : 'รอเชื่อม LINE OA') + planSummary(shop),
           active ? [
             ['เข้า Admin ร้านนี้', liffLink(APP_CONFIG.LIFF_ID_ADMIN, params)],
             ['เปิดหน้า Player', liffLink(APP_CONFIG.LIFF_ID_PLAYER, params)],
@@ -340,7 +350,7 @@
             (active ? 'เปิดบริการ' : 'ปิดบริการ') + ' · ' +
             (shop.oa_configured ? 'ตั้งค่า LINE OA แล้ว' : 'รอเชื่อม LINE OA') + ' · ' +
             (shop.live_enabled ? 'เปิดเมนู LIVE' : 'ปิดเมนู LIVE') +
-            (Object.hasOwn(plans, shop.requested_plan) ? ' · แพ็กเกจที่ขอ ' + shop.requested_plan.toUpperCase() : ''));
+            planSummary(shop));
           const settings = document.createElement('button');
           settings.type = 'button';
           settings.textContent = 'ตั้งค่า LINE OA';
