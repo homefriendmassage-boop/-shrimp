@@ -243,8 +243,7 @@
       <p style="color: var(--text-muted); margin-top: 10px;">หน้านี้สงวนไว้สำหรับพนักงานเท่านั้น</p>
     </div>
 
-    <a id="shopPortalLink" href="shop-create.html" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">ร้านที่ฉันดูแล</a>
-    <a id="createShopLink" href="shop-create.html" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">สร้างร้านค้า</a>
+    <a id="shopPortalLink" href="shop-create.html" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">หน้าจัดการร้านค้า</a>
     <a id="switchToPlayer" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">สลับไปหน้า Player</a>
     <div id="adminApiError" class="card hidden no-print" role="alert" style="color:var(--yellow-main)"></div>
 
@@ -626,11 +625,10 @@
     }
 
     async function checkAdminAccess(uid) {
-      const createShopLink = document.getElementById('createShopLink');
+      const shopPortalLink = document.getElementById('shopPortalLink');
       const portalHref = 'shop-create.html?shop=' + encodeURIComponent(currentShopId);
-      createShopLink.href = portalHref;
-      document.getElementById('shopPortalLink').href = portalHref;
-      createShopLink.classList.add('hidden');
+      shopPortalLink.href = portalHref;
+      shopPortalLink.classList.add('hidden');
       try {
         const access = await _supabase.access();
         const user = access.staff;
@@ -646,7 +644,7 @@
         } else {
           document.getElementById('accessDeniedView').classList.add('hidden');
           document.getElementById('adminTabs').style.display = 'flex';
-          if (access.can_create_shop === true) createShopLink.classList.remove('hidden');
+          if (access.can_create_shop === true) shopPortalLink.classList.remove('hidden');
           
           let roleBadge = "พนักงาน (Operator)";
           if (['Superadmin', 'Admin'].includes(currentUserRole)) {
@@ -654,7 +652,7 @@
             const playerLink = document.getElementById('switchToPlayer');
             playerLink.href = 'https://liff.line.me/' + APP_CONFIG.LIFF_ID_PLAYER + '?shop=' + encodeURIComponent(currentShopId);
             playerLink.classList.remove('hidden');
-            document.getElementById('shopPortalLink').classList.remove('hidden');
+            shopPortalLink.classList.remove('hidden');
           }
           document.getElementById('opProfile').innerHTML = `<i class="fa-solid fa-user-tie"></i> ${roleBadge}`;
           
@@ -675,7 +673,7 @@
           setInterval(loadPendingRequests, 4000); 
         }
       } catch (error) {
-        createShopLink.classList.add('hidden');
+        shopPortalLink.classList.add('hidden');
         currentUserRole = 'Customer';
         document.getElementById('adminTabs').style.display = 'none';
         for (const id of ['adminContentView', 'reportContentView', 'pendingContentView']) document.getElementById(id).classList.add('hidden');
