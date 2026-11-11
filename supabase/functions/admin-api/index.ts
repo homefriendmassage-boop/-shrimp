@@ -215,9 +215,10 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       const key = serverKey(env);
       if (!url || !key) fail('SUPABASE_SERVER_CONFIG_MISSING', 503);
       const db = createDb(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+      const canCreateShop = () => (env('SAAS_PLATFORM_ADMIN_UIDS') || '')
+        .split(',').some(uid => uid.trim() === claims.sub);
       if (input.action === 'platform_create_shop') {
-        const allowed = (env('SAAS_PLATFORM_ADMIN_UIDS') || '').split(',').map(uid => uid.trim());
-        if (!allowed.includes(claims.sub)) fail('PLATFORM_ADMIN_REQUIRED', 403);
+        if (!canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
 
         const shopName = typeof input.shop_name === 'string' ? input.shop_name.trim() : '';
         const ownerName = typeof input.owner_name === 'string' ? input.owner_name.trim() : '';
@@ -330,7 +331,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (input.action === 'access') {
         const picture = lineProfilePicture(claims.picture);
         if (picture) await db.from('users').update({ profile_pic: picture }).eq('shop_id', shopId).eq('uid', claims.sub);
-        return reply({ ok: true, staff: staff.data });
+        return reply({ ok: true, staff: staff.data, can_create_shop: canCreateShop() });
       }
       if (input.action === 'wallet_approve_deposit') {
         const id = String(input.request_id ?? '');
