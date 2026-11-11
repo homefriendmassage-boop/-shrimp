@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>สร้างร้านค้า · บ่อกุ้ง</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="./config.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #131620; color: #f8fafc; font: 16px/1.5 system-ui, sans-serif; }
+    main { max-width: 520px; margin: 32px auto; padding: 24px; }
+    form { display: grid; gap: 14px; padding: 20px; background: #1d2230; border-radius: 16px; }
+    label { display: grid; gap: 4px; }
+    input, button { width: 100%; font: inherit; border-radius: 8px; padding: 10px 12px; }
+    input { background: #131620; color: inherit; border: 1px solid #657084; }
+    button { color: #fff; background: #17623d; border: 0; font-weight: 700; }
+    button:disabled { opacity: .6; }
+    #status { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>สร้างร้านค้า</h1>
+    <p>สำหรับผู้ดูแลแพลตฟอร์ม ร้านใหม่จะเริ่มในสถานะปิด</p>
+    <form id="shop-form">
+      <label>รหัสร้าน <input name="new_shop_id" placeholder="SHOP_002" pattern="SHOP_[A-Z0-9]{3,24}" required></label>
+      <label>ชื่อร้าน <input name="shop_name" maxlength="100" required></label>
+      <label>ชื่อเจ้าของร้าน <input name="owner_name" maxlength="100" required></label>
+      <label>LINE UID เจ้าของร้าน <input name="owner_uid" pattern="U[0-9a-fA-F]{32}" required></label>
+      <button disabled type="submit">สร้างร้านค้า</button>
+    </form>
+    <p id="status" role="status" aria-live="polite"></p>
+  </main>
+  <script>
+    const form = document.getElementById('shop-form');
+    const button = form.querySelector('button');
+    const status = document.getElementById('status');
+    const errors = {
+      PLATFORM_ADMIN_REQUIRED: 'บัญชี LINE นี้ไม่มีสิทธิ์สร้างร้าน',
+      SHOP_DETAILS_INVALID: 'กรุณาตรวจสอบชื่อร้าน รหัสร้าน และ LINE UID',
+      SHOP_EXISTS: 'รหัสร้านนี้มีอยู่แล้ว',
+      OWNER_UID_IN_USE: 'LINE UID นี้ผูกกับร้านอื่นแล้ว',
+    };
+
+    async function initialize() {
+      try {
+        await liff.init({ liffId: APP_CONFIG.LIFF_ID_ADMIN });
+        if (!liff.isLoggedIn()) {
+          liff.login({ redirectUri: location.href });
+          return;
+        }
+        if (!liff.getIDToken()) throw new Error('LINE login required');
+        button.disabled = false;
+      } catch {
+        status.textContent = 'เข้าสู่ระบบ LINE ไม่สำเร็จ กรุณาเปิดหน้านี้ใหม่';
+      }
+    }
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (button.disabled) return;
+      button.disabled = true;
+      status.textContent = 'กำลังสร้างร้าน…';
+      try {
+        const result = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: APP_CONFIG.SUPABASE_ANON_KEY,
+            Authorization: 'Bearer ' + liff.getIDToken(),
+          },
+          body: JSON.stringify({
+            action: 'platform_create_shop',
+            ...Object.fromEntries(new FormData(form)),
+          }),
+        });
+        const data = await result.json();
+        if (!result.ok || !data.ok) {
+          status.textContent = errors[data.code] || 'สร้างร้านไม่สำเร็จ กรุณาลองใหม่';
+          return;
+        }
+        form.reset();
+        status.textContent = 'สร้างร้าน ' + data.shop_id + ' แล้ว ร้านอยู่ในสถานะปิด';
+      } catch {
+        status.textContent = 'ติดต่อระบบไม่ได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่';
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    initialize();
+  </script>
+</body>
+</html>
