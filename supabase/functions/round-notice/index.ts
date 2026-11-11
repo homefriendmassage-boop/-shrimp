@@ -36,13 +36,15 @@ async function signatureValid(raw, signature, secret) {
 async function recordWebhook(req, shop) {
   if (!/^SHOP_[0-9]{3,}$/.test(shop)) return fail('SHOP_INVALID');
   const raw = await req.text();
-  const secret = Deno.env.get('LINE_ROUND_WEBHOOK_SECRET_' + shop)?.trim() ||
+  const db = database();
+  const configured = await db.from('shop_oa_runtime').select('webhook_secret').eq('shop_id', shop).maybeSingle();
+  if (configured.error) return fail('DATABASE_ERROR', 500);
+  const secret = configured.data?.webhook_secret || Deno.env.get('LINE_ROUND_WEBHOOK_SECRET_' + shop)?.trim() ||
     JSON.parse(Deno.env.get('LINE_ROUND_WEBHOOK_SECRETS') || '{}')[shop];
   if (!await signatureValid(raw, req.headers.get('x-line-signature'), secret)) return fail('INVALID_SIGNATURE', 401);
   const { events } = JSON.parse(raw);
   if (!Array.isArray(events)) return fail('INVALID_EVENTS');
   if (!events.length) return reply({ ok: true });
-  const db = database();
   const latest = new Map();
   for (const event of events) {
     const uid = event.source?.userId;
@@ -144,7 +146,7 @@ Deno.serve(async req => {
     const staff = await db.from('users').select('role,status').eq('shop_id', input.shop_id).eq('uid', claims.sub).maybeSingle();
     if (staff.error) return fail('DATABASE_ERROR', 500);
     if (staff.data?.status !== 'Active' || !['Admin', 'Superadmin', 'Operator'].includes(staff.data.role)) return fail('ADMIN_REQUIRED', 403);
-    const shop = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,liff_id_player').eq('shop_id', input.shop_id).maybeSingle();
+    const shop = await db.from('shop_oa_runtime').select('shop_id,shop_name,status,line_oa_token,liff_id_player').eq('shop_id', input.shop_id).maybeSingle();
     const round = await db.from('rounds').select('round_id,status,end_time_ms,result,weight').eq('shop_id', input.shop_id).eq('round_id', input.round_id).maybeSingle();
     if (shop.error || round.error) return fail('DATABASE_ERROR', 500);
     if (shop.data?.status !== 'active' || round.data?.status !== noticeStates[kind] ||
