@@ -35,6 +35,10 @@
 <body>
   <main>
     <h1 id="title">สร้างร้านค้า</h1>
+    <section id="platform-panel" hidden>
+      <h2>ควบคุมร้านค้าในแพลตฟอร์ม</h2>
+      <div id="platform-shops"></div>
+    </section>
     <section id="managed-panel" hidden>
       <h2>ร้านที่ฉันดูแล</h2>
       <div id="managed-shops"></div>
@@ -43,13 +47,6 @@
       <p>สร้างลิงก์ให้เจ้าของร้านกรอกข้อมูลเอง ใช้ได้กับหนึ่งร้านและหมดอายุใน 24 ชั่วโมง</p>
       <label>รหัสร้านผู้แนะนำ (ถ้ามี)
         <input id="referrer-shop" maxlength="29" placeholder="SHOP_000" autocapitalize="characters">
-      </label>
-      <label>ระดับผู้แนะนำ
-        <select id="referral-tier">
-          <option value="">ไม่ระบุผู้แนะนำ</option>
-          <option value="standard">แนะนำทั่วไป</option>
-          <option value="group_lead">หัวหน้ากลุ่ม</option>
-        </select>
       </label>
       <button type="button" id="new-invite" disabled>สร้างคำเชิญ</button>
       <div id="invite-tools" hidden>
@@ -90,7 +87,8 @@
       INVITE_INVALID: 'ลิงก์คำเชิญไม่ถูกต้อง',
       INVITE_EXPIRED: 'คำเชิญหมดอายุแล้ว กรุณาขอลิงก์ใหม่',
       INVITE_USED: 'คำเชิญนี้ถูกใช้แล้ว กรุณาขอลิงก์ใหม่',
-      REFERRER_INVALID: 'กรุณาเลือกระดับและกรอกรหัสร้านผู้แนะนำที่เปิดใช้งานอยู่',
+      SHOP_OR_OA_NOT_READY: 'ร้านนี้ยังไม่พร้อมเปิด กรุณาตรวจการตั้งค่า LINE OA',
+      REFERRER_INVALID: 'กรุณากรอกรหัสร้านผู้แนะนำที่เปิดใช้งานอยู่',
     };
 
     async function request(action, details = {}) {
@@ -129,6 +127,28 @@
         row.append(link);
       }
       container.append(row);
+      return row;
+    }
+
+    function addControl(row, shop, setting, enabled, label) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'secondary';
+      button.textContent = label;
+      button.style.marginTop = '8px';
+      button.addEventListener('click', async () => {
+        if (setting === 'service_enabled' && !confirm(label + ' สำหรับ ' + shop.shop_name + ' ใช่หรือไม่')) return;
+        button.disabled = true;
+        try {
+          await request('platform_shop_control', { target_shop_id: shop.shop_id, setting, enabled });
+          status.textContent = 'บันทึกการตั้งค่าของ ' + shop.shop_id + ' แล้ว';
+          await loadPortal();
+        } catch (error) {
+          status.textContent = errors[error.message] || 'อัปเดตสถานะร้านไม่สำเร็จ';
+          button.disabled = false;
+        }
+      });
+      row.append(button);
     }
 
     async function loadPortal() {
@@ -150,6 +170,18 @@
       }
       byId('managed-panel').hidden = false;
       if (data.can_invite) {
+        const platform = byId('platform-shops');
+        platform.replaceChildren();
+        for (const shop of data.platform_shops ?? []) {
+          const active = String(shop.status).toLowerCase() === 'active';
+          const row = appendRow(platform, shop.shop_name + ' · ' + shop.shop_id,
+            (active ? 'เปิดบริการ' : 'ปิดบริการ') + ' · ' +
+            (shop.oa_configured ? 'ตั้งค่า LINE OA แล้ว' : 'รอเชื่อม LINE OA') + ' · ' +
+            (shop.live_enabled ? 'เปิดเมนู LIVE' : 'ปิดเมนู LIVE'));
+          addControl(row, shop, 'service_enabled', !active, active ? 'ปิดบริการร้าน' : 'เปิดบริการร้าน');
+          addControl(row, shop, 'live_enabled', !shop.live_enabled, shop.live_enabled ? 'ปิดเมนู LIVE สด' : 'เปิดเมนู LIVE สด');
+        }
+        byId('platform-panel').hidden = false;
         const issued = byId('issued-invites');
         issued.replaceChildren();
         if (!data.invitations.length) issued.textContent = 'ยังไม่มีคำเชิญที่ส่ง';
@@ -158,7 +190,7 @@
             ? (String(entry.shop?.status).toLowerCase() === 'active' ? 'เปิดใช้งาน' : 'ลงทะเบียนแล้ว · รอเปิดร้าน')
             : (Date.parse(entry.expires_at) <= Date.now() ? 'หมดอายุ' : 'รอลงทะเบียน');
           const referral = entry.referrer_shop_id
-            ? ' · ผู้แนะนำ ' + entry.referrer_shop_id + ' (' + (entry.referral_tier === 'group_lead' ? 'หัวหน้ากลุ่ม' : 'แนะนำทั่วไป') + ')'
+            ? ' · ร้านผู้แนะนำ ' + entry.referrer_shop_id
             : '';
           appendRow(issued, entry.shop_id ? (entry.shop?.shop_name || 'ร้านที่ลงทะเบียน') + ' · ' + entry.shop_id : 'คำเชิญสมัครร้าน',
             state + referral);
@@ -201,7 +233,6 @@
       try {
         const result = await request('platform_issue_shop_invite', {
           referrer_shop_id: byId('referrer-shop').value,
-          referral_tier: byId('referral-tier').value,
         });
         const url = new URL('https://liff.line.me/' + APP_CONFIG.LIFF_ID_ADMIN);
         url.searchParams.set('shop_invite', result.invite_id);
