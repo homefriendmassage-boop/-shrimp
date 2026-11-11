@@ -7,6 +7,7 @@
   <script src="config.js?v=member-code-1"></script>
   <script src="membership-notice-client.js?v=2"></script>
   <script src="oa-link-client.js?v=2"></script>
+  <script src="shop-login-check.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -172,7 +173,13 @@
     </div>
   </div>
 
-  <div class="container">
+  <div id="shop-login-check" class="container" hidden>
+    <section class="round-info" aria-labelledby="shop-login-check-title">
+      <h1 id="shop-login-check-title">ทดสอบ LINE Login · บ่อทดสอบ2</h1>
+      <p id="shop-login-check-status" role="status">กำลังตรวจบัญชีสมาชิกเดิม…</p>
+    </section>
+  </div>
+  <div class="container" id="player-main">
     <div id="oaLink" class="oa-link" hidden></div>
     <div class="header-card">
       <div class="header-box" style="display: flex; align-items: center; gap: 12px; padding: 8px 15px;">
@@ -368,7 +375,7 @@
       try {
         const restored = new URL(state, location.origin);
         if (restored.origin !== location.origin) return params;
-        for (const key of ['shop', 'table', 'd', 'ref']) {
+        for (const key of ['shop', 'table', 'd', 'ref', 'shop_login_check']) {
           if (!params.has(key) && restored.searchParams.has(key)) params.set(key, restored.searchParams.get(key));
         }
       } catch { /* Explicit query values remain authoritative. */ }
@@ -386,6 +393,10 @@
 
     async function initializeApp() {
       const urlParams = playerEntryParams();
+      if (urlParams.get('shop') === 'SHOP_001' && urlParams.get('shop_login_check') === '1') {
+        await runShopLoginCheck();
+        return;
+      }
       
       // ดึง shop_id จาก URL ถ้ามี (เช่น ?shop=SHOP_000)
       if (urlParams.get('shop')) {
