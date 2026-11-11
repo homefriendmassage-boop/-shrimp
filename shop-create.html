@@ -49,7 +49,7 @@
     <section id="share-panel" hidden>
       <p>สร้างลิงก์ให้เจ้าของร้านกรอกข้อมูลเอง ใช้ได้กับหนึ่งร้านและหมดอายุใน 24 ชั่วโมง</p>
       <label>รหัสร้านผู้แนะนำ (ถ้ามี)
-        <input id="referrer-shop" maxlength="29" placeholder="SHOP_000" autocapitalize="characters">
+        <select id="referrer-shop"><option value="">เลือกร้านผู้แนะนำ (ถ้ามี)</option></select>
       </label>
       <button type="button" id="new-invite" disabled>สร้างคำเชิญ</button>
       <div id="invite-tools" hidden>
@@ -107,7 +107,9 @@
   </main>
   <script>
     const byId = id => document.getElementById(id);
-    const invite = new URLSearchParams(location.search).get('invite');
+    const entryParams = new URLSearchParams(location.search);
+    const invite = entryParams.get('invite');
+    const sourceShop = entryParams.get('shop');
     const form = byId('shop-form');
     const newInvite = byId('new-invite');
     const submitShop = byId('submit-shop');
@@ -295,6 +297,14 @@
       }
       byId('managed-panel').hidden = false;
       if (data.can_invite) {
+        const referrer = byId('referrer-shop');
+        const previous = referrer.value;
+        const available = (data.platform_shops ?? []).filter(shop => String(shop.status).toLowerCase() === 'active');
+        referrer.replaceChildren(new Option('เลือกร้านผู้แนะนำ (ถ้ามี)', ''));
+        for (const shop of available) referrer.add(new Option(shop.shop_id + ' · ' + shop.shop_name, shop.shop_id));
+        const owned = data.shops.filter(shop => String(shop.status).toLowerCase() === 'active');
+        const preferred = previous || sourceShop || (owned.length === 1 ? owned[0].shop_id : '');
+        if (available.some(shop => shop.shop_id === preferred)) referrer.value = preferred;
         const platform = byId('platform-shops');
         platform.replaceChildren();
         for (const shop of data.platform_shops ?? []) {
