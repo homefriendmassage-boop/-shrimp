@@ -178,7 +178,7 @@ Deno.serve(async req => {
     const db = createClient(dbUrl, key, { auth: { persistSession: false, autoRefreshToken: false } });
     const { data: shop, error: shopError } = await db.from('shops').select('*').eq('shop_id', shopId).maybeSingle();
     if (shopError) return error('DATABASE_ERROR', 500);
-    if (!shop) return error('SHOP_NOT_AVAILABLE', 404);
+    if (!shop || String(shop.status).toLowerCase() !== 'active') return error('SHOP_NOT_AVAILABLE', 404);
     if (action === 'shop') {
       const names = ['shop_name', 'name', 'business_name', 'store_name', 'display_name', 'title'];
       const label = names.map(k => shop[k]).find(v => typeof v === 'string' && v.trim().length > 0);
