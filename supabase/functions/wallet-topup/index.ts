@@ -22,7 +22,8 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return reply("METHOD_NOT_ALLOWED", 405);
   if (req.headers.get("origin") && req.headers.get("origin") !== origin) return reply("ORIGIN_INVALID", 403);
 
-  const channel = env("LINE_CHANNEL_ID_PLAYER");
+  const shopLogin = new URL(req.url).searchParams.get("shop_login") === "1";
+  const channel = shopLogin ? "2009043114" : env("LINE_CHANNEL_ID_PLAYER");
   const thunder = env("THUNDER_API_KEY");
   const url = env("SUPABASE_URL");
   const key = env("SUPABASE_SERVICE_ROLE_KEY");
@@ -38,7 +39,7 @@ Deno.serve(async (req) => {
     });
     if (!identity.ok) return reply("LINE_AUTH_INVALID", 401);
     const claims = await identity.json();
-    const uid = claims.sub;
+    let uid = claims.sub;
     if (typeof uid !== "string" || !/^U[0-9a-f]{32}$/i.test(uid) ||
         claims.aud !== channel || !(Number(claims.exp) * 1000 > Date.now())) return reply("LINE_AUTH_INVALID", 401);
 
@@ -49,6 +50,7 @@ Deno.serve(async (req) => {
     const amount = input.get("amount");
     const image = input.get("image");
     if (typeof shop !== "string" || !/^SHOP_[0-9]{3,}$/.test(shop)) return reply("SHOP_INVALID", 400);
+    if (shopLogin && shop !== "SHOP_001") return reply("SHOP_LOGIN_NOT_ALLOWED", 403);
     if (typeof amount !== "string" || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) {
       return reply("AMOUNT_INVALID", 400);
     }
@@ -57,6 +59,12 @@ Deno.serve(async (req) => {
     }
 
     const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+    if (shopLogin) {
+      const mapping = await db.rpc("resolve_shop_oa_member", { p_shop: shop, p_oa_uid: uid });
+      if (mapping.error) return reply("WALLET_UNAVAILABLE", 503);
+      if (!mapping.data) return reply("OA_ACCOUNT_NOT_LINKED", 403);
+      uid = mapping.data;
+    }
     const [member, application, account, store] = await Promise.all([
       db.from("users").select("role,member_id").eq("uid", uid).eq("shop_id", shop).eq("status", "Active").maybeSingle(),
       db.from("membership_applications").select("member_id").eq("line_uid", uid).eq("shop_id", shop).eq("state", "Approved").maybeSingle(),

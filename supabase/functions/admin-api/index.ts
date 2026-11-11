@@ -213,14 +213,24 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
-      const clientId = env(channelKey);
+      const shopLogin = input.shop_login === true;
+      if (shopLogin && (!playerRequest || shopId !== 'SHOP_001')) fail('SHOP_LOGIN_NOT_ALLOWED', 403);
+      const clientId = shopLogin ? '2009043114' : env(channelKey);
       if (!clientId) fail(channelKey + '_MISSING', 503);
       if (!token || token.length > 16000) fail('LINE_AUTH_INVALID', 401);
-      const claims = await verifyLineClaims(token, clientId, fetcher, input.action === 'player_state');
+      const identity = await verifyLineClaims(token, clientId, fetcher, input.action === 'player_state');
       const url = env('SUPABASE_URL');
       const key = serverKey(env);
       if (!url || !key) fail('SUPABASE_SERVER_CONFIG_MISSING', 503);
       const db = createDb(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+      let claims = identity;
+      if (shopLogin) {
+        if (!/^U[0-9a-f]{32}$/i.test(identity.sub)) fail('LINE_AUTH_INVALID', 401);
+        const mapping = await db.rpc('resolve_shop_oa_member', { p_shop: shopId, p_oa_uid: identity.sub });
+        if (mapping.error) fail('DATABASE_ERROR', 500);
+        if (!mapping.data) fail('OA_ACCOUNT_NOT_LINKED', 403);
+        claims = { ...identity, sub: mapping.data };
+      }
       const canCreateShop = async () => {
         const configured = (env('SAAS_PLATFORM_ADMIN_UIDS') || '')
           .split(',').some(uid => uid.trim() === claims.sub);

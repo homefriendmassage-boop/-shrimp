@@ -356,6 +356,7 @@
 
     let currentShopId = "SHOP_000"; // ค่าเริ่มต้นร้านค้า
     let currentLineUserId = "";
+    let useShopLogin = false;
     let currentDisplayName = "";
     let selectedBetType = "";
     let playMode = "private"; 
@@ -375,7 +376,7 @@
       try {
         const restored = new URL(state, location.origin);
         if (restored.origin !== location.origin) return params;
-        for (const key of ['shop', 'table', 'd', 'ref', 'shop_login_check']) {
+        for (const key of ['shop', 'table', 'd', 'ref', 'shop_login_check', 'shop_login']) {
           if (!params.has(key) && restored.searchParams.has(key)) params.set(key, restored.searchParams.get(key));
         }
       } catch { /* Explicit query values remain authoritative. */ }
@@ -403,6 +404,7 @@
         currentShopId = urlParams.get('shop');
       }
 
+      useShopLogin = currentShopId === 'SHOP_001' && urlParams.get('shop_login') === '1';
       updatePlayerPageTitle();
 
       if(urlParams.get('table')) { 
@@ -417,9 +419,9 @@
 
 
       try {
-        await liff.init({ liffId: APP_CONFIG.LIFF_ID_PLAYER });
+        await liff.init({ liffId: useShopLogin ? '2009043114-jTsiIhMR' : APP_CONFIG.LIFF_ID_PLAYER });
         const restored = playerEntryParams();
-        if (restored.has('shop')) {
+        if (restored.has('shop') && !useShopLogin) {
           currentShopId = restored.get('shop');
           updatePlayerPageTitle();
         }
@@ -428,7 +430,17 @@
           if (referrer) sessionStorage.setItem('referrer_id', referrer);
           else sessionStorage.removeItem('referrer_id');
         }
-        if (!liff.isLoggedIn()) { liff.login(); } 
+        if (!liff.isLoggedIn()) {
+          if (useShopLogin) {
+            const redirect = new URL(location.pathname, location.origin);
+            for (const key of ['shop', 'table', 'd', 'ref', 'shop_login']) {
+              if (urlParams.has(key)) redirect.searchParams.set(key, urlParams.get(key));
+            }
+            liff.login({ redirectUri: redirect.href });
+          } else {
+            liff.login();
+          }
+        } 
         else {
           const profile = await liff.getProfile();
           currentLineUserId = profile.userId;
@@ -450,7 +462,7 @@
           Authorization: 'Bearer ' + token,
           apikey: APP_CONFIG.SUPABASE_ANON_KEY
         },
-        body: JSON.stringify({ ...extra, action, shop_id: currentShopId }),
+        body: JSON.stringify({ ...extra, action, shop_id: currentShopId, shop_login: useShopLogin }),
         signal: AbortSignal.timeout(15000)
       });
       const result = await response.json();
@@ -473,6 +485,20 @@
       const apply = document.getElementById('membershipApplyLink');
       apply.href = 'staging/member-apply.html?shop=' + encodeURIComponent(currentShopId);
       apply.classList.toggle('hidden', !canApply);
+    }
+
+    function showShopLoginFallback(message, code = null) {
+      showMembershipGate(message, code);
+      const link = document.getElementById('membershipApplyLink');
+      const url = new URL('https://liff.line.me/' + APP_CONFIG.LIFF_ID_PLAYER);
+      const params = playerEntryParams();
+      url.searchParams.set('shop', currentShopId);
+      for (const key of ['table', 'd', 'ref']) {
+        if (params.has(key)) url.searchParams.set(key, params.get(key));
+      }
+      link.href = url.href;
+      link.textContent = 'เปิดทางเข้าสมาชิกและสมัครสมาชิก';
+      link.classList.remove('hidden');
     }
 
     async function readOwnerNotice(action) {
@@ -517,6 +543,10 @@
           currentShopId = result.shop_id;
           updatePlayerPageTitle();
         }
+        if (useShopLogin && result.state !== 'Approved') {
+          showShopLoginFallback('กรุณาตรวจสถานะหรือสมัครสมาชิกผ่านทางเข้าสมาชิกของร้าน', result.member_id);
+          return;
+        }
         if (result.staff && !result.state) {
           window.location.replace('admin.html?shop=' + encodeURIComponent(currentShopId));
           return;
@@ -526,7 +556,7 @@
           adminLink.href = 'https://liff.line.me/' + APP_CONFIG.LIFF_ID_ADMIN + '?shop=' + encodeURIComponent(currentShopId);
           adminLink.classList.remove('hidden');
         }
-        if (['Pending', 'Approved'].includes(result.state)) {
+        if (!useShopLogin && ['Pending', 'Approved'].includes(result.state)) {
           mountShopOaLink(document.getElementById('oaLink'), currentShopId);
         }
         if (result.state !== 'Approved') {
@@ -544,7 +574,8 @@
         }
         document.getElementById('liveNav').classList.toggle('hidden', result.live_enabled === false);
         const user = result.player;
-        if (!user || user.uid !== profile.userId) throw new Error('LINE_AUTH_INVALID');
+        if (!user || (!useShopLogin && user.uid !== profile.userId)) throw new Error('LINE_AUTH_INVALID');
+        currentLineUserId = user.uid;
         memberId = user.member_id;
         currentUserRole = user.role || 'Customer';
         currentUserStatus = user.status;
@@ -563,6 +594,10 @@
         document.getElementById('bottomNavMenu').style.display = 'flex';
         fetchDashboard();
       } catch (error) {
+        if (useShopLogin && error.message === 'OA_ACCOUNT_NOT_LINKED') {
+          showShopLoginFallback('บัญชี LINE นี้ยังไม่ได้ผูกกับสมาชิกของบ่อทดสอบ2');
+          return;
+        }
         showMembershipGate('ตรวจสอบบัญชีไม่สำเร็จ กรุณาเปิดหน้าใหม่ [' + error.message + ']', null);
       }
     }
@@ -964,7 +999,8 @@
       form.set('shop_id', currentShopId);
       form.set('amount', amount);
       form.set('image', image);
-      const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/wallet-topup', {
+      const endpoint = APP_CONFIG.SUPABASE_URL + '/functions/v1/wallet-topup' + (useShopLogin ? '?shop_login=1' : '');
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + token, apikey: APP_CONFIG.SUPABASE_ANON_KEY },
         body: form,
