@@ -146,9 +146,10 @@ Deno.serve(async req => {
     const staff = await db.from('users').select('role,status').eq('shop_id', input.shop_id).eq('uid', claims.sub).maybeSingle();
     if (staff.error) return fail('DATABASE_ERROR', 500);
     if (staff.data?.status !== 'Active' || !['Admin', 'Superadmin', 'Operator'].includes(staff.data.role)) return fail('ADMIN_REQUIRED', 403);
-    const shop = await db.from('shop_oa_runtime').select('shop_id,shop_name,status,line_oa_token,liff_id_player').eq('shop_id', input.shop_id).maybeSingle();
+    const shop = await db.from('shop_oa_runtime').select('shop_id,shop_name,status,line_oa_token,liff_id_player,line_notifications_enabled').eq('shop_id', input.shop_id).maybeSingle();
     const round = await db.from('rounds').select('round_id,status,end_time_ms,result,weight').eq('shop_id', input.shop_id).eq('round_id', input.round_id).maybeSingle();
     if (shop.error || round.error) return fail('DATABASE_ERROR', 500);
+    if (shop.data?.line_notifications_enabled === false) return reply({ ok: true, skipped: true, eligible: 0, accepted: 0, failed: 0 });
     if (shop.data?.status !== 'active' || round.data?.status !== noticeStates[kind] ||
         (kind === 'opened' && !(Number(round.data.end_time_ms) > Date.now()))) {
       return fail('ROUND_STATE_CHANGED', 409);
