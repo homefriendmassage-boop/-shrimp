@@ -201,9 +201,9 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request', 'wallet_approve_deposit', 'platform_issue_shop_invite', 'platform_redeem_shop'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request', 'wallet_approve_deposit', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
-      if (!['platform_issue_shop_invite', 'platform_redeem_shop'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
+      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'wallet_request'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
@@ -223,10 +223,45 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           .eq('line_uid', claims.sub).maybeSingle();
         return !grant.error && grant.data?.line_uid === claims.sub;
       };
+      if (input.action === 'platform_shop_portal') {
+        const [membership, canInvite] = await Promise.all([
+          db.from('users')
+            .select('shop:shops!users_shop_id_fkey(shop_id,shop_name,status,line_oa_token)')
+            .eq('uid', claims.sub).eq('status', 'Active').in('role', ['Admin', 'Superadmin'])
+            .order('shop_id'),
+          canCreateShop(),
+        ]);
+        if (membership.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+        const shops = (membership.data ?? []).flatMap(({ shop }) => shop ? [{
+          shop_id: shop.shop_id, shop_name: shop.shop_name, status: shop.status,
+          oa_configured: Boolean(shop.line_oa_token?.trim()),
+        }] : []);
+        let invitations = [];
+        if (canInvite) {
+          const issued = await db.from('platform_shop_invites')
+            .select('expires_at,shop_id,referrer_shop_id,referral_tier,shop:shops!platform_shop_invites_shop_id_fkey(shop_name,status)')
+            .eq('created_by', claims.sub).order('expires_at', { ascending: false }).limit(50);
+          if (issued.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+          invitations = issued.data ?? [];
+        }
+        return reply({ ok: true, shops, can_invite: canInvite, invitations });
+      }
       if (input.action === 'platform_issue_shop_invite') {
         if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
 
-        const invite = await db.from('platform_shop_invites').insert({ created_by: claims.sub })
+        const referrer = typeof input.referrer_shop_id === 'string' ? input.referrer_shop_id.trim().toUpperCase() : '';
+        const tier = input.referral_tier || '';
+        if (referrer || tier) {
+          if (!/^SHOP_[A-Z0-9]{3,24}$/.test(referrer) || !['standard', 'group_lead'].includes(tier)) {
+            fail('REFERRER_INVALID');
+          }
+          const shop = await db.from('shops').select('shop_id,status').eq('shop_id', referrer).maybeSingle();
+          if (shop.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+          if (shop.data?.status?.toLowerCase() !== 'active') fail('REFERRER_INVALID');
+        }
+        const invite = await db.from('platform_shop_invites').insert({
+          created_by: claims.sub, referrer_shop_id: referrer || null, referral_tier: tier || null,
+        })
           .select('invite_id,expires_at').single();
         if (invite.error || !invite.data) fail('INVITE_CREATE_FAILED', 500);
         return reply({ ok: true, invite_id: invite.data.invite_id, expires_at: invite.data.expires_at });
