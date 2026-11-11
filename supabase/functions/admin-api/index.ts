@@ -119,7 +119,7 @@ function serverKey(env) {
 async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
   if (!/^U[0-9a-f]{32}$/i.test(request.uid) || !['ฝากเงิน', 'ถอนเงิน'].includes(request.type)) return;
   try {
-    const shop = await db.from('shops').select('line_oa_token,liff_id_player,liff_id_admin,admin_group_id').eq('shop_id', shopId).maybeSingle();
+    const shop = await db.from('shop_oa_runtime').select('line_oa_token,liff_id_player,liff_id_admin,admin_group_id').eq('shop_id', shopId).maybeSingle();
     const token = shop.data?.line_oa_token;
     if (!token) return;
     const credited = request.status === 'Approved' && request.type === 'ฝากเงิน';
@@ -201,9 +201,9 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request', 'wallet_approve_deposit', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request', 'wallet_approve_deposit', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
-      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
+      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'wallet_request'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
@@ -226,7 +226,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (input.action === 'platform_shop_portal') {
         const [membership, canInvite] = await Promise.all([
           db.from('users')
-            .select('shop:shops!users_shop_id_fkey(shop_id,shop_name,status,line_oa_token)')
+            .select('shop:shops!users_shop_id_fkey(shop_id,shop_name,status,line_oa_token,line_oa_bot_uid)')
             .eq('uid', claims.sub).eq('status', 'Active').in('role', ['Admin', 'Superadmin'])
             .order('shop_id'),
           canCreateShop(),
@@ -234,7 +234,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (membership.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
         const shops = (membership.data ?? []).flatMap(({ shop }) => shop ? [{
           shop_id: shop.shop_id, shop_name: shop.shop_name, status: shop.status,
-          oa_configured: Boolean(shop.line_oa_token?.trim()),
+          oa_configured: Boolean(shop.line_oa_bot_uid || shop.line_oa_token?.trim()),
         }] : []);
         let invitations = [];
         let platformShops = [];
@@ -244,13 +244,39 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             .eq('created_by', claims.sub).order('expires_at', { ascending: false }).limit(50);
           if (issued.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
           invitations = issued.data ?? [];
-          const managed = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,live_enabled').order('shop_id');
+          const managed = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,line_oa_bot_uid,live_enabled').order('shop_id');
           if (managed.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
-          platformShops = (managed.data ?? []).map(({ line_oa_token, ...shop }) => ({
-            ...shop, oa_configured: Boolean(line_oa_token?.trim()),
+          platformShops = (managed.data ?? []).map(({ line_oa_token, line_oa_bot_uid, ...shop }) => ({
+            ...shop, oa_configured: Boolean(line_oa_bot_uid || line_oa_token?.trim()),
           }));
         }
         return reply({ ok: true, shops, can_invite: canInvite, invitations, platform_shops: platformShops });
+      }
+      if (input.action === 'platform_save_shop_oa') {
+        if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
+        const target = input.target_shop_id;
+        const accessToken = typeof input.channel_access_token === 'string' ? input.channel_access_token.trim() : '';
+        const secret = typeof input.channel_secret === 'string' ? input.channel_secret.trim() : '';
+        if (typeof target !== 'string' || !/^SHOP_[0-9]{3,}$/.test(target) ||
+            accessToken.length < 20 || accessToken.length > 4096 || !/^[\x21-\x7e]+$/.test(accessToken) ||
+            !/^[0-9a-fA-F]{32}$/.test(secret)) fail('OA_DETAILS_INVALID');
+        let response;
+        try {
+          response = await fetcher('https://api.line.me/v2/bot/info', {
+            headers: { Authorization: 'Bearer ' + accessToken }, signal: AbortSignal.timeout(5000),
+          });
+        } catch { fail('OA_VERIFY_UNAVAILABLE', 503); }
+        if (response.status === 401 || response.status === 403) fail('OA_TOKEN_INVALID', 422);
+        if (!response.ok) fail('OA_VERIFY_UNAVAILABLE', 503);
+        const bot = await response.json();
+        if (typeof bot.userId !== 'string' || !/^U[0-9a-f]{32}$/.test(bot.userId)) fail('OA_TOKEN_INVALID', 422);
+        const saved = await db.rpc('save_shop_oa', {
+          p_shop: target, p_bot: bot.userId, p_token: accessToken, p_secret: secret,
+        });
+        if (saved.error) fail('OA_SAVE_FAILED', 500);
+        if (['OA_ALREADY_LINKED', 'SHOP_NOT_FOUND', 'OA_DETAILS_INVALID'].includes(saved.data)) fail(saved.data, 409);
+        if (saved.data !== 'SAVED') fail('OA_SAVE_FAILED', 500);
+        return reply({ ok: true });
       }
       if (input.action === 'platform_shop_control') {
         if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
@@ -266,7 +292,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         }
         let update = db.from('shops').update(values).eq('shop_id', target);
         if (input.setting === 'service_enabled' && input.enabled) {
-          update = update.not('line_oa_token', 'is', null).neq('line_oa_token', '');
+          update = update.or('line_oa_bot_uid.not.is.null,and(line_oa_token.not.is.null,line_oa_token.neq.)');
         }
         const saved = await update.select('shop_id').maybeSingle();
         if (saved.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
@@ -475,7 +501,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (profileLookup && Array.isArray(result.data) && result.data.length === 1 &&
           !result.data[0].profile_pic && /^U[0-9a-f]{32}$/i.test(result.data[0].uid)) {
         const user = result.data[0];
-        const credential = await db.from('shops').select('line_oa_token').eq('shop_id', shopId).maybeSingle();
+        const credential = await db.from('shop_oa_runtime').select('line_oa_token').eq('shop_id', shopId).maybeSingle();
         if (credential.data?.line_oa_token) {
           try {
             const response = await fetcher('https://api.line.me/v2/bot/profile/' + user.uid, {
