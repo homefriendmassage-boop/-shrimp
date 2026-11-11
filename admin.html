@@ -592,7 +592,7 @@
             return;
           }
           if (new URLSearchParams(location.search).get('shop_portal') === '1' || urlParams.get('shop_portal') === '1') {
-            location.replace('shop-create.html');
+            location.replace('shop-create.html?shop=' + encodeURIComponent(currentShopId));
             return;
           }
           const profile = await liff.getProfile();
@@ -627,6 +627,9 @@
 
     async function checkAdminAccess(uid) {
       const createShopLink = document.getElementById('createShopLink');
+      const portalHref = 'shop-create.html?shop=' + encodeURIComponent(currentShopId);
+      createShopLink.href = portalHref;
+      document.getElementById('shopPortalLink').href = portalHref;
       createShopLink.classList.add('hidden');
       try {
         const access = await _supabase.access();
