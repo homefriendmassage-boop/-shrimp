@@ -90,6 +90,18 @@
         <button id="oa-close" class="secondary" type="button">ปิด</button>
       </form>
     </dialog>
+    <dialog id="notice-dialog" aria-labelledby="notice-title">
+      <form id="notice-form">
+        <h2 id="notice-title">ผู้รับแจ้งเตือนสมัครสมาชิก</h2>
+        <label>LINE User ID ของผู้รับ
+          <input name="recipient_uid" pattern="U[0-9a-f]{32}" placeholder="ขึ้นต้นด้วย U" required>
+        </label>
+        <small>ใช้ UID จาก Provider ของ LINE OA ร้านนี้ และให้ผู้รับเพิ่ม OA เป็นเพื่อนก่อน</small>
+        <p id="notice-status" role="status"></p>
+        <button id="notice-save" type="submit">ตรวจและบันทึกผู้รับ</button>
+        <button id="notice-close" type="button" class="secondary">ปิด</button>
+      </form>
+    </dialog>
     <p id="portal-after" hidden><a id="portal-link">เปิดร้านที่ฉันดูแล</a></p>
     <p id="status" role="status" aria-live="polite"></p>
   </main>
@@ -108,6 +120,9 @@
       INVITE_EXPIRED: 'คำเชิญหมดอายุแล้ว กรุณาขอลิงก์ใหม่',
       INVITE_USED: 'คำเชิญนี้ถูกใช้แล้ว กรุณาขอลิงก์ใหม่',
       SHOP_OR_OA_NOT_READY: 'ร้านนี้ยังไม่พร้อมเปิด กรุณาตรวจการตั้งค่า LINE OA',
+      NOTICE_RECIPIENT_INVALID: 'กรุณากรอก LINE User ID ที่ขึ้นต้นด้วย U ตามด้วยอักขระ 32 ตัว',
+      NOTICE_RECIPIENT_NOT_FOUND: 'OA ร้านนี้มองไม่เห็นบัญชีผู้รับ กรุณาตรวจ Provider และเพิ่ม OA เป็นเพื่อน',
+      SHOP_OA_NOT_READY: 'กรุณาเชื่อม LINE OA ของร้านก่อน',
       OA_DETAILS_INVALID: 'ตรวจสอบ Token และ Channel secret ของ Messaging API อีกครั้ง',
       OA_TOKEN_INVALID: 'LINE ไม่ยอมรับ Token นี้ กรุณาตรวจสอบใน LINE Developers',
       OA_ALREADY_LINKED: 'LINE OA นี้ผูกกับร้านอื่นแล้ว',
@@ -221,6 +236,46 @@
       }
     });
 
+    const noticeDialog = byId('notice-dialog');
+    const noticeForm = byId('notice-form');
+    const noticeSave = byId('notice-save');
+    const noticeClose = byId('notice-close');
+    let noticeShopId = '';
+
+    function openNoticeSettings(shop) {
+      noticeShopId = shop.shop_id;
+      byId('notice-title').textContent = 'ผู้รับแจ้งเตือนสมัครสมาชิก · ' + shop.shop_name;
+      noticeForm.elements.recipient_uid.value = shop.membership_notice_recipient_uid || '';
+      byId('notice-status').textContent = '';
+      noticeSave.disabled = false;
+      noticeDialog.showModal();
+    }
+
+    noticeClose.addEventListener('click', () => noticeDialog.close());
+    noticeDialog.addEventListener('cancel', event => {
+      if (noticeClose.disabled) event.preventDefault();
+    });
+    noticeForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (noticeSave.disabled) return;
+      noticeSave.disabled = noticeClose.disabled = true;
+      const feedback = byId('notice-status');
+      feedback.textContent = 'กำลังตรวจผู้รับกับ LINE OA ของร้าน…';
+      try {
+        await request('platform_save_notice_recipient', {
+          target_shop_id: noticeShopId,
+          recipient_uid: noticeForm.elements.recipient_uid.value,
+        });
+        feedback.textContent = 'บันทึกผู้รับแจ้งเตือนแล้ว';
+        await loadPortal().catch(() => {});
+      } catch (error) {
+        feedback.textContent = errors[error.message] || 'บันทึกผู้รับไม่สำเร็จ กรุณาลองอีกครั้ง';
+        noticeSave.disabled = false;
+      } finally {
+        noticeClose.disabled = false;
+      }
+    });
+
     async function loadPortal() {
       const data = await request('platform_shop_portal');
       const managed = byId('managed-shops');
@@ -255,6 +310,15 @@
           settings.addEventListener('click', () => openOaSettings(shop));
           row.append(settings);
           addControl(row, shop, 'service_enabled', !active, active ? 'ปิดบริการร้าน' : 'เปิดบริการร้าน');
+          const notice = document.createElement('button');
+          notice.type = 'button';
+          notice.className = 'secondary';
+          notice.style.marginTop = '8px';
+          notice.textContent = 'ตั้งผู้รับแจ้งเตือนสมัครสมาชิก';
+          notice.addEventListener('click', () => openNoticeSettings(shop));
+          row.append(notice);
+          addControl(row, shop, 'line_notifications_enabled', !shop.line_notifications_enabled,
+            shop.line_notifications_enabled ? 'ปิดการแจ้งเตือน LINE' : 'เปิดการแจ้งเตือน LINE');
           addControl(row, shop, 'live_enabled', !shop.live_enabled, shop.live_enabled ? 'ปิดเมนู LIVE สด' : 'เปิดเมนู LIVE สด');
         }
         byId('platform-panel').hidden = false;
