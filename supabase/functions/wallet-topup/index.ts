@@ -57,12 +57,14 @@ Deno.serve(async (req) => {
     }
 
     const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-    const [member, application, account] = await Promise.all([
+    const [member, application, account, store] = await Promise.all([
       db.from("users").select("role,member_id").eq("uid", uid).eq("shop_id", shop).eq("status", "Active").maybeSingle(),
       db.from("membership_applications").select("member_id").eq("line_uid", uid).eq("shop_id", shop).eq("state", "Approved").maybeSingle(),
       db.from("wallet_receiving_accounts").select("shop_id").eq("shop_id", shop).eq("enabled", true).lte("auto_credit_from", new Date().toISOString()).limit(1),
+      db.from("shops").select("status").eq("shop_id", shop).maybeSingle(),
     ]);
-    if (member.error || application.error || account.error) return reply("WALLET_UNAVAILABLE", 503);
+    if (member.error || application.error || account.error || store.error) return reply("WALLET_UNAVAILABLE", 503);
+    if (String(store.data?.status).toLowerCase() !== "active") return reply("SHOP_NOT_AVAILABLE", 403);
     if (!member.data || !application.data || member.data.member_id !== application.data.member_id ||
         member.data.role === "Backer") return reply("PLAYER_ACCESS_REQUIRED", 403);
     if (!account.data.length) return reply("AUTO_CREDIT_DISABLED", 503);
