@@ -207,9 +207,9 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'round_finalize_balanced', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'round_finalize_balanced', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
-      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
+      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
@@ -251,9 +251,12 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           if (issued.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
           invitations = issued.data ?? [];
           const managed = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,line_oa_bot_uid,live_enabled,line_notifications_enabled,membership_notice_recipient_uid').order('shop_id');
-          if (managed.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+          const planRequests = await db.from('platform_shop_plan_requests').select('shop_id,plan_code');
+          if (managed.error || planRequests.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+          const plansByShop = new Map((planRequests.data ?? []).map(row => [row.shop_id, row.plan_code]));
           platformShops = (managed.data ?? []).map(({ line_oa_token, line_oa_bot_uid, ...shop }) => ({
             ...shop, oa_configured: Boolean(line_oa_bot_uid || line_oa_token?.trim()),
+            requested_plan: plansByShop.get(shop.shop_id) ?? null,
           }));
         }
         return reply({ ok: true, shops, can_invite: canInvite, invitations, platform_shops: platformShops });
@@ -349,6 +352,17 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (invite.error || !invite.data) fail('INVITE_CREATE_FAILED', 500);
         return reply({ ok: true, invite_id: invite.data.invite_id, expires_at: invite.data.expires_at });
       }
+      if (input.action === 'platform_shop_invite_details') {
+        const inviteId = input.invite_id;
+        if (typeof inviteId !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(inviteId)) fail('INVITE_INVALID');
+        const invite = await db.from('platform_shop_invites')
+          .select('referrer_shop_id,expires_at,shop_id,redeemed_by').eq('invite_id', inviteId).maybeSingle();
+        if (invite.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+        if (!invite.data) fail('INVITE_INVALID', 404);
+        if (invite.data.shop_id && invite.data.redeemed_by !== claims.sub) fail('INVITE_USED', 409);
+        if (!invite.data.shop_id && Date.parse(invite.data.expires_at) <= Date.now()) fail('INVITE_EXPIRED', 409);
+        return reply({ ok: true, referrer_shop_id: invite.data.referrer_shop_id });
+      }
       if (input.action === 'platform_redeem_shop') {
         const invite = typeof input.invite_id === 'string' ? input.invite_id : '';
         const shopName = typeof input.shop_name === 'string' ? input.shop_name.trim() : '';
@@ -359,13 +373,17 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             !/^\+?[0-9]{8,15}$/.test(phone) || !/^U[0-9a-f]{32}$/.test(claims.sub)) {
           fail('SHOP_DETAILS_INVALID');
         }
-        const result = await db.rpc('redeem_platform_shop_invite', {
+        const plan = input.plan_code;
+        const hasPlan = plan !== undefined;
+        if (hasPlan && !['free', 'starter', 'basic', 'pro'].includes(plan)) fail('PLAN_INVALID');
+        const result = await db.rpc(hasPlan ? 'redeem_platform_shop_invite_with_plan' : 'redeem_platform_shop_invite', {
           p_invite: invite, p_name: shopName, p_owner: claims.sub, p_owner_name: ownerName, p_phone: phone,
+          ...(hasPlan ? { p_plan: plan } : {}),
         });
         if (result.error) fail('SHOP_CREATE_FAILED', 500);
         if (['INVITE_INVALID', 'INVITE_EXPIRED', 'INVITE_USED'].includes(result.data?.code)) fail(result.data.code, 409);
         if (result.data?.code !== 'CREATED') fail('SHOP_CREATE_FAILED', 500);
-        return reply({ ok: true, shop_id: result.data.shop_id, status: 'Inactive' });
+        return reply({ ok: true, shop_id: result.data.shop_id, status: 'Inactive', plan_code: result.data.plan_code });
       }
       if (input.action === 'player_state') {
         const table = input.table_no;
