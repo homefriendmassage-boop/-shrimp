@@ -24,7 +24,6 @@
     body { font-family: 'Kanit', sans-serif; background-color: var(--bg-dark); color: var(--text-main); margin: 0; padding: 0; padding-bottom: 80px; -webkit-font-smoothing: antialiased; }
     .container { max-width: 480px; margin: 0 auto; padding: 20px; }
     .oa-link { margin: 0 0 14px; }
-    .shop-name { margin: 0 0 12px; font-size: 1.25rem; line-height: 1.4; overflow-wrap: anywhere; }
     .header-card { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
     .header-box { background: var(--bg-panel); padding: 12px 15px; border-radius: 12px; border: 1px solid var(--card-border); flex: 1; }
     .header-box:first-child { margin-right: 10px; }
@@ -174,7 +173,6 @@
   </div>
 
   <div class="container">
-    <h1 id="playerShopName" class="shop-name" hidden></h1>
     <div id="oaLink" class="oa-link" hidden></div>
     <div class="header-card">
       <div class="header-box" style="display: flex; align-items: center; gap: 12px; padding: 8px 15px;">
@@ -377,15 +375,12 @@
       return params;
     }
 
-    function showPlayerShopName() {
+    function updatePlayerPageTitle() {
       const publishedShopNames = new Map([
         ['SHOP_000', 'บ่อกุ้ง DEMO'],
         ['SHOP_001', 'บ่อทดสอบ2'],
       ]);
       const name = publishedShopNames.get(currentShopId);
-      const heading = document.getElementById('playerShopName');
-      heading.textContent = name || '';
-      heading.hidden = !name;
       document.title = name ? 'แอปผู้เล่น - ' + name : 'แอปผู้เล่น - บ่อตกกุ้ง';
     }
 
@@ -397,7 +392,7 @@
         currentShopId = urlParams.get('shop');
       }
 
-      showPlayerShopName();
+      updatePlayerPageTitle();
 
       if(urlParams.get('table')) { 
         let qrDate = urlParams.get('d');
@@ -415,7 +410,7 @@
         const restored = playerEntryParams();
         if (restored.has('shop')) {
           currentShopId = restored.get('shop');
-          showPlayerShopName();
+          updatePlayerPageTitle();
         }
         if (restored.has('ref')) {
           const referrer = parseMemberCode(currentShopId, restored.get('ref'));
@@ -509,7 +504,7 @@
         const result = await readPlayerProfile();
         if (result.shop_id) {
           currentShopId = result.shop_id;
-          showPlayerShopName();
+          updatePlayerPageTitle();
         }
         if (result.staff && !result.state) {
           window.location.replace('admin.html?shop=' + encodeURIComponent(currentShopId));
