@@ -190,6 +190,49 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
 }
 
 export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
+  const entryAccounts = new Map();
+  function database() {
+    const url = env('SUPABASE_URL');
+    const key = serverKey(env);
+    if (!url || !key) fail('SUPABASE_SERVER_CONFIG_MISSING', 503);
+    return createDb(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+  }
+
+  async function playerEntry(shopId) {
+    if (!/^SHOP_[0-9]{3,24}$/.test(shopId)) fail('SHOP_INVALID');
+    const db = database();
+    const [shop, runtime] = await Promise.all([
+      db.from('shops').select('shop_name,status,line_oa_bot_uid').eq('shop_id', shopId).maybeSingle(),
+      db.from('shop_oa_runtime').select('line_oa_token').eq('shop_id', shopId).maybeSingle(),
+    ]);
+    if (shop.error || runtime.error) fail('DATABASE_ERROR', 500);
+    if (shop.data?.status !== 'active') fail('SHOP_NOT_AVAILABLE', 404);
+    const details = { ok: true, shop_name: shop.data.shop_name, add_friend_url: null };
+    const token = runtime.data?.line_oa_token?.trim();
+    if (!token) return details;
+
+    const bot = shop.data.line_oa_bot_uid;
+    const cached = entryAccounts.get(shopId);
+    if (cached?.bot === bot && cached.until > Date.now()) {
+      return { ...details, add_friend_url: cached.url };
+    }
+    try {
+      const response = await fetcher('https://api.line.me/v2/bot/info', {
+        headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(3500),
+      });
+      if (!response.ok) return details;
+      const info = await response.json();
+      if ((bot && info.userId !== bot) || typeof info.basicId !== 'string' ||
+          !/^@[a-zA-Z0-9._-]{1,40}$/.test(info.basicId)) return details;
+      const url = 'https://line.me/R/ti/p/' + encodeURIComponent(info.basicId);
+      if (entryAccounts.size >= 256) entryAccounts.delete(entryAccounts.keys().next().value);
+      entryAccounts.set(shopId, { bot, url, until: Date.now() + 60000 });
+      return { ...details, add_friend_url: url };
+    } catch {
+      return details;
+    }
+  }
+
   return async function handle(req) {
     const origin = env('WEB_ORIGIN') || 'https://homefriendmassage-boop.github.io';
     const headers = {
@@ -209,8 +252,9 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'round_finalize_balanced', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
+      if (input.action === 'player_entry') return reply(await playerEntry(shopId));
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'round_finalize_balanced', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action)) fail('INVALID_ACTION');
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
@@ -221,10 +265,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (!clientId) fail(channelKey + '_MISSING', 503);
       if (!token || token.length > 16000) fail('LINE_AUTH_INVALID', 401);
       const identity = await verifyLineClaims(token, clientId, fetcher, input.action === 'player_state');
-      const url = env('SUPABASE_URL');
-      const key = serverKey(env);
-      if (!url || !key) fail('SUPABASE_SERVER_CONFIG_MISSING', 503);
-      const db = createDb(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+      const db = database();
       let claims = identity;
       if (shopLogin) {
         if (!/^U[0-9a-f]{32}$/i.test(identity.sub)) fail('LINE_AUTH_INVALID', 401);

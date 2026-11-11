@@ -25,6 +25,12 @@
     body { font-family: 'Kanit', sans-serif; background-color: var(--bg-dark); color: var(--text-main); margin: 0; padding: 0; padding-bottom: 80px; -webkit-font-smoothing: antialiased; }
     .container { max-width: 480px; margin: 0 auto; padding: 20px; }
     .oa-link { margin: 0 0 14px; }
+    .player-entry { max-width: 360px; margin: clamp(48px, 19vh, 160px) auto 0; padding: 24px; }
+    .player-entry h1 { margin: 0 0 4px; font-size: 1.5rem; }
+    .player-entry p { margin: 0 0 18px; color: var(--text-muted); }
+    .player-entry-action { display: block; box-sizing: border-box; width: 100%; min-height: 46px; padding: 10px 14px; border: 1px solid #657084; border-radius: 10px; background: transparent; color: white; font: inherit; text-align: center; text-decoration: none; cursor: pointer; }
+    .player-entry-action[hidden] { display: none; }
+    .player-entry-add { margin-bottom: 10px; border-color: #06c755; background: #06c755; color: #071b0f; font-weight: 600; }
     .header-card { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
     .header-box { background: var(--bg-panel); padding: 12px 15px; border-radius: 12px; border: 1px solid var(--card-border); flex: 1; }
     .header-box:first-child { margin-right: 10px; }
@@ -179,7 +185,15 @@
       <p id="shop-login-check-status" role="status">กำลังตรวจบัญชีสมาชิกเดิม…</p>
     </section>
   </div>
-  <div class="container" id="player-main">
+  <div class="container" id="playerEntry">
+    <section class="round-info player-entry" aria-labelledby="playerEntryTitle">
+      <h1 id="playerEntryTitle">เพิ่มเพื่อน LINE OA ของร้าน</h1>
+      <p id="playerEntryStatus" role="status">กำลังโหลดบัญชี LINE OA ของร้าน…</p>
+      <a id="playerEntryAdd" class="player-entry-action player-entry-add" target="_blank" rel="noopener" hidden>เพิ่มเพื่อน LINE OA</a>
+      <button id="playerEntryContinue" class="player-entry-action" type="button">เพิ่มทีหลัง</button>
+    </section>
+  </div>
+  <div class="container" id="player-main" hidden>
     <div id="oaLink" class="oa-link" hidden></div>
     <div class="header-card">
       <div class="header-box" style="display: flex; align-items: center; gap: 12px; padding: 8px 15px;">
@@ -364,6 +378,7 @@
     let currentUserStatus = "Inactive";
     let currentUserRole = "Customer";
     let memberId = "";
+    let entryShopName = '';
     
     let targetEndTimeMs = null; 
     let timerInterval = null;
@@ -376,7 +391,7 @@
       try {
         const restored = new URL(state, location.origin);
         if (restored.origin !== location.origin) return params;
-        for (const key of ['shop', 'table', 'd', 'ref', 'shop_login_check', 'shop_login']) {
+        for (const key of ['shop', 'table', 'd', 'ref', 'shop_login_check', 'shop_login', 'player_entry_done']) {
           if (!params.has(key) && restored.searchParams.has(key)) params.set(key, restored.searchParams.get(key));
         }
       } catch { /* Explicit query values remain authoritative. */ }
@@ -388,68 +403,111 @@
         ['SHOP_000', 'บ่อกุ้ง DEMO'],
         ['SHOP_001', 'บ่อทดสอบ2'],
       ]);
-      const name = publishedShopNames.get(currentShopId);
+      const name = entryShopName || publishedShopNames.get(currentShopId);
       document.title = name ? 'แอปผู้เล่น - ' + name : 'แอปผู้เล่น - บ่อตกกุ้ง';
+    }
+
+    async function loadPlayerEntry() {
+      const status = document.getElementById('playerEntryStatus');
+      const add = document.getElementById('playerEntryAdd');
+      try {
+        const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY },
+          body: JSON.stringify({ action: 'player_entry', shop_id: currentShopId }),
+          signal: AbortSignal.timeout(6000)
+        });
+        if (!response.ok) throw new Error('PLAYER_ENTRY_UNAVAILABLE');
+        const entry = await response.json();
+        entryShopName = typeof entry.shop_name === 'string' ? entry.shop_name : '';
+        updatePlayerPageTitle();
+        if (!/^https:\/\/line\.me\/R\/ti\/p\/%40[a-zA-Z0-9._-]{1,40}$/.test(entry.add_friend_url || '')) {
+          status.textContent = entryShopName ? entryShopName + ' · ลิงก์เพิ่มเพื่อนยังไม่พร้อม' : 'ลิงก์เพิ่มเพื่อนยังไม่พร้อม';
+          return;
+        }
+        status.textContent = entryShopName;
+        add.href = entry.add_friend_url;
+        add.hidden = false;
+        add.onclick = event => {
+          document.getElementById('playerEntryContinue').textContent = 'ไปต่อ';
+          if (!liff.isInClient()) return;
+          try {
+            liff.openWindow({ url: add.href, external: false });
+            event.preventDefault();
+          } catch { /* Follow the regular link if the LIFF window cannot open. */ }
+        };
+      } catch {
+        status.textContent = 'โหลดบัญชี LINE OA ของร้านไม่สำเร็จ';
+      }
     }
 
     async function initializeApp() {
       const urlParams = playerEntryParams();
       if (urlParams.get('shop') === 'SHOP_001' && urlParams.get('shop_login_check') === '1') {
+        document.getElementById('playerEntry').hidden = true;
         await runShopLoginCheck();
         return;
       }
-      
-      // ดึง shop_id จาก URL ถ้ามี (เช่น ?shop=SHOP_000)
-      if (urlParams.get('shop')) {
-        currentShopId = urlParams.get('shop');
-      }
 
+      currentShopId = urlParams.get('shop') || currentShopId;
       useShopLogin = currentShopId === 'SHOP_001' && urlParams.get('shop_login') === '1';
       updatePlayerPageTitle();
-
-      if(urlParams.get('table')) { 
-        let qrDate = urlParams.get('d');
-        let todayDate = new Date().toISOString().split('T')[0];
-        if(qrDate && qrDate !== todayDate) {
-           alert("QR Code โต๊ะนี้หมดอายุแล้ว! (สแกนข้ามวัน) กรุณาขอ QR Code ใหม่จากพนักงานครับ");
-        } else {
-           userTableNo = urlParams.get('table'); 
-        }
-      }
-
-
+      const continueButton = document.getElementById('playerEntryContinue');
+      continueButton.disabled = true;
       try {
         await liff.init({ liffId: useShopLogin ? '2009043114-jTsiIhMR' : APP_CONFIG.LIFF_ID_PLAYER });
-        const restored = playerEntryParams();
-        if (restored.has('shop') && !useShopLogin) {
-          currentShopId = restored.get('shop');
-          updatePlayerPageTitle();
+        for (const [key, value] of playerEntryParams()) urlParams.set(key, value);
+        currentShopId = urlParams.get('shop') || currentShopId;
+        const loggedIn = liff.isLoggedIn();
+        const loginReturn = loggedIn && urlParams.get('player_entry_done') === '1';
+        if (loginReturn) {
+          const cleanUrl = new URL(location.href);
+          cleanUrl.searchParams.delete('player_entry_done');
+          history.replaceState(history.state, '', cleanUrl);
+          void loadPlayerEntry();
+        } else {
+          void loadPlayerEntry();
+          continueButton.disabled = false;
+          await new Promise(resolve => continueButton.addEventListener('click', resolve, { once: true }));
         }
-        if (restored.has('ref')) {
-          const referrer = parseMemberCode(currentShopId, restored.get('ref'));
+        document.getElementById('playerEntry').hidden = true;
+
+        if (!loggedIn) {
+          const redirect = new URL(location.pathname, location.origin);
+          for (const key of ['shop', 'table', 'd', 'ref', 'shop_login']) {
+            if (urlParams.has(key)) redirect.searchParams.set(key, urlParams.get(key));
+          }
+          redirect.searchParams.set('player_entry_done', '1');
+          liff.login({ redirectUri: redirect.href });
+          return;
+        }
+
+        if (urlParams.get('table')) {
+          const qrDate = urlParams.get('d');
+          const todayDate = new Date().toISOString().split('T')[0];
+          if (qrDate && qrDate !== todayDate) {
+            alert("QR Code โต๊ะนี้หมดอายุแล้ว! (สแกนข้ามวัน) กรุณาขอ QR Code ใหม่จากพนักงานครับ");
+          } else {
+            userTableNo = urlParams.get('table');
+          }
+        }
+        if (urlParams.has('ref')) {
+          const referrer = parseMemberCode(currentShopId, urlParams.get('ref'));
           if (referrer) sessionStorage.setItem('referrer_id', referrer);
           else sessionStorage.removeItem('referrer_id');
         }
-        if (!liff.isLoggedIn()) {
-          if (useShopLogin) {
-            const redirect = new URL(location.pathname, location.origin);
-            for (const key of ['shop', 'table', 'd', 'ref', 'shop_login']) {
-              if (urlParams.has(key)) redirect.searchParams.set(key, urlParams.get(key));
-            }
-            liff.login({ redirectUri: redirect.href });
-          } else {
-            liff.login();
-          }
-        } 
-        else {
-          const profile = await liff.getProfile();
-          currentLineUserId = profile.userId;
-          currentDisplayName = profile.displayName;
-          if(profile.pictureUrl) { document.getElementById('profileImage').src = profile.pictureUrl; }
-          await authenticateUser(profile);
-        }
-      } catch (err) { alert("LIFF Error: " + err.message); }
-      startCountdownTimer();
+        const profile = await liff.getProfile();
+        currentLineUserId = profile.userId;
+        currentDisplayName = profile.displayName;
+        if (profile.pictureUrl) document.getElementById('profileImage').src = profile.pictureUrl;
+        document.getElementById('player-main').hidden = false;
+        await authenticateUser(profile);
+        startCountdownTimer();
+      } catch {
+        document.getElementById('playerEntry').hidden = false;
+        document.getElementById('playerEntryStatus').textContent = 'เปิดหน้าผู้เล่นไม่สำเร็จ กรุณาเปิดลิงก์อีกครั้ง';
+        continueButton.hidden = true;
+      }
     }
 
     async function readPlayerProfile(action = 'player_profile', extra = {}) {
