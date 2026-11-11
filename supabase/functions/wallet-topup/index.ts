@@ -122,12 +122,13 @@ Deno.serve(async (req) => {
         const token = settings.data?.line_oa_token;
         const playerLiff = settings.data?.liff_id_player || env("MEMBERSHIP_LIFF_ID_PLAYER") || "2012454809-UFGeUGbW";
         if (token) {
-          const title = "เติม Wallet สำเร็จ";
+          const title = "🎉 เติมเครดิตสำเร็จ";
           const message = { type: "flex", altText: title, contents: {
             type: "bubble",
             body: { type: "box", layout: "vertical", spacing: "sm", contents: [
               { type: "text", text: title, weight: "bold", wrap: true },
-              { type: "text", text: "สมาชิก " + member.data.member_id + " · ฿" + Number(amount).toLocaleString("th-TH"), wrap: true },
+              { type: "text", text: "สมาชิก " + member.data.member_id, wrap: true },
+              { type: "text", text: "ยอดที่เติม ฿" + Number(amount).toLocaleString("th-TH", { maximumFractionDigits: 2 }), size: "xl", weight: "bold", color: "#047857", wrap: true },
             ] },
           } };
           const recipients = [uid];
@@ -137,7 +138,7 @@ Deno.serve(async (req) => {
             const flex = to === uid && /^\d+-[a-zA-Z0-9]+$/.test(playerLiff) ? {
               ...message, contents: { ...message.contents, footer: { type: "box", layout: "vertical", contents: [{
                 type: "button", style: "primary", action: {
-                  type: "uri", label: "เปิดหน้า Player", uri: "https://liff.line.me/" + playerLiff + "?shop=" + encodeURIComponent(shop),
+                  type: "uri", label: "เข้าหน้าใช้งาน", uri: "https://liff.line.me/" + playerLiff + "?shop=" + encodeURIComponent(shop),
                 },
               }] } },
             } : message;

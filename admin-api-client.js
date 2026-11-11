@@ -21,7 +21,12 @@ function createAdminApiClient(config, getShopId) {
     let pending;
     const query = {
       select(columns = '*') { request.columns = columns; request.returning = true; return query; },
-      update(values) { request.operation = 'update'; request.values = values; return query; },
+      update(values, { rejectionReason } = {}) {
+        request.operation = 'update';
+        request.values = values;
+        if (rejectionReason !== undefined) request.rejection_reason = rejectionReason;
+        return query;
+      },
       insert(values) { request.operation = 'insert'; request.values = values; return query; },
       delete() { request.operation = 'delete'; return query; },
       order(column, options = {}) { request.orders.push({ column, ascending: options.ascending !== false }); return query; },
@@ -42,6 +47,7 @@ function createAdminApiClient(config, getShopId) {
   }
   return {
     from,
+    approveWalletDeposit: requestId => call({ action: 'wallet_approve_deposit', request_id: String(requestId) }),
     access: () => call({ action: 'access' }),
     membershipSummary: () => call({ action: 'membership_summary' })
   };
