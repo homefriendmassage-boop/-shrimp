@@ -106,17 +106,12 @@ async function noticeWindow(db, applicationId) {
 }
 async function deliverNotification(db, shop, application, kind, manual = false) {
   if (!application?.id) return { status: 'failed', code: 'APPLICATION_NOT_FOUND' };
+  if (shop.line_notifications_enabled === false) return { status: 'disabled' };
   try {
-    const claim = await db.rpc('claim_membership_notice', {
-      p_application: application.id, p_kind: kind, p_manual: manual
-    });
-    if (claim.error) throw new Error('OUTBOX_CLAIM_FAILED');
-    const [job] = claim.data ?? [];
-    if (!job) return { status: 'waiting' };
-
     let to = application.line_uid;
     if (kind === 'submitted') {
-      try {
+      to = shop.membership_notice_recipient_uid;
+      if (!to) try {
         const owners = JSON.parse(Deno.env.get('MEMBERSHIP_OWNER_UIDS') || '{}');
         to = owners?.[shop.shop_id];
       } catch { throw new Error('MEMBERSHIP_OWNER_UIDS_INVALID'); }
@@ -124,6 +119,13 @@ async function deliverNotification(db, shop, application, kind, manual = false) 
     const token = shop.line_oa_token?.trim();
     if (typeof to !== 'string' || !/^U[0-9a-f]{32}$/i.test(to)) throw new Error('MEMBERSHIP_OWNER_UID_MISSING');
     if (!token) throw new Error('SHOP_OA_TOKEN_MISSING');
+    const claim = await db.rpc('claim_membership_notice', {
+      p_application: application.id, p_kind: kind, p_manual: manual
+    });
+    if (claim.error) throw new Error('OUTBOX_CLAIM_FAILED');
+    const [job] = claim.data ?? [];
+    if (!job) return { status: 'waiting' };
+
     const message = membershipFlex(shop, application, kind);
     const response = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
@@ -176,7 +178,7 @@ Deno.serve(async req => {
     const key = getPrivilegedKey();
     if (!key) return error('SUPABASE_SERVER_KEY_MISSING', 503);
     const db = createClient(dbUrl, key, { auth: { persistSession: false, autoRefreshToken: false } });
-    const { data: shop, error: shopError } = await db.from('shop_oa_runtime').select('shop_id,shop_name,status,line_oa_token,liff_id_player,liff_id_admin').eq('shop_id', shopId).maybeSingle();
+    const { data: shop, error: shopError } = await db.from('shop_oa_runtime').select('shop_id,shop_name,status,line_oa_token,liff_id_player,liff_id_admin,line_notifications_enabled,membership_notice_recipient_uid').eq('shop_id', shopId).maybeSingle();
     if (shopError) return error('DATABASE_ERROR', 500);
     if (!shop || String(shop.status).toLowerCase() !== 'active') return error('SHOP_NOT_AVAILABLE', 404);
     if (action === 'shop') {
