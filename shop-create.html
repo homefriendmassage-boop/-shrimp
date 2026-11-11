@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <title>สร้างร้านค้า · บ่อกุ้ง</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="./config.js"></script>
@@ -10,37 +12,75 @@
     * { box-sizing: border-box; }
     body { margin: 0; background: #131620; color: #f8fafc; font: 16px/1.5 system-ui, sans-serif; }
     main { max-width: 520px; margin: 32px auto; padding: 24px; }
-    form { display: grid; gap: 14px; padding: 20px; background: #1d2230; border-radius: 16px; }
+    [hidden] { display: none !important; }
+    form, section { display: grid; gap: 14px; padding: 20px; background: #1d2230; border-radius: 16px; }
     label { display: grid; gap: 4px; }
     input, button { width: 100%; font: inherit; border-radius: 8px; padding: 10px 12px; }
     input { background: #131620; color: inherit; border: 1px solid #657084; }
     button { color: #fff; background: #17623d; border: 0; font-weight: 700; }
     button:disabled { opacity: .6; }
     #status { overflow-wrap: anywhere; }
+    #invite-qr { width: max-content; margin: 0 auto; background: white; padding: 12px; }
+    input[readonly] { color: #b4c0d2; }
+    button.secondary { background: #394457; }
+    small { color: #b4c0d2; }
   </style>
 </head>
 <body>
   <main>
-    <h1>สร้างร้านค้า</h1>
-    <p>สำหรับผู้ดูแลแพลตฟอร์ม ร้านใหม่จะเริ่มในสถานะปิด</p>
-    <form id="shop-form">
-      <label>รหัสร้าน <input name="new_shop_id" placeholder="SHOP_002" pattern="SHOP_[A-Z0-9]{3,24}" required></label>
+    <h1 id="title">สร้างร้านค้า</h1>
+    <section id="share-panel" hidden>
+      <p>สร้างลิงก์ให้เจ้าของร้านกรอกข้อมูลเอง ใช้ได้กับหนึ่งร้านและหมดอายุใน 24 ชั่วโมง</p>
+      <button type="button" id="new-invite" disabled>สร้างคำเชิญ</button>
+      <div id="invite-tools" hidden>
+        <label>ลิงก์สมัครร้านค้า <input id="invite-link" readonly></label>
+        <small id="expiry"></small>
+      </div>
+      <button type="button" class="secondary" id="copy-link" hidden>คัดลอกลิงก์</button>
+      <button type="button" class="secondary" id="share-flex" hidden>แชร์ Flex ใน LINE</button>
+      <div id="invite-qr" hidden role="img" aria-label="QR สำหรับสมัครร้านค้า"></div>
+    </section>
+    <form id="shop-form" hidden>
+      <label>รหัสร้าน <input id="shop-code" value="ระบบออกให้เมื่อสร้างร้าน" readonly></label>
       <label>ชื่อร้าน <input name="shop_name" maxlength="100" required></label>
-      <label>ชื่อเจ้าของร้าน <input name="owner_name" maxlength="100" required></label>
-      <label>LINE UID เจ้าของร้าน <input name="owner_uid" pattern="U[0-9a-fA-F]{32}" required></label>
-      <button disabled type="submit">สร้างร้านค้า</button>
+      <label>ชื่อเจ้าของร้าน <input name="owner_name" maxlength="100" autocomplete="name" required></label>
+      <label>LINE UID เจ้าของร้าน <input id="owner-uid" readonly></label>
+      <label>เบอร์โทรติดต่อเจ้าของร้าน <input name="owner_phone" type="tel" autocomplete="tel" maxlength="24" required></label>
+      <button id="submit-shop" disabled type="submit">สร้างร้านค้า</button>
+      <small>ร้านใหม่จะเริ่มในสถานะปิด</small>
     </form>
     <p id="status" role="status" aria-live="polite"></p>
   </main>
   <script>
-    const form = document.getElementById('shop-form');
-    const button = form.querySelector('button');
-    const status = document.getElementById('status');
+    const byId = id => document.getElementById(id);
+    const invite = new URLSearchParams(location.search).get('invite');
+    const form = byId('shop-form');
+    const newInvite = byId('new-invite');
+    const submitShop = byId('submit-shop');
+    const link = byId('invite-link');
+    const status = byId('status');
     const errors = {
-      PLATFORM_ADMIN_REQUIRED: 'บัญชี LINE นี้ไม่มีสิทธิ์สร้างร้าน',
-      SHOP_DETAILS_INVALID: 'กรุณาตรวจสอบชื่อร้าน รหัสร้าน และ LINE UID',
-      SHOP_EXISTS: 'รหัสร้านนี้มีอยู่แล้ว',
+      PLATFORM_ADMIN_REQUIRED: 'บัญชี LINE นี้ไม่มีสิทธิ์ออกคำเชิญ',
+      SHOP_DETAILS_INVALID: 'กรุณาตรวจสอบชื่อร้าน ชื่อเจ้าของ และเบอร์โทร',
+      INVITE_INVALID: 'ลิงก์คำเชิญไม่ถูกต้อง',
+      INVITE_EXPIRED: 'คำเชิญหมดอายุแล้ว กรุณาขอลิงก์ใหม่',
+      INVITE_USED: 'คำเชิญนี้ถูกใช้แล้ว กรุณาขอลิงก์ใหม่',
     };
+
+    async function request(action, details = {}) {
+      const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: APP_CONFIG.SUPABASE_ANON_KEY,
+          Authorization: 'Bearer ' + liff.getIDToken(),
+        },
+        body: JSON.stringify({ action, ...details }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.code);
+      return data;
+    }
 
     async function initialize() {
       try {
@@ -50,41 +90,102 @@
           return;
         }
         if (!liff.getIDToken()) throw new Error('LINE login required');
-        button.disabled = false;
+        if (invite !== null) {
+          const profile = await liff.getProfile();
+          byId('owner-uid').value = profile.userId;
+          byId('title').textContent = 'สมัครร้านค้า';
+          form.hidden = false;
+          submitShop.disabled = false;
+        } else {
+          byId('share-panel').hidden = false;
+          newInvite.disabled = false;
+        }
       } catch {
-        status.textContent = 'เข้าสู่ระบบ LINE ไม่สำเร็จ กรุณาเปิดหน้านี้ใหม่';
+        status.textContent = 'เข้าสู่ระบบ LINE ไม่สำเร็จ กรุณาเปิดลิงก์ใหม่ใน LINE';
       }
     }
 
+    newInvite.addEventListener('click', async () => {
+      newInvite.disabled = true;
+      status.textContent = 'กำลังสร้างคำเชิญ…';
+      try {
+        const result = await request('platform_issue_shop_invite');
+        const url = new URL('https://liff.line.me/' + APP_CONFIG.LIFF_ID_ADMIN);
+        url.searchParams.set('shop_invite', result.invite_id);
+        link.value = url.href;
+        byId('expiry').textContent = 'หมดอายุ ' + new Date(result.expires_at).toLocaleString('th-TH');
+        byId('invite-tools').hidden = false;
+        byId('copy-link').hidden = false;
+        byId('share-flex').hidden = false;
+        status.textContent = 'พร้อมส่งคำเชิญให้เจ้าของร้าน';
+        const qr = byId('invite-qr');
+        qr.replaceChildren();
+        qr.hidden = true;
+        if (typeof QRCode === 'function') {
+          new QRCode(qr, { text: link.value, width: 220, height: 220 });
+          qr.hidden = false;
+        } else {
+          status.textContent = 'ลิงก์พร้อมใช้งาน ส่วน QR โหลดไม่สำเร็จ';
+        }
+      } catch (error) {
+        status.textContent = errors[error.message] || 'สร้างคำเชิญไม่สำเร็จ กรุณาลองใหม่';
+      } finally {
+        newInvite.disabled = false;
+      }
+    });
+
+    byId('copy-link').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(link.value);
+        status.textContent = 'คัดลอกลิงก์แล้ว';
+      } catch {
+        link.focus();
+        link.select();
+        status.textContent = 'แตะค้างที่ช่องลิงก์เพื่อคัดลอก';
+      }
+    });
+
+    byId('share-flex').addEventListener('click', async () => {
+      if (!liff.isApiAvailable('shareTargetPicker')) {
+        status.textContent = 'เปิดใช้ Share Target Picker ใน LINE Developers หรือคัดลอกลิงก์ส่งในแชต';
+        return;
+      }
+      try {
+        const result = await liff.shareTargetPicker([{
+          type: 'flex', altText: 'คำเชิญสมัครร้านค้าบ่อกุ้ง',
+          contents: {
+            type: 'bubble',
+            body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+              { type: 'text', text: 'คำเชิญสมัครร้านค้า', weight: 'bold', size: 'lg', wrap: true },
+              { type: 'text', text: 'เข้าสู่ระบบ LINE และกรอกข้อมูลร้านของคุณ', wrap: true },
+            ] },
+            footer: { type: 'box', layout: 'vertical', contents: [{
+              type: 'button', style: 'primary', action: { type: 'uri', label: 'สมัครร้านค้า', uri: link.value },
+            }] },
+          },
+        }], { isMultiple: false });
+        if (result?.status === 'success') status.textContent = 'ส่งคำเชิญแล้ว';
+      } catch {
+        status.textContent = 'แชร์ Flex ไม่สำเร็จ กรุณาคัดลอกลิงก์ส่งแทน';
+      }
+    });
+
     form.addEventListener('submit', async event => {
       event.preventDefault();
-      if (button.disabled) return;
-      button.disabled = true;
+      if (submitShop.disabled) return;
+      submitShop.disabled = true;
       status.textContent = 'กำลังสร้างร้าน…';
       try {
-        const result = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: APP_CONFIG.SUPABASE_ANON_KEY,
-            Authorization: 'Bearer ' + liff.getIDToken(),
-          },
-          body: JSON.stringify({
-            action: 'platform_create_shop',
-            ...Object.fromEntries(new FormData(form)),
-          }),
+        const result = await request('platform_redeem_shop', {
+          invite_id: invite,
+          ...Object.fromEntries(new FormData(form)),
         });
-        const data = await result.json();
-        if (!result.ok || !data.ok) {
-          status.textContent = errors[data.code] || 'สร้างร้านไม่สำเร็จ กรุณาลองใหม่';
-          return;
-        }
-        form.reset();
-        status.textContent = 'สร้างร้าน ' + data.shop_id + ' แล้ว ร้านอยู่ในสถานะปิด';
-      } catch {
-        status.textContent = 'ติดต่อระบบไม่ได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่';
-      } finally {
-        button.disabled = false;
+        byId('shop-code').value = result.shop_id;
+        for (const field of form.elements) if (field.tagName === 'INPUT') field.readOnly = true;
+        status.textContent = 'สร้างร้าน ' + result.shop_id + ' แล้ว ร้านอยู่ในสถานะปิด';
+      } catch (error) {
+        status.textContent = errors[error.message] || 'สร้างร้านไม่สำเร็จ กรุณาลองใหม่';
+        submitShop.disabled = false;
       }
     });
 
