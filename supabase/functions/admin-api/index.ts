@@ -119,9 +119,9 @@ function serverKey(env) {
 async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
   if (!/^U[0-9a-f]{32}$/i.test(request.uid) || !['ฝากเงิน', 'ถอนเงิน'].includes(request.type)) return;
   try {
-    const shop = await db.from('shop_oa_runtime').select('line_oa_token,liff_id_player,liff_id_admin,admin_group_id').eq('shop_id', shopId).maybeSingle();
+    const shop = await db.from('shop_oa_runtime').select('line_oa_token,liff_id_player,liff_id_admin,admin_group_id,line_notifications_enabled').eq('shop_id', shopId).maybeSingle();
     const token = shop.data?.line_oa_token;
-    if (!token) return;
+    if (!token || shop.data?.line_notifications_enabled === false) return;
     const credited = request.status === 'Approved' && request.type === 'ฝากเงิน';
     const rejectedDeposit = request.status === 'Rejected' && request.type === 'ฝากเงิน';
     const profile = credited && request.member_id ? null : await db.from('users').select('display_name,member_id,profile_pic')
@@ -201,9 +201,9 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request', 'wallet_approve_deposit', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'wallet_request', 'wallet_approve_deposit', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
-      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
+      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'wallet_request'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
@@ -244,13 +244,36 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             .eq('created_by', claims.sub).order('expires_at', { ascending: false }).limit(50);
           if (issued.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
           invitations = issued.data ?? [];
-          const managed = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,line_oa_bot_uid,live_enabled').order('shop_id');
+          const managed = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,line_oa_bot_uid,live_enabled,line_notifications_enabled,membership_notice_recipient_uid').order('shop_id');
           if (managed.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
           platformShops = (managed.data ?? []).map(({ line_oa_token, line_oa_bot_uid, ...shop }) => ({
             ...shop, oa_configured: Boolean(line_oa_bot_uid || line_oa_token?.trim()),
           }));
         }
         return reply({ ok: true, shops, can_invite: canInvite, invitations, platform_shops: platformShops });
+      }
+      if (input.action === 'platform_save_notice_recipient') {
+        if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
+        const target = input.target_shop_id;
+        const recipient = typeof input.recipient_uid === 'string' ? input.recipient_uid.trim() : '';
+        if (typeof target !== 'string' || !/^[\w-]{1,80}$/.test(target) ||
+            !/^U[0-9a-f]{32}$/.test(recipient)) fail('NOTICE_RECIPIENT_INVALID');
+        const shop = await db.from('shop_oa_runtime').select('line_oa_token').eq('shop_id', target).maybeSingle();
+        if (shop.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+        if (!shop.data?.line_oa_token) fail('SHOP_OA_NOT_READY', 409);
+        let profile;
+        try {
+          profile = await fetcher('https://api.line.me/v2/bot/profile/' + recipient, {
+            headers: { Authorization: 'Bearer ' + shop.data.line_oa_token }, signal: AbortSignal.timeout(5000),
+          });
+        } catch { fail('OA_VERIFY_UNAVAILABLE', 503); }
+        if (profile.status === 400 || profile.status === 404) fail('NOTICE_RECIPIENT_NOT_FOUND', 422);
+        if (profile.status === 401 || profile.status === 403) fail('OA_TOKEN_INVALID', 422);
+        if (!profile.ok) fail('OA_VERIFY_UNAVAILABLE', 503);
+        const saved = await db.from('shops').update({ membership_notice_recipient_uid: recipient })
+          .eq('shop_id', target).select('shop_id').maybeSingle();
+        if (saved.error || !saved.data) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+        return reply({ ok: true });
       }
       if (input.action === 'platform_save_shop_oa') {
         if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
@@ -285,6 +308,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         let values;
         if (input.setting === 'live_enabled' && typeof input.enabled === 'boolean') {
           values = { live_enabled: input.enabled };
+        } else if (input.setting === 'line_notifications_enabled' && typeof input.enabled === 'boolean') {
+          values = { line_notifications_enabled: input.enabled };
         } else if (input.setting === 'service_enabled' && typeof input.enabled === 'boolean') {
           values = { status: input.enabled ? 'active' : 'Inactive' };
         } else {
