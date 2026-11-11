@@ -213,7 +213,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
 
     const bot = shop.data.line_oa_bot_uid;
     const cached = entryAccounts.get(shopId);
-    if (cached?.bot === bot && cached.until > Date.now()) {
+    if (cached && cached.bot === bot && cached.until > Date.now()) {
       return { ...details, add_friend_url: cached.url };
     }
     try {
