@@ -334,7 +334,7 @@
     <div class="nav-item" onclick="switchTab('history')">
       <i class="fa-solid fa-clock-rotate-left"></i><span>ประวัติ</span>
     </div>
-    <button type="button" class="nav-item" onclick="switchTab('live')" style="background:none; border:0; font-family:inherit; padding:0;">
+    <button id="liveNav" type="button" class="nav-item" onclick="switchTab('live')" style="background:none; border:0; font-family:inherit; padding:0;">
       <i class="fa-solid fa-video" aria-hidden="true"></i><span>LIVE สด</span>
     </button>
   </div>
@@ -506,6 +506,7 @@
           showMembershipGate(messages[result.state] || 'กรุณาติดต่อผู้ดูแลร้าน', result.member_id, result.state === 'NotApplied');
           return;
         }
+        document.getElementById('liveNav').classList.toggle('hidden', result.live_enabled === false);
         const user = result.player;
         if (!user || user.uid !== profile.userId) throw new Error('LINE_AUTH_INVALID');
         memberId = user.member_id;
