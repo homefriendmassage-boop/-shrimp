@@ -94,6 +94,48 @@ test('untrusted origins and database failures fail closed', async () => {
   assert.equal(result.status, 500);
   assert.deepEqual(await result.json(), { ok: false, code: 'DATABASE_ERROR' });
 });
+test('player entry exposes only the requested active shop name and verified add-friend link', async () => {
+  const shops = {
+    SHOP_000: { shop_name: 'Demo', status: 'active', line_oa_bot_uid: null, token: 'demo-token' },
+    SHOP_001: { shop_name: 'One', status: 'active', line_oa_bot_uid: 'bot-one', token: 'one-token' },
+    SHOP_002: { shop_name: 'Two', status: 'active', line_oa_bot_uid: 'bot-two', token: 'wrong-token' },
+    SHOP_003: { shop_name: 'Closed', status: 'Inactive', token: 'closed-token' },
+    SHOP_004: { shop_name: 'Trial', status: 'active', token: null },
+  };
+  const lookedUp = [];
+  const handler = makeHandler({
+    env: name => ({ SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'server-only' })[name],
+    createDb: () => ({ from(table) {
+      let shop;
+      return {
+        select() { return this; },
+        eq(column, id) { assert.equal(column, 'shop_id'); shop = shops[id]; return this; },
+        async maybeSingle() {
+          return { data: table === 'shops' ? shop : { line_oa_token: shop?.token } };
+        }
+      };
+    } }),
+    fetcher: async (url, options) => {
+      assert.equal(url, 'https://api.line.me/v2/bot/info');
+      const token = options.headers.Authorization.replace('Bearer ', '');
+      lookedUp.push(token);
+      return Response.json({ userId: 'bot-one', basicId: token === 'demo-token' ? '@demo' : '@one' });
+    },
+  });
+  const entry = shop_id => handler(request({ action: 'player_entry', shop_id }, { authorization: '' }));
+  assert.deepEqual(await (await entry('SHOP_000')).json(), {
+    ok: true, shop_name: 'Demo', add_friend_url: 'https://line.me/R/ti/p/%40demo',
+  });
+  assert.deepEqual(await (await entry('SHOP_001')).json(), {
+    ok: true, shop_name: 'One', add_friend_url: 'https://line.me/R/ti/p/%40one',
+  });
+  assert.equal((await (await entry('SHOP_002')).json()).add_friend_url, null);
+  assert.equal((await entry('SHOP_003')).status, 404);
+  assert.equal((await (await entry('SHOP_004')).json()).add_friend_url, null);
+  assert.equal((await entry('OTHER')).status, 400);
+  await entry('SHOP_001');
+  assert.deepEqual(lookedUp, ['demo-token', 'one-token', 'wrong-token']);
+});
 test('client sends LINE token and query, surfaces rejected requests without success', async () => {
   const calls = [];
   const context = vm.createContext({ AbortSignal, liff: { getIDToken: () => 'line-token' }, fetch: async (url, opts) => {
