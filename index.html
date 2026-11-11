@@ -426,7 +426,9 @@
         signal: AbortSignal.timeout(15000)
       });
       const result = await response.json();
-      if (!response.ok || !result.ok) throw new Error(result.code || 'PLAYER_PROFILE_UNAVAILABLE');
+      if (!response.ok || !result.ok) {
+        throw Object.assign(new Error(result.code || 'PLAYER_PROFILE_UNAVAILABLE'), { details: result });
+      }
       return result;
     }
 
@@ -730,56 +732,67 @@
     });
     window.addEventListener('online', fetchDashboard);
 
+    let betSubmitting = false;
+    let pendingBet = null;
+
+    function playerBetError(error) {
+      const messages = {
+        ROUND_CLOSED: 'รอบนี้ปิดรับแล้วหรือเปลี่ยนรอบ กรุณาตรวจรอบปัจจุบัน',
+        CREDIT_INSUFFICIENT: 'เครดิตส่วนตัวไม่พอ กรุณาเติมเงิน',
+        PLAYER_ACCESS_REQUIRED: 'บัญชีนี้ยังไม่มีสิทธิ์ทำรายการในร้านนี้',
+        BET_NOT_FOUND: 'ไม่พบบิลส่วนตัวของคุณในร้านนี้',
+        BET_INVALID: 'กรุณาตรวจสอบข้อมูลและยอดที่กรอก',
+      };
+      if (error.message === 'BET_LIMIT') return 'ยอดต้องอยู่ระหว่าง ฿' + error.details.min + ' ถึง ฿' + error.details.max;
+      return messages[error.message] || 'ยังยืนยันผลรายการไม่ได้ กรุณาตรวจประวัติหรือลองอีกครั้ง';
+    }
+
     async function submitBet() {
-      if(currentUserRole === 'Promoter') { alert("ผู้แนะนำไม่สามารถแทงกุ้งได้ครับ"); return; }
-      if(!isRoundOpen) { alert("ขณะนี้ปิดรับแทงแล้วครับ"); return; }
-      const amount = document.getElementById('txtAmount').value;
-      if(!selectedBetType) { alert("กรุณาเลือก คู่ หรือ คี่"); return; }
-      if(!amount || amount <= 0) { alert("กรุณาระบุยอดแทง"); return; }
-      if(playMode === 'table' && !userTableNo) { alert("คุณยังไม่ได้สแกน QR โต๊ะ"); return; }
+      if (betSubmitting) return;
+      if (currentUserRole === 'Promoter') { alert('ผู้แนะนำไม่สามารถแทงได้ครับ'); return; }
+      if (!isRoundOpen || !displayedRoundId) { alert('ขณะนี้ปิดรับแทงแล้วครับ'); return; }
+      if (playMode === 'table') {
+        alert('การยืนยันบิลลงโต๊ะยังไม่พร้อมใช้งาน กรุณาแจ้งผู้ดูแลร้าน');
+        return;
+      }
+      const field = document.getElementById('txtAmount');
+      const amount = field.value.trim();
+      if (!selectedBetType) { alert('กรุณาเลือก คู่ หรือ คี่'); return; }
+      if (!/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) {
+        alert('กรุณากรอกยอดให้ถูกต้อง ทศนิยมไม่เกิน 2 ตำแหน่ง');
+        return;
+      }
+      const details = { round_id: displayedRoundId, bet_type: selectedBetType, amount };
+      const key = JSON.stringify([currentShopId, details]);
+      if (pendingBet?.key !== key) pendingBet = { key, id: crypto.randomUUID() };
 
-      document.querySelector('.btn-submit').innerText = "กำลังดำเนินการ...";
+      const button = document.getElementById('btnSubmitBet');
+      betSubmitting = true;
+      button.disabled = true;
+      button.innerText = 'กำลังดำเนินการ...';
       try {
-        const { data: round } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).eq('status', 'Open').order('round_id', { ascending: false }).limit(1).single();
-        if(!round) throw new Error("ปิดรับแทงแล้ว!");
-
-        const { data: set } = await _supabase.from('system_settings').select('min_bet, max_bet').eq('shop_id', currentShopId).single();
-        if (amount < (set ? set.min_bet : 20)) throw new Error(`ยอดแทงขั้นต่ำคือ ${set ? set.min_bet : 20} บาท`);
-        if (amount > (set ? set.max_bet : 5000)) throw new Error(`ยอดแทงสูงสุดคือ ${set ? set.max_bet : 5000} บาท`);
-
-        if (playMode === 'table') {
-          const { data: tData } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', userTableNo).single();
-          if(!tData || tData.credit < amount) throw new Error("เครดิตที่โต๊ะไม่พอ กรุณาเติมเงินเข้าโต๊ะ");
-          await _supabase.from('tables').update({ credit: tData.credit - amount }).eq('shop_id', currentShopId).eq('table_no', userTableNo);
-        } else {
-          const { data: uData } = await _supabase.from('users').select('credit_balance').eq('shop_id', currentShopId).eq('uid', currentLineUserId).single();
-          if(!uData || uData.credit_balance < amount) throw new Error("เครดิตส่วนตัวไม่พอ กรุณาเติมเงิน");
-          await _supabase.from('users').update({ credit_balance: uData.credit_balance - amount }).eq('shop_id', currentShopId).eq('uid', currentLineUserId);
-        }
-
-        await _supabase.from('bets').insert([{
-          bet_id: 'B' + Date.now() + Math.floor(Math.random()*1000), 
-          shop_id: currentShopId,
-          round_id: round.round_id, 
-          uid: currentLineUserId,
-          table_no: playMode === 'table' ? userTableNo : '-', 
-          bet_type: selectedBetType, 
-          amount: amountValue,
-          status: 'Active', 
-          play_mode: playMode, 
-          payout: 0
-        }]);
-
-        document.getElementById('txtAmount').value = ""; selectBet(""); alert("รับยอดสำเร็จ!");
-      } catch (error) { alert(error.message); } 
-      finally { if(isRoundOpen) document.querySelector('.btn-submit').innerText = "ยืนยันการแทง"; fetchDashboard(); }
+        const result = await readPlayerProfile('player_place_bet', { ...details, bet_id: pendingBet.id });
+        if (!result.bet_id) throw new Error('BET_UNAVAILABLE');
+        pendingBet = null;
+        field.value = '';
+        selectBet('');
+        alert('รับยอดสำเร็จ!');
+      } catch (error) {
+        if (error.details && error.message !== 'BET_UNAVAILABLE') pendingBet = null;
+        alert(playerBetError(error));
+      } finally {
+        betSubmitting = false;
+        button.disabled = false;
+        lockBettingUI(!isRoundOpen);
+        fetchDashboard();
+      }
     }
 
     async function loadHistory() {
       const listDiv = document.getElementById('historyList');
       listDiv.innerHTML = '<div style="text-align:center; padding: 20px;">กำลังโหลด...</div>';
       try {
-        const { data: bets } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('uid', currentLineUserId).order('created_at', { ascending: false }).limit(20);
+        const { bets } = await readPlayerProfile('player_bet_history');
         listDiv.innerHTML = '';
         if (!bets || bets.length === 0) { listDiv.innerHTML = '<div style="text-align:center; color:#94a3b8; padding: 20px;">ยังไม่มีประวัติการแทง</div>'; return; }
         
@@ -789,7 +802,7 @@
           
           if (item.status === 'Active') {
             statusHtml = `<span class="badge-status st-active">รอผล</span>`;
-            if (isRoundOpen) cancelBtnHtml = `<button class="btn-cancel-bet" onclick="userCancelBet('${item.bet_id}', ${item.amount}, '${item.play_mode}', '${item.table_no}')">ยกเลิกบิล</button>`;
+            if (isRoundOpen && item.round_id === displayedRoundId && item.play_mode === 'private') cancelBtnHtml = `<button class="btn-cancel-bet" onclick="userCancelBet('${item.bet_id}')">ยกเลิกบิล</button>`;
           } else if (item.status === 'Win') { statusHtml = `<span class="badge-status st-win">+฿${item.payout.toLocaleString()}</span>`; } 
           else if (item.status === 'Lose') { statusHtml = `<span class="badge-status st-lose">เสีย</span>`; } 
           else if (item.status === 'Cancelled') { statusHtml = `<span class="badge-status st-cancel">ยกเลิกแล้ว</span>`; }
@@ -803,20 +816,18 @@
       } catch (error) { listDiv.innerHTML = '<div style="color:red; text-align:center;">เกิดข้อผิดพลาด</div>'; }
     }
 
-    async function userCancelBet(betId, amount, pMode, tNo) {
-      if(!isRoundOpen) { alert("หมดเวลาแทงแล้ว ไม่สามารถยกเลิกบิลได้ครับ"); return; }
-      if(!confirm("ยกเลิกบิลนี้ และรับเครดิตคืน?")) return;
+    async function userCancelBet(betId) {
+      if (!isRoundOpen) { alert('หมดเวลาแทงแล้ว ไม่สามารถยกเลิกบิลได้ครับ'); return; }
+      if (!confirm('ยกเลิกบิลนี้ และรับเครดิตคืน?')) return;
       try {
-        await _supabase.from('bets').update({ status: 'Cancelled' }).eq('shop_id', currentShopId).eq('uid', currentLineUserId).eq('bet_id', betId);
-        if (pMode === 'table') {
-          const { data: t } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', tNo).single();
-          await _supabase.from('tables').update({ credit: t.credit + amount }).eq('shop_id', currentShopId).eq('table_no', tNo);
-        } else {
-          const { data: u } = await _supabase.from('users').select('credit_balance').eq('shop_id', currentShopId).eq('uid', currentLineUserId).single();
-          await _supabase.from('users').update({ credit_balance: u.credit_balance + amount }).eq('shop_id', currentShopId).eq('uid', currentLineUserId);
-        }
-        alert("ยกเลิกบิลและคืนเครดิตสำเร็จ"); loadHistory(); fetchDashboard(); 
-      } catch (error) { alert("ข้อผิดพลาด"); }
+        await readPlayerProfile('player_cancel_bet', { bet_id: betId });
+        alert('ยกเลิกบิลและคืนเครดิตสำเร็จ');
+        loadHistory();
+      } catch (error) {
+        alert(playerBetError(error));
+      } finally {
+        fetchDashboard();
+      }
     }
 
     // =====================================
