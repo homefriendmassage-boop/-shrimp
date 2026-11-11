@@ -243,6 +243,7 @@
       <p style="color: var(--text-muted); margin-top: 10px;">หน้านี้สงวนไว้สำหรับพนักงานเท่านั้น</p>
     </div>
 
+    <a id="shopPortalLink" href="shop-create.html" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">ร้านที่ฉันดูแล</a>
     <a id="createShopLink" href="shop-create.html" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">สร้างร้านค้า</a>
     <a id="switchToPlayer" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">สลับไปหน้า Player</a>
     <div id="adminApiError" class="card hidden no-print" role="alert" style="color:var(--yellow-main)"></div>
@@ -565,7 +566,7 @@
       if (state) {
         const restored = new URL(state, location.origin);
         if (restored.origin === location.origin) {
-          for (const key of ['shop', 'tab', 'shop_invite']) if (!urlParams.has(key) && restored.searchParams.has(key)) {
+          for (const key of ['shop', 'tab', 'shop_invite', 'shop_portal']) if (!urlParams.has(key) && restored.searchParams.has(key)) {
             urlParams.set(key, restored.searchParams.get(key));
           }
         }
@@ -588,6 +589,10 @@
           const invite = new URLSearchParams(location.search).get('shop_invite') || urlParams.get('shop_invite');
           if (invite) {
             location.replace('shop-create.html?invite=' + encodeURIComponent(invite));
+            return;
+          }
+          if (new URLSearchParams(location.search).get('shop_portal') === '1' || urlParams.get('shop_portal') === '1') {
+            location.replace('shop-create.html');
             return;
           }
           const profile = await liff.getProfile();
@@ -646,6 +651,7 @@
             const playerLink = document.getElementById('switchToPlayer');
             playerLink.href = 'https://liff.line.me/' + APP_CONFIG.LIFF_ID_PLAYER + '?shop=' + encodeURIComponent(currentShopId);
             playerLink.classList.remove('hidden');
+            document.getElementById('shopPortalLink').classList.remove('hidden');
           }
           document.getElementById('opProfile').innerHTML = `<i class="fa-solid fa-user-tie"></i> ${roleBadge}`;
           
