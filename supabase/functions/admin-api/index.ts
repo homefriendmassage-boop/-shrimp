@@ -231,7 +231,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           p_shop: newShopId, p_name: shopName, p_owner: ownerUid, p_owner_name: ownerName,
         });
         if (result.error) fail('SHOP_CREATE_FAILED', 500);
-        if (result.data === 'SHOP_EXISTS' || result.data === 'OWNER_UID_IN_USE') fail(result.data, 409);
+        if (result.data === 'SHOP_EXISTS') fail(result.data, 409);
         if (result.data !== 'CREATED') fail('SHOP_CREATE_FAILED', 500);
         return reply({ ok: true, shop_id: newShopId, status: 'Inactive' });
       }
