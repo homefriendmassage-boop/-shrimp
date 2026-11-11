@@ -27,6 +27,7 @@
     section { margin-bottom: 16px; }
     section h2 { margin: 0; }
     .shop-row { padding: 12px 0; border-top: 1px solid #485368; }
+    #plan-details { margin: 8px 0 16px; line-height: 1.55; color: #bfc9d8; }
     .shop-row p { margin: 4px 0; }
     a { color: #9fccff; }
     .shop-row a + a { margin-left: 16px; }
@@ -49,7 +50,7 @@
     <section id="share-panel" hidden>
       <p>สร้างลิงก์ให้เจ้าของร้านกรอกข้อมูลเอง ใช้ได้กับหนึ่งร้านและหมดอายุใน 24 ชั่วโมง</p>
       <label>รหัสร้านผู้แนะนำ (ถ้ามี)
-        <input id="referrer-shop" maxlength="29" placeholder="SHOP_000" autocapitalize="characters">
+        <select id="referrer-shop"><option value="">เลือกร้านผู้แนะนำ (ถ้ามี)</option></select>
       </label>
       <button type="button" id="new-invite" disabled>สร้างคำเชิญ</button>
       <div id="invite-tools" hidden>
@@ -70,8 +71,21 @@
       <label>ชื่อเจ้าของร้าน <input name="owner_name" maxlength="100" autocomplete="name" required></label>
       <label>LINE UID เจ้าของร้าน <input id="owner-uid" readonly></label>
       <label>เบอร์โทรติดต่อเจ้าของร้าน <input name="owner_phone" type="tel" autocomplete="tel" maxlength="24" required></label>
-      <button id="submit-shop" disabled type="submit">สร้างร้านค้า</button>
-      <small>ร้านใหม่จะเริ่มในสถานะปิด</small>
+      <label id="registration-referral" hidden>รหัสร้านผู้แนะนำ
+        <input id="registration-referrer-shop" readonly>
+      </label>
+      <label>แพ็กเกจแพลตฟอร์ม
+        <select name="plan_code" id="plan-code" required>
+          <option value="">เลือกแพ็กเกจ</option>
+          <option value="free">Free · ทดลองฟรี 10 วัน</option>
+          <option value="starter">Starter · ฿990/เดือน</option>
+          <option value="basic">Basic · ฿1,490/เดือน</option>
+          <option value="pro">Pro · ฿2,490/เดือน</option>
+        </select>
+      </label>
+      <p id="plan-details" role="status"></p>
+      <button id="submit-shop" disabled type="submit">ส่งข้อมูลสมัครร้าน</button>
+      <small>ระบบจะบันทึกแพ็กเกจพร้อมคำสมัคร ร้านจะเริ่มในสถานะรอเปิดใช้งาน</small>
     </form>
     <dialog id="oa-dialog" aria-labelledby="oa-title">
       <form id="oa-form">
@@ -107,7 +121,21 @@
   </main>
   <script>
     const byId = id => document.getElementById(id);
-    const invite = new URLSearchParams(location.search).get('invite');
+    const entryParams = new URLSearchParams(location.search);
+    const invite = entryParams.get('invite');
+    const sourceShop = entryParams.get('shop');
+    const plan = byId('plan-code');
+    const plans = {
+      free: 'ทดลองใช้ 10 วัน ระบบสมาชิก เติมเงิน เปิดรอบ และตรวจสลิปฟรี 30 ครั้งตามแพ็กเกจ',
+      starter: 'ระบบสมาชิก Wallet รับเงินสดหรือโอน และจัดการงานประจำวัน',
+      basic: 'เพิ่มรายงานละเอียด จัดการแอดมินหลายคน แจ้งเตือนขั้นสูง และส่งออกรายงาน',
+      pro: 'รวมทุกฟังก์ชัน พร้อมรายงานวิเคราะห์ธุรกิจ การบริหารทีม และการตรวจสอบย้อนหลัง',
+    };
+    plan.addEventListener('change', () => {
+      const detail = plans[plan.value];
+      byId('plan-details').textContent = detail ? detail + (plan.value === 'free'
+        ? ' · ไม่ต้องชำระเงิน' : ' · ระบบชำระเงินยังไม่เปิดรับ สามารถบันทึกแพ็กเกจที่ต้องการได้') : '';
+    });
     const form = byId('shop-form');
     const newInvite = byId('new-invite');
     const submitShop = byId('submit-shop');
@@ -127,6 +155,7 @@
       OA_TOKEN_INVALID: 'LINE ไม่ยอมรับ Token นี้ กรุณาตรวจสอบใน LINE Developers',
       OA_ALREADY_LINKED: 'LINE OA นี้ผูกกับร้านอื่นแล้ว',
       OA_VERIFY_UNAVAILABLE: 'ตรวจ Token กับ LINE ไม่สำเร็จ กรุณาลองอีกครั้ง',
+      PLAN_INVALID: 'กรุณาเลือกแพ็กเกจที่ต้องการ',
       REFERRER_INVALID: 'กรุณากรอกรหัสร้านผู้แนะนำที่เปิดใช้งานอยู่',
     };
 
@@ -295,6 +324,14 @@
       }
       byId('managed-panel').hidden = false;
       if (data.can_invite) {
+        const referrer = byId('referrer-shop');
+        const previous = referrer.value;
+        const available = (data.platform_shops ?? []).filter(shop => String(shop.status).toLowerCase() === 'active');
+        referrer.replaceChildren(new Option('เลือกร้านผู้แนะนำ (ถ้ามี)', ''));
+        for (const shop of available) referrer.add(new Option(shop.shop_id + ' · ' + shop.shop_name, shop.shop_id));
+        const owned = data.shops.filter(shop => String(shop.status).toLowerCase() === 'active');
+        const preferred = previous || sourceShop || (owned.length === 1 ? owned[0].shop_id : '');
+        if (available.some(shop => shop.shop_id === preferred)) referrer.value = preferred;
         const platform = byId('platform-shops');
         platform.replaceChildren();
         for (const shop of data.platform_shops ?? []) {
@@ -302,7 +339,8 @@
           const row = appendRow(platform, shop.shop_name + ' · ' + shop.shop_id,
             (active ? 'เปิดบริการ' : 'ปิดบริการ') + ' · ' +
             (shop.oa_configured ? 'ตั้งค่า LINE OA แล้ว' : 'รอเชื่อม LINE OA') + ' · ' +
-            (shop.live_enabled ? 'เปิดเมนู LIVE' : 'ปิดเมนู LIVE'));
+            (shop.live_enabled ? 'เปิดเมนู LIVE' : 'ปิดเมนู LIVE') +
+            (Object.hasOwn(plans, shop.requested_plan) ? ' · แพ็กเกจที่ขอ ' + shop.requested_plan.toUpperCase() : ''));
           const settings = document.createElement('button');
           settings.type = 'button';
           settings.textContent = 'ตั้งค่า LINE OA';
@@ -349,6 +387,17 @@
         }
         if (!liff.getIDToken()) throw new Error('LINE login required');
         if (invite !== null) {
+          let details;
+          try {
+            details = await request('platform_shop_invite_details', { invite_id: invite });
+          } catch (error) {
+            status.textContent = errors[error.message] || 'ตรวจคำเชิญไม่สำเร็จ กรุณาเปิดลิงก์ใหม่';
+            return;
+          }
+          if (details.referrer_shop_id) {
+            byId('registration-referrer-shop').value = details.referrer_shop_id;
+            byId('registration-referral').hidden = false;
+          }
           const profile = await liff.getProfile();
           byId('owner-uid').value = profile.userId;
           byId('title').textContent = 'สมัครร้านค้า';
@@ -447,7 +496,9 @@
         });
         byId('shop-code').value = result.shop_id;
         for (const field of form.elements) if (field.tagName === 'INPUT') field.readOnly = true;
-        status.textContent = 'สร้างร้าน ' + result.shop_id + ' แล้ว ร้านอยู่ในสถานะปิด';
+        plan.value = result.plan_code;
+        plan.disabled = true;
+        status.textContent = 'บันทึกคำสมัครร้าน ' + result.shop_id + ' และแพ็กเกจแล้ว · รอเปิดใช้งาน';
         byId('portal-link').href = liffLink(APP_CONFIG.LIFF_ID_ADMIN, { shop_portal: '1' });
         byId('portal-after').hidden = false;
       } catch (error) {
