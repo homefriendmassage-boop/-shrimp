@@ -47,6 +47,7 @@ function createAdminApiClient(config, getShopId) {
   }
   return {
     from,
+    finalizeBalancedRound: (roundId, weight) => call({ action: 'round_finalize_balanced', round_id: roundId, weight }),
     approveWalletDeposit: requestId => call({ action: 'wallet_approve_deposit', request_id: String(requestId) }),
     access: () => call({ action: 'access' }),
     membershipSummary: () => call({ action: 'membership_summary' })

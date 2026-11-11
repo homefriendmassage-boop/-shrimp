@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=member-code-1"></script>
-  <script src="admin-api-client.js?v=4"></script>
+  <script src="admin-api-client.js?v=5"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -1233,8 +1233,8 @@
 
     async function fetchAdminDashboard() {
       try {
-        let { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).in('status', ['Open', 'Closed']).order('round_id', { ascending: false }).limit(1);
-        if(!rounds || rounds.length === 0) { let { data: endedRounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).eq('status', 'Ended').order('round_id', { ascending: false }).limit(1); rounds = endedRounds; }
+        let { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).in('status', ['Open', 'Closed']).order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1);
+        if(!rounds || rounds.length === 0) { let { data: endedRounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).eq('status', 'Ended').order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1); rounds = endedRounds; }
 
         if(rounds && rounds.length > 0) {
           let r = rounds[0];
@@ -1332,8 +1332,9 @@
         if(!confirm('ยืนยันการเปิดรอบใหม่?')) return;
         document.getElementById('btnOpenRound').innerText = 'กำลังเปิด...';
         try {
-          const { data: lr } = await _supabase.from('rounds').select('status, round_id').eq('shop_id', currentShopId).order('round_id', { ascending: false }).limit(1);
-          if (lr && lr.length > 0 && lr[0].status !== 'Ended') throw new Error("รอบเก่ายังไม่ตัดผล! โปรดใส่ผลกุ้งก่อน");
+          const { data: lr } = await _supabase.from('rounds').select('status, round_id').eq('shop_id', currentShopId).order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1);
+          if (lr?.[0]?.status === 'Closed') throw new Error('รอบ ' + lr[0].round_id + ' ปิดรับแล้ว กรุณากรอกน้ำหนักจริงแล้วกด คำนวณ + ตัดผล ก่อนเปิดรอบใหม่');
+          if (lr?.[0] && lr[0].status !== 'Ended') throw new Error('กรุณาปิดรับและตัดผลรอบ ' + lr[0].round_id + ' ก่อนเปิดรอบใหม่');
           let d = new Date(); let prefix = `R-${d.getFullYear().toString().substring(2)}${(d.getMonth()+1).toString().padStart(2,'0')}${d.getDate().toString().padStart(2,'0')}`;
           let nn = 1; if (lr && lr.length > 0 && lr[0].round_id.startsWith(prefix)) nn = parseInt(lr[0].round_id.split('-')[2]) + 1;
           let rndName = `${prefix}-${nn}`;
@@ -1357,7 +1358,7 @@
         isRoundOpen = false;
 
         try {
-            const { data: lr } = await _supabase.from('rounds').select('round_id, status, resolver_type').eq('shop_id', currentShopId).order('round_id', { ascending: false }).limit(1);
+            const { data: lr } = await _supabase.from('rounds').select('round_id, status, resolver_type').eq('shop_id', currentShopId).order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1);
             if (!lr || lr.length === 0 || lr[0].status === 'Ended') throw new Error("ไม่พบรอบที่กำลังเปิดรับแทง");
             
             const roundId = lr[0].round_id;
@@ -1434,12 +1435,12 @@
       const btn = document.getElementById('btnFinalize');
       if (btn.disabled) return; 
       
-      const w = document.getElementById('txtShrimpWeight').value;
-      if (!w || w <= 0) return alert("กรุณากรอกน้ำหนักกุ้ง");
+      const w = Number(document.getElementById('txtShrimpWeight').value);
+      if (!Number.isFinite(w) || w <= 0 || w > 1000000) return alert("กรุณากรอกน้ำหนักกุ้งจริง (กรัม)");
 
       btn.disabled = true; btn.innerText = 'ประมวลผล...';
       try {
-        const { data: lr } = await _supabase.from('rounds').select('round_id, status, resolver_type').eq('shop_id', currentShopId).order('round_id', { ascending: false }).limit(1);
+        const { data: lr } = await _supabase.from('rounds').select('round_id, status, resolver_type').eq('shop_id', currentShopId).order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1);
         if(!lr || lr.length === 0 || lr[0].status === 'Ended') throw new Error("ไม่พบรอบที่ต้องตัดผล หรือรอบถูกตัดผลไปแล้ว");
         
         // บล็อกไม่ให้ใส่น้ำหนักกุ้ง ถ้ายังไม่เลือกคนรับจบ!
@@ -1461,6 +1462,16 @@
         }
         
         let gapAmount = Math.abs(totalEven - totalOdd); let gapSide = totalEven > totalOdd ? 'คี่' : (totalOdd > totalEven ? 'คู่' : 'none');
+        if (resolverType === 'none' && gapAmount === 0) {
+          const finalized = await _supabase.finalizeBalancedRound(roundId, w);
+          notifyRoundEvent(roundId, 'result');
+          alert(finalized.recovered ? 'บันทึกผลรอบที่ค้างแล้ว เครดิตของบิลเดิมไม่ได้ถูกจ่ายซ้ำ' : 'ตัดผลสำเร็จ! ผลคือ ' + res);
+          document.getElementById('txtShrimpWeight').value = '';
+          return;
+        }
+        if (bets.some(bet => bet.status === 'Win' || bet.status === 'Lose')) {
+          throw new Error('รอบนี้มีบิลที่ตัดผลไปแล้วบางส่วน กรุณาตรวจยอดก่อนทำรายการต่อ');
+        }
         let backerNotifies = [];
         
         // ถ้าแอดมินเลือก 'backer' ระบบจะคิดเงินคนรับจบ
@@ -1525,7 +1536,13 @@
         // if (backerNotifies.length > 0) { notifyGAS('notifyBackerRoundResult', { roundId: roundId, weight: w, result: res, backerUids: backerNotifies }); }
         
         alert(`ตัดผลสำเร็จ! ผลคือ: ${res} (ชนะ ${winCount} บิล)`); document.getElementById('txtShrimpWeight').value = '';
-      } catch (e) { alert("เกิดข้อผิดพลาดในการตัดผล: " + e.message); } 
+      } catch (e) {
+        const messages = {
+          ROUND_RESULT_MISMATCH: 'น้ำหนักที่กรอกให้ผลไม่ตรงกับบิลที่บันทึกไว้ กรุณาตรวจน้ำหนักจริง',
+          ROUND_REVIEW_REQUIRED: 'ข้อมูลบิลในรอบนี้ต้องตรวจสอบก่อนบันทึกผล',
+        };
+        alert(messages[e.message] || 'เกิดข้อผิดพลาดในการตัดผล: ' + e.message);
+      } 
       finally { pendingFinalizeData = null; btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-scale-balanced"></i> คำนวณ + ตัดผล'; fetchAdminDashboard(); if(document.getElementById('tabReport').classList.contains('active')) { generateReport(); } }
     }
 

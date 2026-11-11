@@ -201,7 +201,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'round_finalize_balanced', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action)) fail('INVALID_ACTION');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
@@ -484,6 +484,16 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const picture = lineProfilePicture(claims.picture);
         if (picture) await db.from('users').update({ profile_pic: picture }).eq('shop_id', shopId).eq('uid', claims.sub);
         return reply({ ok: true, staff: staff.data, can_create_shop: await canCreateShop() });
+      }
+      if (input.action === 'round_finalize_balanced') {
+        if (typeof input.round_id !== 'string' || !input.round_id || input.round_id.length > 100 ||
+            !Number.isFinite(input.weight) || input.weight <= 0 || input.weight > 1000000) fail('ROUND_WEIGHT_INVALID');
+        const result = await db.rpc('finalize_balanced_round', {
+          p_shop: shopId, p_round: input.round_id, p_weight: input.weight,
+        });
+        if (result.error) fail('ROUND_FINALIZE_UNAVAILABLE', 500);
+        if (!['ENDED', 'RECOVERED'].includes(result.data)) fail(result.data || 'ROUND_FINALIZE_UNAVAILABLE', 409);
+        return reply({ ok: true, recovered: result.data === 'RECOVERED' });
       }
       if (input.action === 'wallet_approve_deposit') {
         const id = String(input.request_id ?? '');
