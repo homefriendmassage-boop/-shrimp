@@ -565,7 +565,7 @@
       if (state) {
         const restored = new URL(state, location.origin);
         if (restored.origin === location.origin) {
-          for (const key of ['shop', 'tab']) if (!urlParams.has(key) && restored.searchParams.has(key)) {
+          for (const key of ['shop', 'tab', 'shop_invite']) if (!urlParams.has(key) && restored.searchParams.has(key)) {
             urlParams.set(key, restored.searchParams.get(key));
           }
         }
@@ -585,6 +585,11 @@
       try {
         await liff.init({ liffId: APP_CONFIG.LIFF_ID_ADMIN });
         if (liff.isLoggedIn()) {
+          const invite = new URLSearchParams(location.search).get('shop_invite') || urlParams.get('shop_invite');
+          if (invite) {
+            location.replace('shop-create.html?invite=' + encodeURIComponent(invite));
+            return;
+          }
           const profile = await liff.getProfile();
           currentOpId = profile.userId; 
           currentAdminName = profile.displayName;
