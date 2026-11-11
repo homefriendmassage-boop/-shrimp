@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
     if (credit.error) return reply("WALLET_UNAVAILABLE", 503);
     if (credit.data === "CREDITED") {
       try {
-        const settings = await db.from("shops").select("line_oa_token,admin_group_id,liff_id_player")
+        const settings = await db.from("shop_oa_runtime").select("line_oa_token,admin_group_id,liff_id_player")
           .eq("shop_id", shop).maybeSingle();
         const token = settings.data?.line_oa_token;
         const playerLiff = settings.data?.liff_id_player || env("MEMBERSHIP_LIFF_ID_PLAYER") || "2012454809-UFGeUGbW";
