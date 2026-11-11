@@ -35,6 +35,8 @@ function lineProfilePicture(value) {
   } catch { return null; }
 }
 
+const shopInviteIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
 const playerTokenCache = new Map();
 async function verifyLineClaims(token, clientId, fetcher, useCache) {
   let key;
@@ -382,7 +384,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       }
       if (input.action === 'platform_shop_invite_details') {
         const inviteId = input.invite_id;
-        if (typeof inviteId !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(inviteId)) fail('INVITE_INVALID');
+        if (typeof inviteId !== 'string' || !shopInviteIdPattern.test(inviteId)) fail('INVITE_INVALID');
         const invite = await db.from('platform_shop_invites')
           .select('referrer_shop_id,expires_at,shop_id,redeemed_by').eq('invite_id', inviteId).maybeSingle();
         if (invite.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
@@ -396,7 +398,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const shopName = typeof input.shop_name === 'string' ? input.shop_name.trim() : '';
         const ownerName = typeof input.owner_name === 'string' ? input.owner_name.trim() : '';
         const phone = typeof input.owner_phone === 'string' ? input.owner_phone.replace(/[\s()-]/g, '') : '';
-        if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(invite)) fail('INVITE_INVALID');
+        if (!shopInviteIdPattern.test(invite)) fail('INVITE_INVALID');
         if (!shopName || shopName.length > 100 || !ownerName || ownerName.length > 100 ||
             !/^\+?[0-9]{8,15}$/.test(phone) || !/^U[0-9a-f]{32}$/.test(claims.sub)) {
           fail('SHOP_DETAILS_INVALID');
