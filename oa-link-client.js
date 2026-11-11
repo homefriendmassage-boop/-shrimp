@@ -1,23 +1,21 @@
 function mountShopOaLink(container, shopId) {
   if (!container || container.dataset.shop === shopId) return;
   container.dataset.shop = shopId;
-
-  const start = document.createElement('button');
-  start.type = 'button';
-  start.textContent = 'ผูกรับแจ้งเตือน LINE ของร้าน';
-  const open = document.createElement('a');
-  open.textContent = 'เปิดแชต OA ของร้าน';
-  open.hidden = true;
-  const check = document.createElement('button');
-  check.type = 'button';
-  check.textContent = 'ตรวจสอบการผูกบัญชี';
-  check.hidden = true;
-  for (const control of [start, open, check]) {
-    control.style.cssText = 'font:inherit;color:inherit;background:transparent;border:1px solid #657084;border-radius:8px;padding:8px 12px;margin:4px 6px 4px 0';
-  }
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = 'เปิดรับแจ้งเตือน LINE';
+  button.style.cssText = 'box-sizing:border-box;max-width:100%;min-height:40px;padding:8px 14px;border:1px solid #657084;border-radius:8px;background:transparent;color:inherit;font:inherit;white-space:normal;cursor:pointer';
   const status = document.createElement('div');
   status.setAttribute('role', 'status');
-  container.replaceChildren(start, open, check, status);
+  status.style.cssText = 'font-size:.875rem;color:#aebbcf;margin-top:4px';
+  container.replaceChildren(button, status);
+
+  const pendingKey = 'shop-oa-link:' + shopId;
+  let waitingUntil = 0;
+  let chatUrl;
+  let checking = false;
+  let retryTimer;
+  try { waitingUntil = Number(sessionStorage.getItem(pendingKey)) || 0; } catch {}
 
   async function request(action, endpoint = 'round-notice') {
     const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/' + endpoint, {
@@ -30,52 +28,80 @@ function mountShopOaLink(container, shopId) {
     return result;
   }
 
-  function showLinked() {
-    container.hidden = false;
-    start.hidden = open.hidden = check.hidden = true;
-    open.removeAttribute('href');
-    status.textContent = 'ผูกรับแจ้งเตือน LINE ของร้านแล้ว';
+  function hidePrompt(linked) {
+    container.hidden = true;
+    clearTimeout(retryTimer);
+    window.removeEventListener('focus', checkOnReturn);
+    document.removeEventListener('visibilitychange', checkOnReturn);
+    if (linked && waitingUntil) {
+      try { sessionStorage.removeItem(pendingKey); } catch {}
+      request('status', 'member-approval').catch(() => {});
+    }
   }
 
-  async function refresh(manual = false) {
-    check.disabled = true;
+  async function refresh(retries = 0) {
+    if (checking || container.dataset.shop !== shopId) return;
+    checking = true;
     try {
       const result = await request('oa_link_status');
       if (container.dataset.shop !== shopId) return;
-      if (!result.available) {
-        container.hidden = true;
-        return;
-      }
+      if (!result.available || result.linked) return hidePrompt(result.linked);
       container.hidden = false;
-      if (result.linked) {
-        showLinked();
-        if (manual) request('status', 'member-approval').catch(() => {});
-      } else if (manual) {
-        status.textContent = 'ยังไม่ได้รับข้อความผูกบัญชี กรุณากดส่งข้อความในแชต OA แล้วตรวจสอบอีกครั้ง';
+      if (Date.now() < waitingUntil) {
+        status.textContent = 'กดส่งข้อความที่เตรียมไว้ในแชตร้าน ระบบจะตรวจให้อัตโนมัติ';
+        if (retries > 0 && !document.hidden) {
+          retryTimer = setTimeout(() => refresh(retries - 1), 1800);
+        }
+      } else {
+        status.textContent = '';
+        button.textContent = 'เปิดรับแจ้งเตือน LINE';
       }
     } catch {
-      if (manual) status.textContent = 'ตรวจสอบการผูกบัญชีไม่สำเร็จ กรุณาลองอีกครั้ง';
+      if (!container.hidden) status.textContent = 'ตรวจสถานะแจ้งเตือนไม่สำเร็จ กรุณาลองอีกครั้ง';
     } finally {
-      check.disabled = false;
+      checking = false;
     }
   }
 
-  start.onclick = async () => {
-    start.disabled = true;
+  function checkOnReturn() {
+    if (waitingUntil && !document.hidden) {
+      clearTimeout(retryTimer);
+      refresh(3);
+    }
+  }
+
+  button.onclick = async () => {
+    button.disabled = true;
     try {
-      const result = await request('oa_link_start');
-      if (container.dataset.shop !== shopId) return;
-      if (result.linked) return showLinked();
-      if (!result.available || !result.chat_url) throw new Error('OA_LINK_UNAVAILABLE');
-      open.href = result.chat_url;
-      open.hidden = check.hidden = false;
-      status.textContent = 'เปิดแชต OA ของร้าน เพิ่มเพื่อนหากจำเป็น แล้วกดส่งข้อความที่เตรียมไว้ภายใน 10 นาที';
+      if (!chatUrl || Date.now() >= waitingUntil) {
+        const result = await request('oa_link_start');
+        if (container.dataset.shop !== shopId) return;
+        if (result.linked) return hidePrompt(true);
+        const url = new URL(result.chat_url);
+        if (url.origin !== 'https://line.me' || !url.pathname.startsWith('/R/oaMessage/')) {
+          throw new Error('OA_CHAT_URL_INVALID');
+        }
+        chatUrl = url.href;
+        waitingUntil = Date.now() + 10 * 60 * 1000;
+        try { sessionStorage.setItem(pendingKey, String(waitingUntil)); } catch {}
+      }
+      button.textContent = 'เปิดแชตร้าน';
+      status.textContent = 'กดส่งข้อความที่เตรียมไว้ในแชตร้าน ระบบจะตรวจให้อัตโนมัติ';
+      try {
+        liff.openWindow({ url: chatUrl, external: false });
+      } catch {
+        window.location.assign(chatUrl);
+      }
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(checkOnReturn, 1800);
     } catch {
-      status.textContent = 'เปิดแชต OA ไม่สำเร็จ กรุณาลองอีกครั้งหรือติดต่อร้าน';
+      status.textContent = 'เปิดแชตร้านไม่สำเร็จ กรุณาลองอีกครั้ง';
     } finally {
-      start.disabled = false;
+      button.disabled = false;
     }
   };
-  check.onclick = () => refresh(true);
-  refresh();
+
+  window.addEventListener('focus', checkOnReturn);
+  document.addEventListener('visibilitychange', checkOnReturn);
+  refresh(waitingUntil ? 3 : 0);
 }
