@@ -36,8 +36,9 @@ async function signatureValid(raw, signature, secret) {
 async function recordWebhook(req, shop) {
   if (!/^SHOP_[0-9]{3,}$/.test(shop)) return fail('SHOP_INVALID');
   const raw = await req.text();
-  const secrets = JSON.parse(Deno.env.get('LINE_ROUND_WEBHOOK_SECRETS') || '{}');
-  if (!await signatureValid(raw, req.headers.get('x-line-signature'), secrets[shop])) return fail('INVALID_SIGNATURE', 401);
+  const secret = Deno.env.get('LINE_ROUND_WEBHOOK_SECRET_' + shop)?.trim() ||
+    JSON.parse(Deno.env.get('LINE_ROUND_WEBHOOK_SECRETS') || '{}')[shop];
+  if (!await signatureValid(raw, req.headers.get('x-line-signature'), secret)) return fail('INVALID_SIGNATURE', 401);
   const { events } = JSON.parse(raw);
   if (!Array.isArray(events)) return fail('INVALID_EVENTS');
   if (!events.length) return reply({ ok: true });
