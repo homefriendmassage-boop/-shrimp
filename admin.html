@@ -1066,10 +1066,12 @@
                 const { data: u } = await _supabase.from('users').select('commission_balance').eq('shop_id', currentShopId).eq('uid', uid).single();
                 if(u) await _supabase.from('users').update({ commission_balance: u.commission_balance + amount }).eq('shop_id', currentShopId).eq('uid', uid);
             }
-            await _supabase.from('topup_requests').update({ status: 'Rejected', admin_name: currentAdminName }, { rejectionReason: reason }).eq('shop_id', currentShopId).eq('id', id);
-            
-            
-            alert("ปฏิเสธรายการแล้ว"); loadPendingRequests();
+            const { data: rejected } = await _supabase.from('topup_requests')
+                .update({ status: 'Rejected', admin_name: currentAdminName }, { rejectionReason: reason })
+                .eq('shop_id', currentShopId).eq('id', id).select('id');
+
+            alert(rejected?.length ? "ปฏิเสธรายการแล้ว" : "รายการนี้ไม่ได้อยู่ในคิวรอดำเนินการแล้ว");
+            await loadPendingRequests();
         } catch (e) { alert("ข้อผิดพลาด: " + e.message); }
     }
 
