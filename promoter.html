@@ -26,7 +26,7 @@
       <div style="font-size: 1.3rem; font-weight: bold;" class="text-pink">
           <i class="fa-solid fa-share-nodes"></i> ระบบแนะนำเพื่อน
       </div>
-      <button onclick="window.location.href='index.html'" style="background: transparent; color: #94a3b8; border: 1px solid #94a3b8; border-radius: 6px; padding: 5px 10px; cursor: pointer;">
+      <button onclick="window.location.href='index.html?shop=' + encodeURIComponent(currentShopId)" style="background: transparent; color: #94a3b8; border: 1px solid #94a3b8; border-radius: 6px; padding: 5px 10px; cursor: pointer;">
           กลับหน้าหลัก
       </button>
     </div>
@@ -59,6 +59,10 @@
 
   <script>
     const _supabase = supabase.createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_ANON_KEY);
+    const params = new URLSearchParams(location.search);
+    const restored = new URL(params.get('liff.state') || '/', location.origin);
+    const currentShopId = params.get('shop') ||
+      (restored.origin === location.origin && restored.searchParams.get('shop')) || 'SHOP_000';
     let currentUser = null;
 
     async function initPromoter() {
@@ -67,10 +71,10 @@
         if (!liff.isLoggedIn()) { liff.login(); return; }
         
         const profile = await liff.getProfile();
-        const { data: user } = await _supabase.from('users').select('*').eq('uid', profile.userId).single();
+        const { data: user } = await _supabase.from('users').select('*').eq('shop_id', currentShopId).eq('uid', profile.userId).single();
         
         if (!user || user.role !== 'Promoter') {
-            document.body.innerHTML = `<div style="text-align:center; padding:50px; color:red; font-family:'Kanit';"><h3>ไม่มีสิทธิ์เข้าถึง</h3><p>บัญชีของคุณไม่ใช่ผู้แนะนำ (Promoter)</p><button onclick="window.location.href='index.html'" style="margin-top:20px; padding:10px; border-radius:8px;">กลับหน้าหลัก</button></div>`;
+            document.body.innerHTML = `<div style="text-align:center; padding:50px; color:red; font-family:'Kanit';"><h3>ไม่มีสิทธิ์เข้าถึง</h3><p>บัญชีของคุณไม่ใช่ผู้แนะนำ (Promoter)</p><button onclick="window.location.href='index.html?shop=' + encodeURIComponent(currentShopId)" style="margin-top:20px; padding:10px; border-radius:8px;">กลับหน้าหลัก</button></div>`;
             return;
         }
 
@@ -80,7 +84,7 @@
 
         // สร้าง Link และ QR Code
         let cleanLiff = APP_CONFIG.LIFF_ID_PLAYER.split('?')[0];
-        let refLink = `https://liff.line.me/${cleanLiff}?ref=${user.member_id}`;
+        let refLink = `https://liff.line.me/${cleanLiff}?shop=${encodeURIComponent(currentShopId)}&ref=${encodeURIComponent(user.member_id)}`;
         document.getElementById('refLinkInput').value = refLink;
         document.getElementById('qrCodeImg').src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(refLink)}`;
         
@@ -104,7 +108,7 @@
 
       try {
           let newBal = currentUser.commission_balance - amt;
-          await _supabase.from('users').update({ commission_balance: newBal }).eq('uid', currentUser.uid);
+          await _supabase.from('users').update({ commission_balance: newBal }).eq('shop_id', currentShopId).eq('uid', currentUser.uid);
           
           let wType = typeCode === '1' ? 'cash' : 'credit';
           let rType = typeCode === '1' ? 'ถอนค่าคอม' : 'ฝากเงิน';
