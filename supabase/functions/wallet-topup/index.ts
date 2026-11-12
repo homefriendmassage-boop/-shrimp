@@ -17,6 +17,43 @@ const extensions = new Map([
   ["image/gif", "gif"], ["image/webp", "webp"],
 ]);
 
+function exactAccount(value: unknown) {
+  if (typeof value !== "string") return "";
+  const normalized = value.replace(/[ -]/g, "");
+  return /^\d{6,20}$/.test(normalized) ? normalized : "";
+}
+
+function exactPromptPay(proxy) {
+  const value = typeof proxy?.account === "string" ? proxy.account.replace(/[ -]/g, "") : "";
+  if (proxy?.type === "MSISDN") {
+    if (/^0\d{9}$/.test(value)) return value;
+    if (/^(?:\+66|0066|66)\d{9}$/.test(value)) return "0" + value.slice(-9);
+  }
+  if (proxy?.type === "NATID" && /^\d{13}$/.test(value)) return value;
+  if (proxy?.type === "EWALLETID" && /^\d{15}$/.test(value)) return value;
+  return "";
+}
+
+export function identifyWalletReceiver(slip, profile) {
+  const matched = slip?.matchedAccount;
+  const bank = matched?.bank?.code;
+  const number = exactAccount(matched?.bankNumber);
+  if (matched && typeof bank === "string" && /^\d{3}$/.test(bank) && number) return { bank, number };
+  if (matched) return null;
+
+  const raw = slip?.rawSlip?.receiver;
+  const rawBank = typeof raw?.bank?.id === "string" && /^\d{3}$/.test(raw.bank.id) && raw.bank.id !== "000"
+    ? raw.bank.id : "";
+  const rawAccount = raw?.account?.bank?.type === "BANKAC" ? exactAccount(raw.account.bank.account) : "";
+  if (rawBank && rawAccount) return { bank: rawBank, number: rawAccount };
+
+  const promptpay = exactPromptPay(raw?.account?.proxy);
+  if (promptpay && profile?.promptpay === promptpay && (!rawBank || rawBank === profile.bank_code)) {
+    return { bank: profile.bank_code, number: profile.bank_number };
+  }
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers });
   if (req.method !== "POST") return reply("METHOD_NOT_ALLOWED", 405);
@@ -100,14 +137,23 @@ Deno.serve(async (req) => {
     const slip = payload.data;
     const ref = slip?.rawSlip?.transRef;
     const time = Date.parse(slip?.rawSlip?.date);
-    const bank = slip?.matchedAccount?.bank?.code;
-    const number = slip?.matchedAccount?.bankNumber;
     if (slip?.isDuplicate === true) return reply("DUPLICATE_SLIP", 409);
     if (typeof ref !== "string" || !ref.trim() || ref.length > 160 ||
         !Number.isFinite(time) || time > Date.now() + 60000) return reply("SLIP_NOT_VERIFIED", 422);
     if (slip.isAmountMatched !== true || slip.amountInSlip !== Number(amount)) return reply("AMOUNT_MISMATCH", 422);
-    if (typeof bank !== "string" || typeof number !== "string") return reply("RECEIVER_MISMATCH", 422);
-    const normalizedNumber = number.replace(/[ -]/g, "");
+    let profile = null;
+    if (!slip?.matchedAccount && exactPromptPay(slip?.rawSlip?.receiver?.account?.proxy)) {
+      const configured = await db.from("shop_payment_profiles").select("bank_code,bank_number,promptpay")
+        .eq("shop_id", shop).maybeSingle();
+      if (configured.error) return reply("WALLET_UNAVAILABLE", 503);
+      profile = configured.data;
+    }
+    const receiver = identifyWalletReceiver(slip, profile);
+    if (!receiver) {
+      console.info("wallet slip receiver unavailable", shop, slip?.rawSlip?.receiver?.account?.proxy?.type || "none");
+      return reply("RECEIVER_UNCONFIRMED", 422);
+    }
+    const { bank, number: normalizedNumber } = receiver;
     const match = await db.from("wallet_receiving_accounts").select("auto_credit_from")
       .eq("bank_code", bank).eq("bank_number", normalizedNumber).eq("shop_id", shop).eq("enabled", true).maybeSingle();
     if (match.error) return reply("WALLET_UNAVAILABLE", 503);

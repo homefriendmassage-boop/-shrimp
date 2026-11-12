@@ -474,7 +474,7 @@
 
         if (!liff.isLoggedIn()) {
           const redirect = new URL(location.pathname, location.origin);
-          for (const key of ['shop', 'table', 'd', 'ref', 'shop_login']) {
+          for (const key of ['shop', 'table', 'd', 'ref', 'shop_login', 'withdraw_confirm']) {
             if (urlParams.has(key)) redirect.searchParams.set(key, urlParams.get(key));
           }
           liff.login({ redirectUri: redirect.href });
@@ -504,15 +504,16 @@
           currentDisplayName = claims?.name || '';
           if (claims?.picture) document.getElementById('profileImage').src = claims.picture;
         } catch { /* The member can continue without the LINE profile. */ }
+        const confirmation = urlParams.get('withdraw_confirm');
+        if (confirmation) {
+          await confirmWithdrawalFromLine(confirmation);
+          return;
+        }
         entry.hidden = true;
         document.getElementById('player-main').hidden = false;
         void loadPlayerEntry();
         await authenticateUser();
-        if (currentUserStatus === 'Active') {
-          const confirmation = urlParams.get('withdraw_confirm');
-          if (confirmation) await confirmWithdrawalFromLine(confirmation);
-          else if (readDepositDraft()) openTopupModal();
-        }
+        if (currentUserStatus === 'Active' && readDepositDraft()) openTopupModal();
         startCountdownTimer();
       } catch {
         entry.hidden = false;
@@ -1017,19 +1018,30 @@
     }
 
     async function confirmWithdrawalFromLine(confirmationId) {
+      const feedback = document.getElementById('playerEntryStatus');
+      const retry = document.getElementById('playerEntryRetry');
+      feedback.textContent = 'กำลังยืนยันคำขอถอนเงิน…';
       try {
-        await shopPaymentRequest(currentShopId, 'withdraw_confirm', {
+        const result = await shopPaymentRequest(currentShopId, 'withdraw_confirm', {
           confirmation_id: confirmationId, shop_login: useShopLogin,
         });
-        const url = new URL(location.href);
-        url.searchParams.delete('withdraw_confirm');
-        url.searchParams.delete('liff.state');
-        url.searchParams.set('shop', currentShopId);
-        history.replaceState(null, '', url);
-        alert('ยืนยันแล้ว คำขอเข้าคิวรอโอนเงินจากร้าน');
-        openTopupModal();
+        if (result.code === 'RECEIPT_PENDING') {
+          feedback.textContent = 'คำขอเข้าคิวแล้ว แต่ยังส่งข้อความแจ้งใน LINE ไม่สำเร็จ';
+          retry.textContent = 'ลองส่งข้อความอีกครั้ง';
+          retry.hidden = false;
+          retry.onclick = () => { retry.hidden = true; void confirmWithdrawalFromLine(confirmationId); };
+          return;
+        }
+        feedback.textContent = result.code === 'ALREADY_QUEUED'
+          ? 'ยืนยันรายการนี้ไปแล้ว' : 'ยืนยันแล้ว คำขอเข้าคิวรอโอนเงินจากร้าน';
+        if (liff.isInClient()) {
+          retry.textContent = 'กลับไปที่แชต';
+          retry.hidden = false;
+          retry.onclick = () => liff.closeWindow();
+          liff.closeWindow();
+        }
       } catch (error) {
-        alert(walletPaymentError(error));
+        feedback.textContent = walletPaymentError(error);
       }
     }
 
@@ -1178,6 +1190,7 @@
         AMOUNT_INVALID: 'กรุณาระบุจำนวนเงินให้ถูกต้อง (ทศนิยมไม่เกิน 2 ตำแหน่ง)',
         AMOUNT_MISMATCH: 'ยอดในสลิปไม่ตรงกับยอดที่ระบุ',
         RECEIVER_MISMATCH: 'บัญชีผู้รับในสลิปไม่ตรงกับบัญชีของร้าน',
+        RECEIVER_UNCONFIRMED: 'ระบบยังยืนยันบัญชีผู้รับจากสลิปนี้ไม่ได้ กรุณาเก็บสลิปไว้และติดต่อร้านโดยใช้สลิปเดิม',
         DUPLICATE_SLIP: 'สลิปนี้ถูกใช้ตรวจแล้ว กรุณาตรวจประวัติ Wallet หรือติดต่อแอดมิน',
         SLIP_QUOTA_EXHAUSTED: 'โควตาตรวจสลิปของร้านหมด กรุณาติดต่อร้านก่อนส่งสลิปอีกครั้ง',
         SLIP_NOT_VERIFIED: 'ตรวจสลิปไม่ผ่าน กรุณาตรวจรูปสลิปหรือติดต่อแอดมิน',

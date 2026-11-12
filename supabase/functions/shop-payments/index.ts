@@ -33,6 +33,31 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
     return null;
   }
 
+  async function sendWithdrawalReceipt(db, shop, uid, id) {
+    const draft = await db.from('wallet_withdrawal_confirmations').select('amount,chat_receipt_sent_at')
+      .eq('id', id).eq('shop_id', shop).eq('uid', uid).maybeSingle();
+    if (draft.error || !draft.data) return 'RECEIPT_PENDING';
+    if (draft.data.chat_receipt_sent_at) return 'ALREADY_QUEUED';
+    const [target, oa] = await Promise.all([
+      db.rpc('resolve_shop_oa_recipient', { p_shop: shop, p_member: uid }),
+      db.from('shop_oa_runtime').select('line_oa_token').eq('shop_id', shop).maybeSingle(),
+    ]);
+    if (target.error || oa.error || !uidPattern.test(target.data) || !oa.data?.line_oa_token) return 'RECEIPT_PENDING';
+    const amount = Number(draft.data.amount).toFixed(2);
+    const sent = await fetcher('https://api.line.me/v2/bot/message/push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + oa.data.line_oa_token, 'Content-Type': 'application/json', 'X-Line-Retry-Key': id },
+      body: JSON.stringify({ to: target.data, messages: [{
+        type: 'text', text: 'ยืนยันคำขอถอนเงิน ฿' + amount + ' แล้ว\nโปรดรอร้านโอนเงินเข้าบัญชีที่แจ้งไว้',
+      }] }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!sent.ok && !(sent.status === 409 && sent.headers.has('x-line-accepted-request-id'))) return 'RECEIPT_PENDING';
+    await db.from('wallet_withdrawal_confirmations').update({ chat_receipt_sent_at: new Date().toISOString() })
+      .eq('id', id).eq('shop_id', shop).eq('uid', uid).is('chat_receipt_sent_at', null);
+    return 'QUEUED';
+  }
+
   return async request => {
     if (request.headers.get('origin') && request.headers.get('origin') !== origin) return fail('ORIGIN_INVALID', 403);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
@@ -130,7 +155,8 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
         if (typeof input.confirmation_id !== 'string' || !uuid.test(input.confirmation_id)) return fail('WITHDRAWAL_INVALID');
         const result = await db.rpc('confirm_wallet_withdrawal', { p_shop: shop, p_uid: uid, p_id: input.confirmation_id });
         if (result.error || result.data !== 'QUEUED') return fail(result.data || 'PAYMENTS_UNAVAILABLE', 409);
-        return reply({ ok: true, code: 'QUEUED' });
+        const code = await sendWithdrawalReceipt(db, shop, uid, input.confirmation_id).catch(() => 'RECEIPT_PENDING');
+        return reply({ ok: true, code });
       }
       const amount = input.amount;
       if (typeof amount !== 'string' || !/^\d{1,9}(\.\d{1,2})?$/.test(amount) || Number(amount) <= 0 ||

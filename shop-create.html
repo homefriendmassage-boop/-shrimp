@@ -65,6 +65,12 @@
     <label id="shop-selection" hidden>เลือกร้าน
       <select id="shop-select"></select>
     </label>
+    <section id="shop-overview" hidden>
+      <h2 id="shop-overview-name"></h2>
+      <p id="shop-overview-info"></p>
+      <a id="shop-overview-admin" hidden>กลับหน้า Admin ร้าน</a>
+      <a id="shop-overview-controls" hidden>ตั้งค่าร้านในแอดมิน SaaS</a>
+    </section>
     <section id="billing-inline" hidden aria-label="แพ็กเกจและโควตาตรวจสลิป">
       <p id="billing-inline-status" role="status"></p>
     </section>
@@ -391,7 +397,7 @@
       byId('title').textContent = 'หน้าจัดการร้านค้า';
       if (!saasShop) {
         const selected = data.shops.find(shop => shop.shop_id === sourceShop) ||
-          (data.shops.length === 1 ? data.shops[0] : null);
+          (!sourceShop && data.shops.length === 1 ? data.shops[0] : null);
         const shopSelect = byId('shop-select');
         byId('shop-selection').hidden = data.shops.length < 2;
         if (data.shops.length > 1) {
@@ -409,7 +415,24 @@
         byId('referrer-shop').value = canRefer ? selected.shop_id : '';
         newInvite.disabled = !canRefer;
         if (selected?.can_manage_billing) void billing.showCatalog(selected);
-        if (!data.shops.length) status.textContent = 'ยังไม่มีร้านในบัญชี LINE นี้';
+        if (!selected?.can_manage_billing && !canRefer) {
+          const managed = selected || (data.can_invite ? data.platform_shops?.find(shop => shop.shop_id === sourceShop) : null);
+          byId('shop-overview').hidden = false;
+          byId('shop-overview-name').textContent = managed?.shop_name || 'เลือกร้านเพื่อจัดการ';
+          byId('shop-overview-info').textContent = managed?.shop_id === 'SHOP_000' ? 'ร้าน DEMO · ตั้งค่าบัญชีรับเงินได้จากหน้า Admin ร้าน'
+            : managed ? 'เมนูแพ็กเกจและแนะนำร้านเปิดสำหรับบัญชีเจ้าของร้าน'
+            : data.shops.length ? 'เลือกร้านจากเมนูด้านบน' : 'บัญชี LINE นี้ยังไม่มีร้านที่จัดการได้';
+          if (managed) {
+            const admin = byId('shop-overview-admin');
+            admin.href = liffLink(APP_CONFIG.LIFF_ID_ADMIN, { shop: managed.shop_id });
+            admin.hidden = false;
+          }
+          if (managed && data.can_invite) {
+            const controls = byId('shop-overview-controls');
+            controls.href = 'shop-create.html?saas_shop=' + encodeURIComponent(managed.shop_id);
+            controls.hidden = false;
+          }
+        }
       }
       if (saasShop) {
         if (!data.can_invite) {
