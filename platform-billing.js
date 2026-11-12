@@ -22,6 +22,13 @@ function createPlatformBilling(dialog, onPaid) {
   const form = byId('billing-slip-form');
   const feedback = byId('billing-feedback');
   const close = byId('billing-close');
+  const slipInput = form.querySelector('input[name="image"]');
+  const slipPreview = byId('billing-slip-preview');
+  slipInput.addEventListener('change', () => previewPaymentSlip(slipInput, slipPreview));
+  function resetSlip() {
+    form.reset();
+    previewPaymentSlip(slipInput, slipPreview);
+  }
   let shop;
   let order;
   let busy = false;
@@ -125,12 +132,23 @@ function createPlatformBilling(dialog, onPaid) {
     try {
       const data = await request('create', { sku: product.sku });
       order = data.order;
-      form.reset();
+      resetSlip();
       const receiver = data.receiver;
       byId('billing-order').textContent = product.label + ' · ' + formatMoney(order.amount);
       byId('billing-method').textContent = receiver.method === 'promptpay'
         ? 'พร้อมเพย์' + (receiver.bank ? ' · ' + receiver.bank : '') : receiver.bank;
       byId('billing-number').value = receiver.number;
+      byId('billing-number-label').textContent = receiver.method === 'promptpay' ? 'เลขพร้อมเพย์' : 'เลขบัญชี';
+      if (receiver.method === 'promptpay') {
+        try {
+          const bank = await shopPaymentRequest(shop.shop_id, 'billing_bank', {
+            order_id: order.id, transfer_number: receiver.number,
+          });
+          byId('billing-number').value = bank.bank_account;
+          byId('billing-number-label').textContent = 'เลขบัญชี';
+        } catch { /* The verified PromptPay destination is still available. */ }
+      }
+      showPromptPayQr(byId('billing-qr'), receiver.method === 'promptpay' ? receiver.number : '', order.amount);
       byId('billing-name').textContent = receiver.name;
       if (catalog.parentNode === dialogCatalog) catalog.hidden = true;
       checkout.hidden = false;
@@ -154,12 +172,13 @@ function createPlatformBilling(dialog, onPaid) {
     }
   });
   byId('billing-back').addEventListener('click', () => {
-    form.reset();
+    resetSlip();
     checkout.hidden = true;
     byId('billing-catalog').hidden = false;
     feedback.textContent = '';
   });
   close.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', resetSlip);
   dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
   form.addEventListener('submit', async event => {
     event.preventDefault();
@@ -173,7 +192,7 @@ function createPlatformBilling(dialog, onPaid) {
     feedback.textContent = 'กำลังตรวจยอดเงินและบัญชีผู้รับ…';
     try {
       const result = await request('pay');
-      form.reset();
+      resetSlip();
       checkout.hidden = true;
       feedback.textContent = result.code === 'ALREADY_PAID' ? 'รายการนี้ชำระสำเร็จแล้ว'
         : order.slip_credits ? 'ชำระสำเร็จ เพิ่มโควตาแล้ว' : 'ชำระสำเร็จ อัปเดตแพ็กเกจแล้ว';
