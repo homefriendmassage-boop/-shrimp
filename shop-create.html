@@ -56,6 +56,9 @@
       <a href="admin.html?saas=1">กลับหน้าแอดมิน SaaS</a>
       <div id="platform-shops"></div>
     </section>
+    <label id="shop-selection" hidden>เลือกร้าน
+      <select id="shop-select"></select>
+    </label>
     <section id="billing-inline" hidden aria-label="แพ็กเกจและโควตาตรวจสลิป">
       <p id="billing-inline-status" role="status"></p>
     </section>
@@ -64,22 +67,14 @@
       <label>รหัสร้านผู้แนะนำ
         <input id="referrer-shop" readonly>
       </label>
-      <button type="button" id="new-invite" disabled>สร้างคำเชิญ</button>
+      <button type="button" id="new-invite" disabled>สร้างลิงก์ชวนร้าน</button>
       <div id="invite-tools" hidden>
         <label>ลิงก์สมัครร้านค้า <input id="invite-link" readonly></label>
         <small id="expiry"></small>
       </div>
       <button type="button" class="secondary" id="copy-link" hidden>คัดลอกลิงก์</button>
-      <button type="button" class="secondary" id="share-flex" hidden>ส่ง Flex ในแชต LINE</button>
+      <button type="button" class="secondary" id="share-flex" hidden>แชร์ Flex ชวนร้าน</button>
       <div id="invite-qr" hidden role="img" aria-label="QR สำหรับสมัครร้านค้า"></div>
-    </section>
-    <section id="issued-panel" hidden>
-      <h2>คำเชิญที่ฉันส่ง</h2>
-      <div id="issued-invites"></div>
-    </section>
-    <section id="managed-panel" hidden>
-      <h2>ร้านที่ฉันดูแล</h2>
-      <div id="managed-shops"></div>
     </section>
     <form id="shop-form" hidden>
       <label>รหัสร้าน <input id="shop-code" value="ระบบออกให้เมื่อสร้างร้าน" readonly></label>
@@ -167,7 +162,7 @@
         <button id="billing-close" class="secondary" type="button">ปิด</button>
       </section>
     </dialog>
-    <p id="portal-after" hidden><a id="portal-link">เปิดร้านที่ฉันดูแล</a></p>
+    <p id="portal-after" hidden><a id="portal-link">ไปหน้าจัดการร้านค้า</a></p>
     <p id="status" role="status" aria-live="polite"></p>
   </main>
   <script>
@@ -217,8 +212,8 @@
       REFERRER_INVALID: 'ใช้ได้เฉพาะรหัสร้านของคุณที่เปิดใช้งานอยู่',
     };
 
-    async function request(action, details = {}) {
-      const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
+    async function request(action, details = {}, endpoint = 'admin-api') {
+      const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/' + endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -382,29 +377,28 @@
 
     async function loadPortal() {
       const data = await request('platform_shop_portal');
-      const managed = byId('managed-shops');
-      managed.replaceChildren();
       byId('title').textContent = 'หน้าจัดการร้านค้า';
       if (!saasShop) {
         const selected = data.shops.find(shop => shop.shop_id === sourceShop) ||
-          (!sourceShop && data.shops.length === 1 ? data.shops[0] : null);
-        byId('billing-inline').hidden = !selected?.can_manage_billing;
-        byId('share-panel').hidden = !selected?.can_refer_shop;
-        byId('referrer-shop').value = selected?.can_refer_shop ? selected.shop_id : '';
-        newInvite.disabled = !selected?.can_refer_shop;
-        if (selected?.can_manage_billing) void billing.showCatalog(selected);
-        if (!data.shops.length) managed.textContent = 'ยังไม่มีร้านในบัญชี LINE นี้';
-        for (const shop of data.shops) {
-          const params = { shop: shop.shop_id };
-          const links = shop.shop_id !== selected?.shop_id
-            ? [['จัดการร้านนี้', 'shop-create.html?shop=' + encodeURIComponent(shop.shop_id)]] : [];
-          if (String(shop.status).toLowerCase() === 'active') links.push(
-            ['เข้า Admin ร้านนี้', liffLink(APP_CONFIG.LIFF_ID_ADMIN, params)],
-            ['ลิงก์ลูกค้าของร้าน', playerEntryUrl(shop.shop_id)],
-          );
-          appendRow(managed, shop.shop_name + ' · ' + shop.shop_id, planSummary(shop).replace(/^ · /, ''), links);
+          (data.shops.length === 1 ? data.shops[0] : null);
+        const shopSelect = byId('shop-select');
+        byId('shop-selection').hidden = data.shops.length < 2;
+        if (data.shops.length > 1) {
+          shopSelect.replaceChildren(new Option('เลือกร้าน', ''), ...data.shops.map(shop =>
+            new Option(shop.shop_name + ' · ' + shop.shop_id, shop.shop_id)));
+          shopSelect.value = selected?.shop_id || '';
+          shopSelect.onchange = () => {
+            if (shopSelect.value) location.assign('shop-create.html?shop=' + encodeURIComponent(shopSelect.value));
+          };
         }
-        byId('managed-panel').hidden = false;
+        const canRefer = selected?.can_refer_shop ??
+          (selected?.can_manage_billing && String(selected.status).toLowerCase() === 'active');
+        byId('billing-inline').hidden = !selected?.can_manage_billing;
+        byId('share-panel').hidden = !canRefer;
+        byId('referrer-shop').value = canRefer ? selected.shop_id : '';
+        newInvite.disabled = !canRefer;
+        if (selected?.can_manage_billing) void billing.showCatalog(selected);
+        if (!data.shops.length) status.textContent = 'ยังไม่มีร้านในบัญชี LINE นี้';
       }
       if (saasShop) {
         if (!data.can_invite) {
@@ -442,23 +436,6 @@
         }
         byId('title').textContent = 'รายละเอียดการเปิด–ปิดระบบ';
         byId('platform-panel').hidden = false;
-      }
-      if (!saasShop && !byId('share-panel').hidden) {
-        const issued = byId('issued-invites');
-        issued.replaceChildren();
-        const invitations = (data.invitations ?? []).filter(item => item.referrer_shop_id === byId('referrer-shop').value);
-        if (!invitations.length) issued.textContent = 'ยังไม่มีคำเชิญที่ส่ง';
-        for (const entry of invitations) {
-          const state = entry.shop_id
-            ? (String(entry.shop?.status).toLowerCase() === 'active' ? 'เปิดใช้งาน' : 'ลงทะเบียนแล้ว · รอเปิดร้าน')
-            : (Date.parse(entry.expires_at) <= Date.now() ? 'หมดอายุ' : 'รอลงทะเบียน');
-          const referral = entry.referrer_shop_id
-            ? ' · ร้านผู้แนะนำ ' + entry.referrer_shop_id
-            : '';
-          appendRow(issued, entry.shop_id ? (entry.shop?.shop_name || 'ร้านที่ลงทะเบียน') + ' · ' + entry.shop_id : 'คำเชิญสมัครร้าน',
-            state + referral);
-        }
-        byId('issued-panel').hidden = false;
       }
     }
 
@@ -504,9 +481,9 @@
       newInvite.disabled = true;
       status.textContent = 'กำลังสร้างคำเชิญ…';
       try {
-        const result = await request('platform_issue_shop_invite', {
+        const result = await request('issue', {
           referrer_shop_id: byId('referrer-shop').value,
-        });
+        }, 'shop-referrals');
         const url = new URL('https://liff.line.me/' + APP_CONFIG.LIFF_ID_ADMIN);
         url.searchParams.set('shop_invite', result.invite_id);
         link.value = url.href;
@@ -524,7 +501,6 @@
         } else {
           status.textContent = 'ลิงก์พร้อมใช้งาน ส่วน QR โหลดไม่สำเร็จ';
         }
-        await loadPortal().catch(() => {});
       } catch (error) {
         status.textContent = errors[error.message] || 'สร้างคำเชิญไม่สำเร็จ กรุณาลองใหม่';
       } finally {

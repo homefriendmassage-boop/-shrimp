@@ -9,3 +9,6 @@ verify_jwt = false
 
 [functions.wallet-topup]
 verify_jwt = false
+
+[functions.shop-referrals]
+verify_jwt = false

@@ -26,7 +26,7 @@
     .container { max-width: 480px; margin: 0 auto; padding: 20px; }
     .oa-link { margin: 0 0 14px; }
     .player-entry { max-width: 360px; margin: clamp(48px, 19vh, 160px) auto 0; padding: 24px; }
-    #playerOaChat { display: flex; align-items: center; width: fit-content; margin: 0 0 12px auto; }
+    #playerOaChat { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 26px; margin: -11px 0 4px; padding: 2px 8px; border-radius: 7px; font-size: .78rem; line-height: 1.3; }
     #playerOaChat[hidden] { display: none; }
     .player-entry h1 { margin: 0 0 4px; font-size: 1.5rem; }
     .player-entry p { margin: 0 0 18px; color: var(--text-muted); }
@@ -195,7 +195,6 @@
     </section>
   </div>
   <div class="container" id="player-main" hidden>
-    <a id="playerOaChat" class="player-entry-action player-entry-add" target="_blank" rel="noopener" hidden>แชตกับแอดมิน</a>
     <div id="oaLink" class="oa-link" hidden></div>
     <div class="header-card">
       <div class="header-box" style="display: flex; align-items: center; gap: 12px; padding: 8px 15px;">
@@ -215,6 +214,7 @@
       </div>
     </div>
 
+    <a id="playerOaChat" class="player-entry-action player-entry-add" target="_blank" rel="noopener" hidden>แชตกับแอดมิน</a>
     <!-- ปุ่มเมนูพิเศษ -->
     <div class="special-menu-container">
         <a id="switchToAdmin" class="hidden" style="display:block;color:var(--blue-main);padding:12px">สลับไปหน้า Admin</a>
