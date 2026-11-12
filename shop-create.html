@@ -8,6 +8,7 @@
   <title>หน้าจัดการร้านค้า · บ่อกุ้ง</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="./config.js?v=player-entry-1"></script>
+  <script src="./platform-billing.js?v=1"></script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #131620; color: #f8fafc; font: 16px/1.5 system-ui, sans-serif; }
@@ -34,6 +35,17 @@
     dialog { width: min(480px, calc(100% - 24px)); padding: 0; border: 1px solid #485368; border-radius: 16px; background: #1d2230; color: inherit; }
     dialog::backdrop { background: #0009; }
     dialog h2 { margin: 0; }
+    #billing-dialog { width: min(560px, calc(100% - 24px)); }
+    #billing-dialog section { margin: 0; }
+    #billing-dialog h3, #billing-dialog p { margin: 0; }
+    #billing-dialog h3 { margin-top: 12px; }
+    #billing-dialog #billing-feedback { min-height: 24px; }
+    #billing-slip-form { padding: 0; }
+    .billing-products { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+    .billing-product { display: grid; gap: 4px; text-align: left; }
+    .billing-product span { color: #a7efcb; }
+    .billing-product small { font-weight: normal; }
+    @media (max-width: 360px) { .billing-products { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -117,6 +129,41 @@
         <button id="notice-close" type="button" class="secondary">ปิด</button>
       </form>
     </dialog>
+    <dialog id="billing-dialog" aria-labelledby="billing-title">
+      <section>
+        <h2 id="billing-title">แพ็กเกจและโควตาตรวจสลิป</h2>
+        <p id="billing-feedback" role="status"></p>
+        <div id="billing-catalog" hidden>
+          <p id="billing-plan"></p>
+          <p id="billing-balance"></p>
+          <h3>แพ็กเกจรายเดือน</h3>
+          <small>ต่อแพ็กเกจเดิมจะนับต่อจากวันครบกำหนด เมื่อเปลี่ยนแพ็กเกจจะเริ่มรอบใหม่ทันที</small>
+          <div id="billing-products-plan" class="billing-products"></div>
+          <h3>ซื้อโควตาตรวจสลิป</h3>
+          <small>ใช้ 1 สิทธิ์เมื่อสลิปผ่านและเติมเครดิตสมาชิกสำเร็จ</small>
+          <div id="billing-products-slips" class="billing-products"></div>
+          <details id="billing-history-panel" hidden>
+            <summary>ประวัติชำระเงิน</summary>
+            <ul id="billing-history"></ul>
+          </details>
+        </div>
+        <div id="billing-checkout" hidden>
+          <h3 id="billing-order"></h3>
+          <p id="billing-method"></p>
+          <p id="billing-name"></p>
+          <label>เลขสำหรับโอน <input id="billing-number" readonly></label>
+          <button id="billing-copy" class="secondary" type="button">คัดลอกเลขสำหรับโอน</button>
+          <form id="billing-slip-form">
+            <label>แนบสลิปหลังโอนเงิน
+              <input name="image" type="file" accept="image/jpeg,image/png,image/gif,image/webp" required>
+            </label>
+            <button id="billing-submit" type="submit">ส่งสลิปเพื่อตรวจสอบ</button>
+            <button id="billing-back" class="secondary" type="button">กลับไปดูแพ็กเกจ</button>
+          </form>
+        </div>
+        <button id="billing-close" class="secondary" type="button">ปิด</button>
+      </section>
+    </dialog>
     <p id="portal-after" hidden><a id="portal-link">เปิดร้านที่ฉันดูแล</a></p>
     <p id="status" role="status" aria-live="polite"></p>
   </main>
@@ -135,13 +182,19 @@
     plan.addEventListener('change', () => {
       const detail = plans[plan.value];
       byId('plan-details').textContent = detail ? detail + (plan.value === 'free'
-        ? ' · เริ่มนับเมื่อเปิดร้าน · ไม่ต้องชำระเงิน' : ' · ระบบชำระเงินยังไม่เปิดรับ สามารถบันทึกแพ็กเกจที่ต้องการได้') : '';
+        ? ' · เริ่มนับเมื่อเปิดร้าน · ไม่ต้องชำระเงิน' : ' · ชำระหลังส่งข้อมูลสมัครร้าน') : '';
     });
     const form = byId('shop-form');
     const newInvite = byId('new-invite');
     const submitShop = byId('submit-shop');
     const link = byId('invite-link');
     const status = byId('status');
+    const billing = createPlatformBilling(byId('billing-dialog'), async () => {
+      if (!invite) return loadPortal();
+      status.textContent = 'ชำระค่าบริการแล้ว · เปิดหน้าจัดการร้านค้าเพื่อดูสถานะ';
+      const checkout = byId('registration-checkout');
+      if (checkout) checkout.textContent = 'ดูแพ็กเกจและประวัติชำระเงิน';
+    });
     const errors = {
       PLATFORM_ADMIN_REQUIRED: 'บัญชี LINE นี้ไม่มีสิทธิ์ออกคำเชิญ',
       SHOP_DETAILS_INVALID: 'กรุณาตรวจสอบชื่อร้าน ชื่อเจ้าของ และเบอร์โทร',
@@ -306,6 +359,13 @@
     });
 
     function planSummary(shop) {
+      if (shop.current_plan && shop.paid_until) {
+        const names = { starter: 'Starter', basic: 'Basic', pro: 'Pro' };
+        const date = new Date(shop.paid_until).toLocaleString('th-TH', {
+          dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok',
+        });
+        return ' · ' + names[shop.current_plan] + (Date.parse(shop.paid_until) > Date.now() ? ' ถึง ' : ' ครบกำหนด ') + date + ' น.';
+      }
       if (!Object.hasOwn(plans, shop.requested_plan)) return '';
       if (shop.requested_plan !== 'free') return ' · แพ็กเกจที่ขอ ' + shop.requested_plan.toUpperCase();
       if (!shop.trial_ends_at) return ' · Free 10 วัน เริ่มเมื่อเปิดร้าน';
@@ -324,13 +384,22 @@
       for (const shop of data.shops) {
         const active = String(shop.status).toLowerCase() === 'active';
         const params = { shop: shop.shop_id };
-        appendRow(managed, shop.shop_name + ' · ' + shop.shop_id,
+        const row = appendRow(managed, shop.shop_name + ' · ' + shop.shop_id,
           (active ? 'เปิดใช้งาน' : 'ยังไม่เปิดใช้งาน') + ' · ' +
           (shop.oa_configured ? 'ตั้งค่า LINE OA แล้ว' : 'รอเชื่อม LINE OA') + planSummary(shop),
           active ? [
             ['เข้า Admin ร้านนี้', liffLink(APP_CONFIG.LIFF_ID_ADMIN, params)],
             ['ลิงก์ลูกค้าของร้าน', playerEntryUrl(shop.shop_id)],
           ] : []);
+        if (shop.can_manage_billing) {
+          const checkout = document.createElement('button');
+          checkout.type = 'button';
+          checkout.className = 'secondary';
+          checkout.style.marginTop = '8px';
+          checkout.textContent = 'แพ็กเกจและโควตาตรวจสลิป';
+          checkout.addEventListener('click', () => billing.open(shop));
+          row.append(checkout);
+        }
       }
       byId('managed-panel').hidden = false;
       if (data.can_invite) {
@@ -518,7 +587,14 @@
             status.textContent += ' · ดูสถานะล่าสุดในหน้าจัดการร้านค้า';
           }
         } else {
-          status.textContent += ' · รอเปิดใช้งาน';
+          status.textContent += ' · รอชำระค่าบริการ';
+          const checkout = document.createElement('button');
+          checkout.type = 'button';
+          checkout.id = 'registration-checkout';
+          checkout.textContent = 'ชำระแพ็กเกจ';
+          checkout.addEventListener('click', () => billing.open(result));
+          form.append(checkout);
+          await billing.open(result, result.plan_code);
         }
         byId('portal-link').href = liffLink(APP_CONFIG.LIFF_ID_ADMIN, { shop_portal: '1' });
         byId('portal-after').hidden = false;
