@@ -1,3 +1,14 @@
+const planLabels = { free: 'Free', starter: 'Starter', basic: 'Basic', pro: 'Pro' };
+
+export function filterSaasShops(entries, status, plan) {
+  return entries.filter(shop => {
+    const active = String(shop.status).toLowerCase() === 'active';
+    const planCode = shop.current_plan || shop.requested_plan;
+    return (!status || status === (active ? 'active' : 'inactive')) &&
+      (!plan || plan === (Object.hasOwn(planLabels, planCode) ? planCode : 'none'));
+  });
+}
+
 export async function mountSaasAdmin() {
   document.title = 'แอดมิน SaaS · บ่อกุ้ง';
   const shell = document.createElement('div');
@@ -12,6 +23,10 @@ export async function mountSaasAdmin() {
     h1 { font-size: clamp(1.5rem, 5vw, 2rem); margin: 0; }
     h2, p { margin: 0; }
     #status { color: #bec9db; margin: 16px 0; }
+    #filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    label { display: grid; gap: 4px; }
+    select { min-height: 44px; width: 100%; border: 1px solid #657084; border-radius: 8px; padding: 8px; background: #252e40; color: inherit; font: inherit; }
+    #count { color: #bec9db; margin-top: 12px; }
     #shops { display: grid; gap: 12px; padding: 0; list-style: none; }
     li { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; padding: 16px; border-radius: 12px; border: 1px solid #343d50; background: #1d2230; }
     li h2 { font-size: 1.1rem; overflow-wrap: anywhere; }
@@ -28,6 +43,26 @@ export async function mountSaasAdmin() {
       <button id="refresh" type="button" hidden>รีเฟรชรายการ</button>
     </header>
     <p id="status" role="status">กำลังตรวจสิทธิ์แอดมินแพลตฟอร์ม…</p>
+    <div id="filters" hidden>
+      <label>สถานะร้าน
+        <select id="shop-status">
+          <option value="">ทุกสถานะ</option>
+          <option value="active">เปิดบริการ</option>
+          <option value="inactive">ปิดบริการ</option>
+        </select>
+      </label>
+      <label>แพ็กเกจ
+        <select id="shop-plan">
+          <option value="">ทุกแพ็กเกจ</option>
+          <option value="free">Free</option>
+          <option value="starter">Starter</option>
+          <option value="basic">Basic</option>
+          <option value="pro">Pro</option>
+          <option value="none">ยังไม่มีแพ็กเกจ</option>
+        </select>
+      </label>
+    </div>
+    <p id="count" role="status" hidden></p>
     <ul id="shops" aria-label="ร้านในแพลตฟอร์ม" hidden></ul>
   </main>`;
   document.body.replaceChildren(shell);
@@ -35,6 +70,11 @@ export async function mountSaasAdmin() {
   const statusText = view.getElementById('status');
   const shops = view.getElementById('shops');
   const refresh = view.getElementById('refresh');
+  const filters = view.getElementById('filters');
+  const statusFilter = view.getElementById('shop-status');
+  const planFilter = view.getElementById('shop-plan');
+  const count = view.getElementById('count');
+  let allShops = [];
   let busy = false;
 
   async function request(action, details = {}) {
@@ -55,7 +95,11 @@ export async function mountSaasAdmin() {
     return data;
   }
 
-  function renderShops(entries) {
+  function renderShops() {
+    const entries = filterSaasShops(allShops, statusFilter.value, planFilter.value);
+    count.textContent = entries.length
+      ? `แสดง ${entries.length} จาก ${allShops.length} ร้าน`
+      : allShops.length ? 'ไม่มีร้านตรงกับตัวกรอง' : 'ยังไม่มีร้านในแพลตฟอร์ม';
     shops.replaceChildren();
     for (const shop of entries) {
       const active = String(shop.status).toLowerCase() === 'active';
@@ -67,7 +111,10 @@ export async function mountSaasAdmin() {
       const label = document.createElement('span');
       label.textContent = active ? 'เปิดบริการ' : 'ปิดบริการ';
       label.classList.toggle('active', active);
-      state.append(shop.shop_id + ' · ', label);
+      const planCode = shop.current_plan || shop.requested_plan;
+      const planLabel = Object.hasOwn(planLabels, planCode) ? planLabels[planCode] : 'ยังไม่มีแพ็กเกจ';
+      state.append(shop.shop_id + ' · ', label, ' · ' + planLabel);
+      if (!shop.current_plan && ['starter', 'basic', 'pro'].includes(planCode)) state.append(' (ที่สมัคร)');
       details.append(name, state);
       const control = document.createElement('button');
       control.type = 'button';
@@ -86,7 +133,7 @@ export async function mountSaasAdmin() {
   async function loadShops(target, enabled) {
     if (busy) return;
     busy = true;
-    refresh.disabled = true;
+    refresh.disabled = statusFilter.disabled = planFilter.disabled = true;
     for (const button of shops.querySelectorAll('button')) button.disabled = true;
     let resultMessage = '';
     statusText.textContent = target ? 'กำลังบันทึกสถานะของ ' + target.shop_id + '…' : 'กำลังโหลดสถานะร้าน…';
@@ -106,11 +153,13 @@ export async function mountSaasAdmin() {
       }
       const data = await request('platform_shop_portal');
       if (data.can_invite !== true) throw new Error('PLATFORM_ADMIN_REQUIRED');
-      renderShops(data.platform_shops ?? []);
-      statusText.textContent = resultMessage || (shops.children.length ? '' : 'ยังไม่มีร้านในแพลตฟอร์ม');
+      allShops = data.platform_shops ?? [];
+      renderShops();
+      filters.hidden = count.hidden = false;
+      statusText.textContent = resultMessage;
     } catch (error) {
       shops.replaceChildren();
-      shops.hidden = true;
+      shops.hidden = filters.hidden = count.hidden = true;
       const denied = error.message === 'PLATFORM_ADMIN_REQUIRED';
       refresh.hidden = denied;
       statusText.textContent = denied ? 'บัญชี LINE นี้ไม่มีสิทธิ์แอดมินแพลตฟอร์ม'
@@ -118,10 +167,12 @@ export async function mountSaasAdmin() {
         : 'โหลดสถานะล่าสุดไม่สำเร็จ กรุณารีเฟรชรายการ';
     } finally {
       busy = false;
-      refresh.disabled = false;
+      refresh.disabled = statusFilter.disabled = planFilter.disabled = false;
     }
   }
 
+  statusFilter.addEventListener('change', renderShops);
+  planFilter.addEventListener('change', renderShops);
   refresh.addEventListener('click', () => loadShops());
   refresh.hidden = false;
   await loadShops();

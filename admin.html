@@ -592,7 +592,7 @@
             return;
           }
           if (new URLSearchParams(location.search).get('saas') === '1' || urlParams.get('saas') === '1') {
-            const { mountSaasAdmin } = await import('./saas-admin.js?v=1');
+            const { mountSaasAdmin } = await import('./saas-admin.js?v=filters-1');
             await mountSaasAdmin();
             return;
           }
