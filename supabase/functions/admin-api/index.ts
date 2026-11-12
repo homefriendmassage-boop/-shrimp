@@ -296,6 +296,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           shop_id: shop.shop_id, shop_name: shop.shop_name, status: shop.status,
           oa_configured: Boolean(shop.line_oa_bot_uid || shop.line_oa_token?.trim()),
           can_manage_billing: member_id === 'M0000' && shop.shop_id !== 'SHOP_000',
+          can_refer_shop: member_id === 'M0000' && String(shop.status).toLowerCase() === 'active',
         }] : []);
         let planQuery = db.from('platform_shop_plan_requests')
           .select('shop_id,plan_code,trial_started_at,trial_ends_at');
@@ -323,12 +324,14 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         };
         let invitations = [];
         let platformShops = [];
-        if (canInvite) {
+        if (canInvite || shops.some(shop => shop.can_refer_shop)) {
           const issued = await db.from('platform_shop_invites')
             .select('expires_at,shop_id,referrer_shop_id,shop:shops!platform_shop_invites_shop_id_fkey(shop_name,status)')
             .eq('created_by', claims.sub).order('expires_at', { ascending: false }).limit(50);
           if (issued.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
           invitations = issued.data ?? [];
+        }
+        if (canInvite) {
           const managed = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,line_oa_bot_uid,live_enabled,line_notifications_enabled,membership_notice_recipient_uid').order('shop_id');
           if (managed.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
           platformShops = (managed.data ?? []).map(({ line_oa_token, line_oa_bot_uid, ...shop }) => ({
@@ -419,19 +422,17 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true });
       }
       if (input.action === 'platform_issue_shop_invite') {
-        if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
-
         const referrer = typeof input.referrer_shop_id === 'string' ? input.referrer_shop_id.trim().toUpperCase() : '';
-        if (referrer) {
-          if (!/^SHOP_[A-Z0-9]{3,24}$/.test(referrer)) {
-            fail('REFERRER_INVALID');
-          }
-          const shop = await db.from('shops').select('shop_id,status').eq('shop_id', referrer).maybeSingle();
-          if (shop.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
-          if (shop.data?.status?.toLowerCase() !== 'active') fail('REFERRER_INVALID');
-        }
+        if (!/^SHOP_[A-Z0-9]{3,24}$/.test(referrer)) fail('REFERRER_INVALID');
+        const [shop, owner] = await Promise.all([
+          db.from('shops').select('status').eq('shop_id', referrer).maybeSingle(),
+          db.from('users').select('uid').eq('shop_id', referrer).eq('uid', claims.sub)
+            .eq('member_id', 'M0000').eq('status', 'Active').in('role', ['Admin', 'Superadmin']).maybeSingle(),
+        ]);
+        if (shop.error || owner.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+        if (!owner.data || String(shop.data?.status).toLowerCase() !== 'active') fail('REFERRER_INVALID', 403);
         const invite = await db.from('platform_shop_invites').insert({
-          created_by: claims.sub, referrer_shop_id: referrer || null,
+          created_by: claims.sub, referrer_shop_id: referrer, referral_tier: 'standard',
         })
           .select('invite_id,expires_at').single();
         if (invite.error || !invite.data) fail('INVITE_CREATE_FAILED', 500);

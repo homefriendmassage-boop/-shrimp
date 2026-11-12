@@ -1,5 +1,8 @@
 function createPlatformBilling(dialog, onPaid) {
-  const byId = id => dialog.querySelector('#' + id);
+  const byId = id => document.getElementById(id);
+  const catalog = byId('billing-catalog');
+  const catalogStatus = byId('billing-inline-status');
+  const dialogCatalog = catalog.parentNode;
   const formatMoney = amount => '฿' + Number(amount).toLocaleString('th-TH');
   const formatDate = date => new Date(date).toLocaleString('th-TH', {
     dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok',
@@ -26,7 +29,7 @@ function createPlatformBilling(dialog, onPaid) {
   function working(value) {
     busy = value;
     close.disabled = value;
-    dialog.querySelectorAll('[data-purchase], #billing-copy, #billing-submit, #billing-back')
+    document.querySelectorAll('[data-purchase], #billing-copy, #billing-submit, #billing-back')
       .forEach(button => button.disabled = value || button.dataset.unavailable === 'true');
   }
 
@@ -106,12 +109,17 @@ function createPlatformBilling(dialog, onPaid) {
     }));
     byId('billing-history-panel').hidden = !history.length;
     byId('billing-catalog').hidden = false;
-    if (!data.available) feedback.textContent = messages.BILLING_NOT_CONFIGURED;
+    if (!data.available) (dialog.open ? feedback : catalogStatus).textContent = messages.BILLING_NOT_CONFIGURED;
     else if (preferred && products.has(preferred)) await start(products.get(preferred), true);
   }
 
   async function start(product, fromLoad = false) {
     if (busy && !fromLoad) return;
+    if (!dialog.open) {
+      checkout.hidden = true;
+      dialog.showModal();
+    }
+    byId('billing-back').hidden = catalog.parentNode !== dialogCatalog;
     working(true);
     feedback.textContent = 'กำลังเตรียมรายการชำระเงิน…';
     try {
@@ -124,7 +132,7 @@ function createPlatformBilling(dialog, onPaid) {
         ? 'พร้อมเพย์' + (receiver.bank ? ' · ' + receiver.bank : '') : receiver.bank;
       byId('billing-number').value = receiver.number;
       byId('billing-name').textContent = receiver.name;
-      byId('billing-catalog').hidden = true;
+      if (catalog.parentNode === dialogCatalog) catalog.hidden = true;
       checkout.hidden = false;
       feedback.textContent = '';
     } catch (error) {
@@ -181,8 +189,26 @@ function createPlatformBilling(dialog, onPaid) {
   });
 
   return {
+    async showCatalog(selectedShop) {
+      if (busy || dialog.open) return;
+      shop = selectedShop;
+      order = null;
+      byId('billing-title').textContent = 'ชำระค่าบริการ · ' + (shop.shop_name || shop.shop_id);
+      byId('billing-inline').append(catalog);
+      catalogStatus.textContent = 'กำลังโหลดแพ็กเกจ…';
+      working(true);
+      try {
+        catalogStatus.textContent = '';
+        await load();
+      } catch (error) {
+        catalogStatus.textContent = messages[error.message] || 'โหลดแพ็กเกจไม่สำเร็จ กรุณาเปิดหน้าใหม่';
+      } finally {
+        working(false);
+      }
+    },
     async open(selectedShop, preferred) {
       if (busy || dialog.open) return;
+      dialogCatalog.insertBefore(catalog, checkout);
       shop = selectedShop;
       order = null;
       byId('billing-title').textContent = 'แพ็กเกจและโควตาตรวจสลิป · ' + (shop.shop_name || shop.shop_id);

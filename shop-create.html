@@ -8,7 +8,7 @@
   <title>หน้าจัดการร้านค้า · บ่อกุ้ง</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="./config.js?v=player-entry-1"></script>
-  <script src="./platform-billing.js?v=1"></script>
+  <script src="./platform-billing.js?v=inline-1"></script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #131620; color: #f8fafc; font: 16px/1.5 system-ui, sans-serif; }
@@ -37,7 +37,7 @@
     dialog h2 { margin: 0; }
     #billing-dialog { width: min(560px, calc(100% - 24px)); }
     #billing-dialog section { margin: 0; }
-    #billing-dialog h3, #billing-dialog p { margin: 0; }
+    #billing-inline h3, #billing-inline p, #billing-dialog h3, #billing-dialog p { margin: 0; }
     #billing-dialog h3 { margin-top: 12px; }
     #billing-dialog #billing-feedback { min-height: 24px; }
     #billing-slip-form { padding: 0; }
@@ -53,17 +53,16 @@
     <h1 id="title">หน้าจัดการร้านค้า</h1>
     <section id="platform-panel" hidden>
       <h2>ตั้งค่าร้านค้าในแพลตฟอร์ม</h2>
-      <a href="admin.html?saas=1">เปิดหน้าแอดมิน SaaS เพื่อเปิด–ปิดร้าน</a>
+      <a href="admin.html?saas=1">กลับหน้าแอดมิน SaaS</a>
       <div id="platform-shops"></div>
     </section>
-    <section id="managed-panel" hidden>
-      <h2>ร้านที่ฉันดูแล</h2>
-      <div id="managed-shops"></div>
+    <section id="billing-inline" hidden aria-label="แพ็กเกจและโควตาตรวจสลิป">
+      <p id="billing-inline-status" role="status"></p>
     </section>
     <section id="share-panel" hidden>
-      <p>สร้างลิงก์ให้เจ้าของร้านกรอกข้อมูลเอง ใช้ได้กับหนึ่งร้านและหมดอายุใน 24 ชั่วโมง</p>
-      <label>รหัสร้านผู้แนะนำ (ถ้ามี)
-        <select id="referrer-shop"><option value="">เลือกร้านผู้แนะนำ (ถ้ามี)</option></select>
+      <h2>แนะนำร้าน</h2>
+      <label>รหัสร้านผู้แนะนำ
+        <input id="referrer-shop" readonly>
       </label>
       <button type="button" id="new-invite" disabled>สร้างคำเชิญ</button>
       <div id="invite-tools" hidden>
@@ -71,12 +70,16 @@
         <small id="expiry"></small>
       </div>
       <button type="button" class="secondary" id="copy-link" hidden>คัดลอกลิงก์</button>
-      <button type="button" class="secondary" id="share-flex" hidden>แชร์ Flex ใน LINE</button>
+      <button type="button" class="secondary" id="share-flex" hidden>ส่ง Flex ในแชต LINE</button>
       <div id="invite-qr" hidden role="img" aria-label="QR สำหรับสมัครร้านค้า"></div>
     </section>
     <section id="issued-panel" hidden>
       <h2>คำเชิญที่ฉันส่ง</h2>
       <div id="issued-invites"></div>
+    </section>
+    <section id="managed-panel" hidden>
+      <h2>ร้านที่ฉันดูแล</h2>
+      <div id="managed-shops"></div>
     </section>
     <form id="shop-form" hidden>
       <label>รหัสร้าน <input id="shop-code" value="ระบบออกให้เมื่อสร้างร้าน" readonly></label>
@@ -172,6 +175,7 @@
     const entryParams = new URLSearchParams(location.search);
     const invite = entryParams.get('invite');
     const sourceShop = entryParams.get('shop');
+    const saasShop = entryParams.get('saas_shop');
     const plan = byId('plan-code');
     const plans = {
       free: 'ทดลองใช้ 10 วัน ระบบสมาชิก เติมเงิน เปิดรอบ และตรวจสลิปฟรี 30 ครั้งตามแพ็กเกจ',
@@ -210,7 +214,7 @@
       OA_ALREADY_LINKED: 'LINE OA นี้ผูกกับร้านอื่นแล้ว',
       OA_VERIFY_UNAVAILABLE: 'ตรวจ Token กับ LINE ไม่สำเร็จ กรุณาลองอีกครั้ง',
       PLAN_INVALID: 'กรุณาเลือกแพ็กเกจที่ต้องการ',
-      REFERRER_INVALID: 'กรุณากรอกรหัสร้านผู้แนะนำที่เปิดใช้งานอยู่',
+      REFERRER_INVALID: 'ใช้ได้เฉพาะรหัสร้านของคุณที่เปิดใช้งานอยู่',
     };
 
     async function request(action, details = {}) {
@@ -259,6 +263,7 @@
       button.textContent = label;
       button.style.marginTop = '8px';
       button.addEventListener('click', async () => {
+        if (setting === 'service_enabled' && !confirm(label + ' ' + shop.shop_name + ' ใช่ไหมครับ')) return;
         button.disabled = true;
         try {
           await request('platform_shop_control', { target_shop_id: shop.shop_id, setting, enabled });
@@ -380,40 +385,37 @@
       const managed = byId('managed-shops');
       managed.replaceChildren();
       byId('title').textContent = 'หน้าจัดการร้านค้า';
-      if (!data.shops.length) managed.textContent = 'ยังไม่มีร้านในบัญชี LINE นี้';
-      for (const shop of data.shops) {
-        const active = String(shop.status).toLowerCase() === 'active';
-        const params = { shop: shop.shop_id };
-        const row = appendRow(managed, shop.shop_name + ' · ' + shop.shop_id,
-          (active ? 'เปิดใช้งาน' : 'ยังไม่เปิดใช้งาน') + ' · ' +
-          (shop.oa_configured ? 'ตั้งค่า LINE OA แล้ว' : 'รอเชื่อม LINE OA') + planSummary(shop),
-          active ? [
+      if (!saasShop) {
+        const selected = data.shops.find(shop => shop.shop_id === sourceShop) ||
+          (!sourceShop && data.shops.length === 1 ? data.shops[0] : null);
+        byId('billing-inline').hidden = !selected?.can_manage_billing;
+        byId('share-panel').hidden = !selected?.can_refer_shop;
+        byId('referrer-shop').value = selected?.can_refer_shop ? selected.shop_id : '';
+        newInvite.disabled = !selected?.can_refer_shop;
+        if (selected?.can_manage_billing) void billing.showCatalog(selected);
+        if (!data.shops.length) managed.textContent = 'ยังไม่มีร้านในบัญชี LINE นี้';
+        for (const shop of data.shops) {
+          const params = { shop: shop.shop_id };
+          const links = shop.shop_id !== selected?.shop_id
+            ? [['จัดการร้านนี้', 'shop-create.html?shop=' + encodeURIComponent(shop.shop_id)]] : [];
+          if (String(shop.status).toLowerCase() === 'active') links.push(
             ['เข้า Admin ร้านนี้', liffLink(APP_CONFIG.LIFF_ID_ADMIN, params)],
             ['ลิงก์ลูกค้าของร้าน', playerEntryUrl(shop.shop_id)],
-          ] : []);
-        if (shop.can_manage_billing) {
-          const checkout = document.createElement('button');
-          checkout.type = 'button';
-          checkout.className = 'secondary';
-          checkout.style.marginTop = '8px';
-          checkout.textContent = 'แพ็กเกจและโควตาตรวจสลิป';
-          checkout.addEventListener('click', () => billing.open(shop));
-          row.append(checkout);
+          );
+          appendRow(managed, shop.shop_name + ' · ' + shop.shop_id, planSummary(shop).replace(/^ · /, ''), links);
         }
+        byId('managed-panel').hidden = false;
       }
-      byId('managed-panel').hidden = false;
-      if (data.can_invite) {
-        const referrer = byId('referrer-shop');
-        const previous = referrer.value;
-        const available = (data.platform_shops ?? []).filter(shop => String(shop.status).toLowerCase() === 'active');
-        referrer.replaceChildren(new Option('เลือกร้านผู้แนะนำ (ถ้ามี)', ''));
-        for (const shop of available) referrer.add(new Option(shop.shop_id + ' · ' + shop.shop_name, shop.shop_id));
-        const owned = data.shops.filter(shop => String(shop.status).toLowerCase() === 'active');
-        const preferred = previous || sourceShop || (owned.length === 1 ? owned[0].shop_id : '');
-        if (available.some(shop => shop.shop_id === preferred)) referrer.value = preferred;
+      if (saasShop) {
+        if (!data.can_invite) {
+          status.textContent = 'บัญชี LINE นี้ไม่มีสิทธิ์แอดมินแพลตฟอร์ม';
+          return;
+        }
         const platform = byId('platform-shops');
         platform.replaceChildren();
-        for (const shop of data.platform_shops ?? []) {
+        const matching = (data.platform_shops ?? []).filter(shop => shop.shop_id === saasShop);
+        if (!matching.length) platform.textContent = 'ไม่พบร้านนี้';
+        for (const shop of matching) {
           const active = String(shop.status).toLowerCase() === 'active';
           const row = appendRow(platform, shop.shop_name + ' · ' + shop.shop_id,
             (active ? 'เปิดบริการ' : 'ปิดบริการ') + ' · ' +
@@ -426,6 +428,7 @@
           settings.style.marginTop = '8px';
           settings.addEventListener('click', () => openOaSettings(shop));
           row.append(settings);
+          addControl(row, shop, 'service_enabled', !active, active ? 'ปิดบริการร้าน' : 'เปิดบริการร้าน');
           const notice = document.createElement('button');
           notice.type = 'button';
           notice.className = 'secondary';
@@ -437,11 +440,15 @@
             shop.line_notifications_enabled ? 'ปิดการแจ้งเตือน LINE' : 'เปิดการแจ้งเตือน LINE');
           addControl(row, shop, 'live_enabled', !shop.live_enabled, shop.live_enabled ? 'ปิดเมนู LIVE สด' : 'เปิดเมนู LIVE สด');
         }
+        byId('title').textContent = 'รายละเอียดการเปิด–ปิดระบบ';
         byId('platform-panel').hidden = false;
+      }
+      if (!saasShop && !byId('share-panel').hidden) {
         const issued = byId('issued-invites');
         issued.replaceChildren();
-        if (!data.invitations.length) issued.textContent = 'ยังไม่มีคำเชิญที่ส่ง';
-        for (const entry of data.invitations) {
+        const invitations = (data.invitations ?? []).filter(item => item.referrer_shop_id === byId('referrer-shop').value);
+        if (!invitations.length) issued.textContent = 'ยังไม่มีคำเชิญที่ส่ง';
+        for (const entry of invitations) {
           const state = entry.shop_id
             ? (String(entry.shop?.status).toLowerCase() === 'active' ? 'เปิดใช้งาน' : 'ลงทะเบียนแล้ว · รอเปิดร้าน')
             : (Date.parse(entry.expires_at) <= Date.now() ? 'หมดอายุ' : 'รอลงทะเบียน');
@@ -451,7 +458,6 @@
           appendRow(issued, entry.shop_id ? (entry.shop?.shop_name || 'ร้านที่ลงทะเบียน') + ' · ' + entry.shop_id : 'คำเชิญสมัครร้าน',
             state + referral);
         }
-        byId('share-panel').hidden = false;
         byId('issued-panel').hidden = false;
       }
     }
@@ -485,7 +491,6 @@
         } else {
           try {
             await loadPortal();
-            newInvite.disabled = false;
           } catch {
             status.textContent = 'โหลดรายการร้านค้าไม่สำเร็จ กรุณาลองเปิดหน้าใหม่';
           }
@@ -550,6 +555,7 @@
             type: 'bubble',
             body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
               { type: 'text', text: 'คำเชิญสมัครร้านค้า', weight: 'bold', size: 'lg', wrap: true },
+              { type: 'text', text: 'ร้านผู้แนะนำ ' + byId('referrer-shop').value, wrap: true },
               { type: 'text', text: 'เข้าสู่ระบบ LINE และกรอกข้อมูลร้านของคุณ', wrap: true },
             ] },
             footer: { type: 'box', layout: 'vertical', contents: [{

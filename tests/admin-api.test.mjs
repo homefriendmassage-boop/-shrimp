@@ -239,3 +239,44 @@ test('cash deposits and withdrawals enter the selected shop queue', async () => 
   assert.equal(valid.status, 200);
   assert.equal(insertions.pop().slip_url, slip_url);
 });
+
+test('a shop invitation is issued only with the active shop owned by the verified LINE account', async () => {
+  const expires = new Date(Date.now() + 86400000).toISOString();
+  const writes = [];
+  const handler = makeHandler({
+    env: name => ({
+      SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'server-only',
+      LINE_CHANNEL_ID_ADMIN: 'channel',
+    })[name],
+    fetcher: async () => Response.json({ sub: 'verified-user', aud: 'channel', exp: Date.now() / 1000 + 60 }),
+    createDb: () => ({ from(table) {
+      const filters = {};
+      return {
+        select() { return this; },
+        eq(key, value) { filters[key] = value; return this; },
+        in() { return this; },
+        async maybeSingle() {
+          if (table === 'shops') return { data: { status: filters.shop_id === 'SHOP_003' ? 'Inactive' : 'active' } };
+          assert.equal(table, 'users');
+          assert.equal(filters.member_id, 'M0000');
+          assert.equal(filters.uid, 'verified-user');
+          assert.equal(filters.status, 'Active');
+          return { data: ['SHOP_001', 'SHOP_003'].includes(filters.shop_id) ? { uid: filters.uid } : null };
+        },
+        insert(row) { writes.push(row); return this; },
+        async single() { return { data: { invite_id: 'invitation', expires_at: expires } }; },
+      };
+    } }),
+  });
+  const invite = referrer_shop_id => handler(request({
+    action: 'platform_issue_shop_invite', referrer_shop_id, created_by: 'untrusted-user',
+  }));
+  assert.equal((await invite('')).status, 400);
+  assert.equal((await invite('SHOP_002')).status, 403);
+  assert.equal((await invite('SHOP_003')).status, 403);
+  assert.deepEqual(writes, []);
+  assert.equal((await invite('SHOP_001')).status, 200);
+  assert.deepEqual(writes, [{
+    created_by: 'verified-user', referrer_shop_id: 'SHOP_001', referral_tier: 'standard',
+  }]);
+});

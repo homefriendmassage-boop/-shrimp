@@ -26,10 +26,8 @@
     .container { max-width: 480px; margin: 0 auto; padding: 20px; }
     .oa-link { margin: 0 0 14px; }
     .player-entry { max-width: 360px; margin: clamp(48px, 19vh, 160px) auto 0; padding: 24px; }
-    .player-friend-invite { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .player-friend-invite[hidden] { display: none; }
-    .player-friend-invite p { flex: 1 1 100%; margin: 0; }
-    .player-friend-invite .player-entry-action { flex: 1; width: auto; margin: 0; }
+    #playerOaChat { display: flex; align-items: center; width: fit-content; margin: 0 0 12px auto; }
+    #playerOaChat[hidden] { display: none; }
     .player-entry h1 { margin: 0 0 4px; font-size: 1.5rem; }
     .player-entry p { margin: 0 0 18px; color: var(--text-muted); }
     .player-entry-action { display: block; box-sizing: border-box; width: 100%; min-height: 46px; padding: 10px 14px; border: 1px solid #657084; border-radius: 10px; background: transparent; color: white; font: inherit; text-align: center; text-decoration: none; cursor: pointer; }
@@ -197,11 +195,7 @@
     </section>
   </div>
   <div class="container" id="player-main" hidden>
-    <section id="playerFriendInvite" class="round-info player-friend-invite" aria-label="เพิ่มเพื่อน LINE OA ของร้าน" hidden>
-      <p id="playerFriendMessage"></p>
-      <a id="playerEntryAdd" class="player-entry-action player-entry-add" target="_blank" rel="noopener">เพิ่มเพื่อน LINE OA</a>
-      <button id="playerEntryContinue" class="player-entry-action" type="button">เพิ่มทีหลัง</button>
-    </section>
+    <a id="playerOaChat" class="player-entry-action player-entry-add" target="_blank" rel="noopener" hidden>แชตกับแอดมิน</a>
     <div id="oaLink" class="oa-link" hidden></div>
     <div class="header-card">
       <div class="header-box" style="display: flex; align-items: center; gap: 12px; padding: 8px 15px;">
@@ -417,11 +411,7 @@
 
     async function loadPlayerEntry() {
       const shopId = currentShopId;
-      const invite = document.getElementById('playerFriendInvite');
-      const add = document.getElementById('playerEntryAdd');
-      const friendship = useShopLogin
-        ? Promise.resolve().then(() => liff.getFriendship()).catch(() => null)
-        : Promise.resolve(null);
+      const chat = document.getElementById('playerOaChat');
       try {
         const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
           method: 'POST',
@@ -434,28 +424,18 @@
         if (shopId !== currentShopId) return;
         entryShopName = typeof entry.shop_name === 'string' ? entry.shop_name : '';
         updatePlayerPageTitle();
-        if (!/^https:\/\/line\.me\/R\/ti\/p\/%40[a-zA-Z0-9._-]{1,40}$/.test(entry.add_friend_url || '')) return;
-        // Only the shop-specific LIFF can report friendship with this shop's OA.
-        const friend = await friendship;
-        if (friend?.friendFlag === true || shopId !== currentShopId) return;
-        const preferenceKey = 'player-friend-invite-dismissed:' + shopId;
-        try { if (sessionStorage.getItem(preferenceKey)) return; } catch {}
-        document.getElementById('playerFriendMessage').textContent =
-          'เพิ่มเพื่อนเพื่อรับข่าวสารจาก ' + (entryShopName || 'ร้านนี้');
-        document.getElementById('playerEntryContinue').onclick = () => {
-          invite.hidden = true;
-          try { sessionStorage.setItem(preferenceKey, '1'); } catch {}
-        };
-        add.href = entry.add_friend_url;
-        add.onclick = event => {
+        const oa = /^https:\/\/line\.me\/R\/ti\/p\/(%40[a-zA-Z0-9._-]{1,40})$/.exec(entry.add_friend_url || '');
+        if (!oa) return;
+        chat.href = 'https://line.me/R/oaMessage/' + oa[1];
+        chat.onclick = event => {
           if (!liff.isInClient()) return;
           try {
-            liff.openWindow({ url: add.href, external: false });
+            liff.openWindow({ url: chat.href, external: false });
             event.preventDefault();
           } catch { /* The regular link is still available. */ }
         };
-        invite.hidden = false;
-      } catch { /* Shop details and friendship are optional. */ }
+        chat.hidden = false;
+      } catch { /* Shop details are optional. */ }
     }
 
     async function initializeApp() {
