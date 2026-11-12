@@ -118,9 +118,7 @@ const flexButton = (label, uri, color) => ({ type: 'button', style: 'primary', h
 const money = value => '฿' + Number(value).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 
 function playerLink(shop) {
-  const liffId = shop.liff_id_player || Deno.env.get('MEMBERSHIP_LIFF_ID_PLAYER') || '2012454809-UFGeUGbW';
-  if (!/^\d+-[A-Za-z0-9]+$/.test(liffId)) throw new Error('PLAYER_LIFF_INVALID');
-  return 'https://liff.line.me/' + liffId + '?shop=' + encodeURIComponent(shop.shop_id);
+  return 'https://liff.line.me/2012454809-UFGeUGbW?shop=' + encodeURIComponent(shop.shop_id);
 }
 
 function roundFlex(shop, round, kind) {
@@ -291,7 +289,7 @@ Deno.serve(async req => {
     const staff = await db.from('users').select('role,status').eq('shop_id', input.shop_id).eq('uid', claims.sub).maybeSingle();
     if (staff.error) return fail('DATABASE_ERROR', 500);
     if (staff.data?.status !== 'Active' || !['Admin', 'Superadmin', 'Operator'].includes(staff.data.role)) return fail('ADMIN_REQUIRED', 403);
-    const shop = await db.from('shop_oa_runtime').select('shop_id,shop_name,status,line_oa_token,liff_id_player,line_notifications_enabled').eq('shop_id', input.shop_id).maybeSingle();
+    const shop = await db.from('shop_oa_runtime').select('shop_id,shop_name,status,line_oa_token,line_notifications_enabled').eq('shop_id', input.shop_id).maybeSingle();
     if (shop.error) return fail('DATABASE_ERROR', 500);
     if (shop.data?.line_notifications_enabled === false) return reply({ ok: true, skipped: true, eligible: 0, accepted: 0, failed: 0 });
     if (shop.data?.status !== 'active') return fail('SHOP_NOT_AVAILABLE', 403);

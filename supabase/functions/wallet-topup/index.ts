@@ -127,10 +127,9 @@ Deno.serve(async (req) => {
     if (credit.error) return reply("WALLET_UNAVAILABLE", 503);
     if (credit.data === "CREDITED") {
       try {
-        const settings = await db.from("shop_oa_runtime").select("line_oa_token,admin_group_id,liff_id_player,line_notifications_enabled")
+        const settings = await db.from("shop_oa_runtime").select("line_oa_token,admin_group_id,line_notifications_enabled")
           .eq("shop_id", shop).maybeSingle();
         const token = settings.data?.line_oa_token;
-        const playerLiff = settings.data?.liff_id_player || env("MEMBERSHIP_LIFF_ID_PLAYER") || "2012454809-UFGeUGbW";
         if (token && settings.data?.line_notifications_enabled !== false) {
           const title = "🎉 เติมเครดิตสำเร็จ";
           const message = { type: "flex", altText: title, contents: {
@@ -145,10 +144,10 @@ Deno.serve(async (req) => {
           const admin = settings.data?.admin_group_id;
           if (/^[CUR][0-9a-f]{32}$/i.test(admin ?? "") && admin !== uid) recipients.push(admin);
           await Promise.allSettled(recipients.map(async to => {
-            const flex = to === uid && /^\d+-[a-zA-Z0-9]+$/.test(playerLiff) ? {
+            const flex = to === uid ? {
               ...message, contents: { ...message.contents, footer: { type: "box", layout: "vertical", contents: [{
                 type: "button", style: "primary", action: {
-                  type: "uri", label: "เข้าหน้าใช้งาน", uri: "https://liff.line.me/" + playerLiff + "?shop=" + encodeURIComponent(shop),
+                  type: "uri", label: "เข้าหน้าใช้งาน", uri: "https://liff.line.me/2012454809-UFGeUGbW?shop=" + encodeURIComponent(shop),
                 },
               }] } },
             } : message;

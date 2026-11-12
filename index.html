@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>แอปผู้เล่น - บ่อตกกุ้ง</title>
-  <script src="config.js?v=member-code-1"></script>
+  <script src="config.js?v=player-entry-1"></script>
   <script src="membership-notice-client.js?v=2"></script>
   <script src="oa-link-client.js?v=2"></script>
   <script src="shop-login-check.js?v=1"></script>
@@ -560,13 +560,8 @@
     function showShopLoginFallback(message, code = null) {
       showMembershipGate(message, code);
       const link = document.getElementById('membershipApplyLink');
-      const url = new URL('https://liff.line.me/' + APP_CONFIG.LIFF_ID_PLAYER);
       const params = playerEntryParams();
-      url.searchParams.set('shop', currentShopId);
-      for (const key of ['table', 'd', 'ref']) {
-        if (params.has(key)) url.searchParams.set(key, params.get(key));
-      }
-      link.href = url.href;
+      link.href = playerEntryUrl(currentShopId, Object.fromEntries(params));
       link.textContent = 'เปิดทางเข้าสมาชิกและสมัครสมาชิก';
       link.classList.remove('hidden');
     }
