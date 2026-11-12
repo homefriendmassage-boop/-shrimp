@@ -34,6 +34,8 @@ export async function mountSaasAdmin() {
     .active { color: #89e7b4; }
     button { min-height: 44px; padding: 8px 14px; border: 1px solid #657084; border-radius: 8px; background: #252e40; color: inherit; font: inherit; cursor: pointer; }
     button[data-opening="true"] { background: #155c3c; border-color: #26875a; }
+    .shop-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .shop-actions a { min-height: 44px; display: inline-flex; align-items: center; padding: 8px 14px; border: 1px solid #657084; border-radius: 8px; color: inherit; text-decoration: none; }
     button:disabled { opacity: .65; cursor: wait; }
     @media (max-width: 430px) { li { grid-template-columns: 1fr; gap: 10px; } }
   </style>
@@ -124,7 +126,13 @@ export async function mountSaasAdmin() {
         if (busy || !confirm(control.textContent + ' ' + name.textContent + ' (' + shop.shop_id + ') ใช่ไหมครับ')) return;
         loadShops(shop, !active);
       });
-      row.append(details, control);
+      const actions = document.createElement('div');
+      actions.className = 'shop-actions';
+      const settings = document.createElement('a');
+      settings.href = 'shop-create.html?saas_shop=' + encodeURIComponent(shop.shop_id);
+      settings.textContent = 'รายละเอียดการเปิด–ปิดระบบ';
+      actions.append(control, settings);
+      row.append(details, actions);
       shops.append(row);
     }
     shops.hidden = false;

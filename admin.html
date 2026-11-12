@@ -62,6 +62,8 @@
     .switch-btn { flex: 1; text-align: center; padding: 8px; cursor: pointer; border-radius: 6px; font-size: 0.9rem; color: var(--text-muted); transition: 0.2s;}
     .switch-btn.active { background: #2a2d3d; color: white; }
     
+    .admin-shortcuts { display: flex; gap: 10px; }
+    .admin-shortcuts .btn { display: flex; align-items: center; flex: 1; min-width: 0; min-height: 44px; padding: 8px 4px; margin-bottom: 15px; justify-content: center; text-align: center; text-decoration: none; white-space: nowrap; }
     .hidden { display: none !important; }
     
     .user-info-box { background: #0f111a; border: 1px solid var(--card-border); border-radius: 8px; padding: 15px; margin-bottom: 15px; display: none; }
@@ -243,9 +245,11 @@
       <p style="color: var(--text-muted); margin-top: 10px;">หน้านี้สงวนไว้สำหรับพนักงานเท่านั้น</p>
     </div>
 
-    <a id="shopPortalLink" href="shop-create.html" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">หน้าจัดการร้านค้า</a>
+    <div class="admin-shortcuts no-print">
+      <a id="shopPortalLink" href="shop-create.html" class="btn btn-outline hidden">จัดการร้าน</a>
+      <a id="switchToPlayer" class="btn btn-outline hidden">ไปหน้า Player</a>
+    </div>
     <a id="saasAdminLink" href="admin.html?saas=1" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">แอดมิน SaaS · เปิด–ปิดร้าน</a>
-    <a id="switchToPlayer" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">สลับไปหน้า Player</a>
     <div id="adminApiError" class="card hidden no-print" role="alert" style="color:var(--yellow-main)"></div>
 
 
@@ -593,7 +597,7 @@
             return;
           }
           if (new URLSearchParams(location.search).get('saas') === '1' || urlParams.get('saas') === '1') {
-            const { mountSaasAdmin } = await import('./saas-admin.js?v=filters-1');
+            const { mountSaasAdmin } = await import('./saas-admin.js?v=shop-controls-1');
             await mountSaasAdmin();
             return;
           }
