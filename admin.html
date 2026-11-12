@@ -397,6 +397,7 @@
     </section>
       <div class="card">
         <div class="card-title" style="color: var(--yellow-main);"><i class="fa-solid fa-bell"></i> คิวฝาก-ถอน รอดำเนินการ</div>
+        <p id="walletQueueStatus" role="status" hidden style="color:var(--text-main)"></p>
         <div id="pendingListContainer" style="display: flex; flex-direction: column; gap: 15px;">
            <div style="text-align:center; color: var(--text-muted); padding: 15px;">กำลังโหลด...</div>
         </div>
@@ -531,7 +532,7 @@
 
   <dialog id="walletDecisionDialog" aria-labelledby="walletDecisionTitle"
     aria-describedby="walletDecisionMember walletDecisionAmount walletDecisionNote">
-    <form method="dialog">
+    <form>
       <div class="wallet-confirm-icon" aria-hidden="true">
         <i class="fa-solid fa-coins"></i>
         <i class="fa-solid fa-wallet"></i>
@@ -541,7 +542,7 @@
       <p id="walletDecisionAmount"></p>
       <p id="walletDecisionNote"></p>
       <div class="wallet-confirm-actions">
-        <button type="submit" value="cancel" autofocus>ยกเลิก</button>
+        <button type="button" value="cancel" autofocus>ยกเลิก</button>
         <button type="submit" value="approve">ยืนยันเติมเงิน</button>
       </div>
     </form>
@@ -703,7 +704,6 @@
         ADMIN_API_HTTP_404: 'ยังไม่ได้ติดตั้ง Edge Function ชื่อ admin-api',
         ADMIN_API_HTTP_401: 'ตรวจการตั้งค่า Verify JWT ของ admin-api ให้เป็น OFF',
         SHOP_NOT_AVAILABLE: 'ไม่พบร้านที่เปิดใช้งานสำหรับรหัสร้านนี้',
-        REQUEST_NOT_PENDING: 'รายการนี้ออกจากคิวแล้ว',
         WALLET_INSUFFICIENT_BALANCE: 'ยอดเงินใน Wallet ไม่พอสำหรับคำขอถอนนี้',
         WALLET_REQUEST_UNAVAILABLE: 'ทำรายการ Wallet ไม่สำเร็จ กรุณาตรวจคิวก่อนลองอีกครั้ง',
         PLAYER_ACCESS_REQUIRED: 'บัญชีสมาชิกของรายการนี้ยังใช้งานไม่ได้',
@@ -1015,10 +1015,28 @@
     // ==========================================
     // คิวรอดำเนินการ 
     // ==========================================
+    let pendingQueueLoad = 0;
+    let pendingQueueApplied = 0;
+    let walletDecision = null;
+
+    function showWalletQueueStatus(message) {
+      const status = document.getElementById('walletQueueStatus');
+      status.textContent = message;
+      status.hidden = !message;
+    }
+
     async function loadPendingRequests() {
+       const loadId = ++pendingQueueLoad;
+       const shop = currentShopId;
        try {
-         const { data: reqs, error } = await _supabase.from('topup_requests').select('*').eq('shop_id', currentShopId).eq('status', 'Pending').order('created_at', { ascending: true });
-         if (error) { console.error("Error fetching pending requests:", error); return; }
+         const { data: reqs } = await _supabase.from('topup_requests').select('*').eq('shop_id', shop).eq('status', 'Pending').order('created_at', { ascending: true });
+         if (shop !== currentShopId || loadId < pendingQueueApplied) return;
+         pendingQueueApplied = loadId;
+         if (walletDecision?.shop === shop && !walletDecision.submitting &&
+             !reqs?.some(row => row.id === walletDecision.id)) {
+           walletDecision.close(false);
+           showWalletQueueStatus('รายการนี้ออกจากคิวแล้ว');
+         }
 
          const badge = document.getElementById('badgePending');
          if (reqs && reqs.length > 0) { badge.innerText = reqs.length; badge.style.display = 'inline-block'; } 
@@ -1032,6 +1050,7 @@
              let typeColor = (r.type === 'ฝากเงิน' || r.type === 'โอนค่าคอม') ? 'var(--green-main)' : 'var(--red-main)';
              let slipBtn = r.slip_url ? `<button class="btn btn-outline" style="padding: 5px; font-size: 0.8rem; margin-top: 5px;" onclick="window.open('${r.slip_url}', '_blank')"><i class="fa-solid fa-image"></i> ดูสลิปหลักฐาน</button>` : '';
              let card = document.createElement('div');
+             card.dataset.walletRequestId = String(r.id);
              card.style.cssText = "background: #0f111a; border: 1px solid var(--card-border); border-radius: 12px; padding: 15px; display: flex; flex-direction: column; gap: 8px;";
              
              card.innerHTML = `
@@ -1046,16 +1065,18 @@
              const manage = card.querySelector('[data-manage-wallet]');
              const reject = card.querySelector('[data-reject-wallet]');
              manage.textContent = r.type === 'ฝากเงิน' ? 'เติมเงิน' : r.type;
-             manage.addEventListener('click', () => approveQueuedWalletRequest(r, manage, reject));
+             const submitting = walletDecision?.submitting && walletDecision.id === r.id;
+             manage.disabled = reject.disabled = Boolean(submitting);
+             manage.addEventListener('click', () => approveQueuedWalletRequest(r));
              reject.addEventListener('click', () => rejectPendingRequest(r.id, r.uid, r.type, r.amount));
              listDiv.appendChild(card);
          });
        } catch (e) { console.error("Exception in loadPendingRequests:", e); }
     }
 
-    async function approveQueuedWalletRequest(request, button, rejectButton) {
+    function approveQueuedWalletRequest(request) {
       const dialog = document.getElementById('walletDecisionDialog');
-      if (button.disabled || dialog.open || request.shop_id !== currentShopId) return;
+      if (walletDecision || dialog.open || request.shop_id !== currentShopId) return;
 
       const deposit = request.type === 'ฝากเงิน';
       const action = deposit ? 'เติมเงิน' : request.type;
@@ -1070,21 +1091,60 @@
       noteElement.textContent = note;
       noteElement.hidden = !note;
       dialog.querySelector('[value="approve"]').textContent = 'ยืนยัน' + action;
-      dialog.returnValue = '';
-      button.disabled = rejectButton.disabled = true;
-      try {
-        dialog.showModal();
-        const decision = await new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true }));
-        if (decision !== 'approve' || request.shop_id !== currentShopId) return;
-        if (deposit) await _supabase.approveWalletDeposit(request.id);
-        else await _supabase.approveWalletWithdrawal(request.id);
-        await loadPendingRequests();
-      } catch (error) {
-        if (error.message === 'REQUEST_NOT_PENDING') await loadPendingRequests();
-        showAdminApiError(error.message);
-      } finally {
-        button.disabled = rejectButton.disabled = false;
-      }
+      showWalletQueueStatus('');
+      const events = new AbortController();
+      const decision = {
+        id: request.id,
+        shop: request.shop_id,
+        submitting: false,
+        close(approved) {
+          events.abort();
+          dialog.close();
+          if (!approved) walletDecision = null;
+        },
+      };
+      walletDecision = decision;
+      const options = { signal: events.signal };
+      dialog.querySelector('[value="cancel"]').addEventListener('click', () => decision.close(false), options);
+      dialog.addEventListener('cancel', event => {
+        event.preventDefault();
+        decision.close(false);
+      }, options);
+      dialog.querySelector('form').addEventListener('submit', async event => {
+        event.preventDefault();
+        if (decision.submitting || walletDecision !== decision) return;
+        if (decision.shop !== currentShopId) {
+          decision.close(false);
+          return;
+        }
+        decision.submitting = true;
+        decision.close(true);
+        showWalletQueueStatus('กำลังยืนยันรายการ…');
+        const list = document.getElementById('pendingListContainer');
+        const card = () => Array.from(list.children).find(row => row.dataset.walletRequestId === String(request.id));
+        card()?.querySelectorAll('button').forEach(button => button.disabled = true);
+        try {
+          if (deposit) await _supabase.approveWalletDeposit(request.id);
+          else await _supabase.approveWalletWithdrawal(request.id);
+          pendingQueueApplied = pendingQueueLoad + 1;
+          card()?.remove();
+          showWalletQueueStatus(action + 'สำเร็จ');
+        } catch (error) {
+          if (error.message === 'REQUEST_NOT_PENDING') {
+            pendingQueueApplied = pendingQueueLoad + 1;
+            card()?.remove();
+            showWalletQueueStatus('รายการนี้ออกจากคิวแล้ว');
+          } else {
+            showWalletQueueStatus('ยืนยันผลรายการไม่ได้ กำลังตรวจคิวล่าสุด');
+            showAdminApiError(error.message);
+          }
+        } finally {
+          await loadPendingRequests();
+          if (walletDecision === decision) walletDecision = null;
+          card()?.querySelectorAll('button').forEach(button => button.disabled = false);
+        }
+      }, options);
+      dialog.showModal();
     }
 
     async function rejectPendingRequest(id, uid, type, amount) {
