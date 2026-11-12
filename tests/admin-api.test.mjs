@@ -86,6 +86,17 @@ test('membership-only, inactive, backer and unavailable shop cannot access legac
     assert.equal((await handler(request())).status, 403);
   }
 });
+test('shop admin roles cannot open or close a shop without a platform grant', async () => {
+  for (const role of ['Admin', 'Superadmin', 'Operator']) {
+    const { handler, queries } = setup({ role });
+    const response = await handler(request({
+      action: 'platform_shop_control', target_shop_id: 'SHOP_002', setting: 'service_enabled', enabled: false,
+    }));
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { ok: false, code: 'PLATFORM_ADMIN_REQUIRED' });
+    assert(queries.every(query => query.table === 'platform_shop_admins'));
+  }
+});
 test('expired and wrong-channel tokens are rejected before database access', async () => {
   for (const config of [{ exp: 1 }, { aud: 'wrong-channel' }]) {
     const { handler, queries } = setup(config);
