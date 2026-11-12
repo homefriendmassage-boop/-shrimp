@@ -188,3 +188,54 @@ test('patched HTML retains original controls and uses the new access check', () 
   assert(!patched.includes('supabase.createClient('));
   for (const match of patched.matchAll(/<script>([\s\S]*?)<\/script>/g)) new vm.Script(match[1]);
 });
+
+test('cash deposits and withdrawals enter the selected shop queue', async () => {
+  const uid = 'U' + 'a'.repeat(32);
+  const insertions = [];
+  const env = name => ({
+    LINE_CHANNEL_ID_PLAYER: 'channel', SUPABASE_URL: 'https://example.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'server-only',
+  })[name];
+  const rows = {
+    shops: { status: 'active' },
+    users: { uid, status: 'Active', role: 'Customer', member_id: 'M0001' },
+    membership_applications: { state: 'Approved', member_id: 'M0001' },
+    system_settings: { withdrawal_fee_mode: 'none' },
+    shop_oa_runtime: null,
+  };
+  const createDb = () => ({
+    from(table) {
+      const query = {
+        select: () => query, eq: () => query, order: () => query, limit: () => query,
+        maybeSingle: async () => ({ data: rows[table] }),
+        insert: async row => { insertions.push(row); return { error: null }; },
+      };
+      return query;
+    },
+  });
+  const fetcher = async () => Response.json({ sub: uid, aud: 'channel', exp: Date.now() / 1000 + 60 });
+  const handler = makeHandler({ env, createDb, fetcher });
+
+  for (const shop_id of ['SHOP_000', 'SHOP_001', 'SHOP_002']) {
+    for (const [type, method, fee_option] of [
+      ['ฝากเงิน', 'เงินสด', '-'],
+      ['ถอนเงิน', 'โอนเงิน', 'ไม่หักค่าน้ำ'],
+    ]) {
+      const response = await handler(request({ action: 'wallet_request', shop_id, type, method, amount: '10.50' }));
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { ok: true, status: 'Pending' });
+      assert.deepEqual(insertions.pop(), {
+        shop_id, uid, member_id: 'M0001', display_name: 'M0001', type, method,
+        amount: 10.5, fee_option, slip_url: '', status: 'Pending',
+      });
+    }
+  }
+  const payload = { action: 'wallet_request', type: 'ฝากเงิน', method: 'โอนเงิน', amount: '10.50' };
+  const prefix = 'https://example.supabase.co/storage/v1/object/public/slips/slips/';
+  const wrongShop = await handler(request({ ...payload, slip_url: prefix + 'SHOP_002_' + uid + '_1794469694900.png' }));
+  assert.equal((await wrongShop.json()).code, 'WALLET_SLIP_INVALID');
+  const slip_url = prefix + 'SHOP_001_' + uid + '_1794469694900.png';
+  const valid = await handler(request({ ...payload, slip_url }));
+  assert.equal(valid.status, 200);
+  assert.equal(insertions.pop().slip_url, slip_url);
+});

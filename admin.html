@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=player-entry-1"></script>
-  <script src="admin-api-client.js?v=5"></script>
+  <script src="admin-api-client.js?v=wallet-queue-1"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -95,7 +95,7 @@
         .text-right { text-align: right !important; }
         .grand-total { font-weight: bold; background-color: #eee !important; }
     }
-    #walletDepositDialog {
+    #walletDecisionDialog {
       box-sizing: border-box;
       width: min(380px, calc(100% - 32px));
       max-height: calc(100% - 32px);
@@ -108,8 +108,8 @@
       text-align: center;
       box-shadow: 0 18px 48px #0008;
     }
-    #walletDepositDialog::backdrop { background: #080b13b3; }
-    #walletDepositDialog .wallet-confirm-icon {
+    #walletDecisionDialog::backdrop { background: #080b13b3; }
+    #walletDecisionDialog .wallet-confirm-icon {
       display: grid;
       place-items: center;
       width: 80px;
@@ -118,21 +118,21 @@
       border-radius: 50%;
       background: radial-gradient(circle at top, #17453c, #15302755 75%, transparent);
     }
-    #walletDepositDialog .wallet-confirm-icon i { grid-area: 1 / 1; }
-    #walletDepositDialog .fa-coins {
+    #walletDecisionDialog .wallet-confirm-icon i { grid-area: 1 / 1; }
+    #walletDecisionDialog .fa-coins {
       transform: translate(8px, -15px);
       color: #ffc54d;
       font-size: 25px;
     }
-    #walletDepositDialog .fa-wallet {
+    #walletDecisionDialog .fa-wallet {
       transform: translateY(9px);
       color: #99a9c1;
       font-size: 43px;
       text-shadow: 0 3px 4px #0e1421;
     }
-    #walletDepositTitle { margin: 0; font-size: 1.45rem; }
-    #walletDepositMember { margin: 4px 0 14px; color: #aab6ca; overflow-wrap: anywhere; }
-    #walletDepositAmount {
+    #walletDecisionTitle { margin: 0; font-size: 1.45rem; }
+    #walletDecisionMember { margin: 4px 0 14px; color: #aab6ca; overflow-wrap: anywhere; }
+    #walletDecisionAmount {
       margin: 0 auto 18px;
       padding: 6px 10px;
       border: 1px solid #296555;
@@ -143,12 +143,12 @@
       font-weight: 800;
       overflow-wrap: anywhere;
     }
-    #walletDepositDialog .wallet-confirm-actions {
+    #walletDecisionDialog .wallet-confirm-actions {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
     }
-    #walletDepositDialog button {
+    #walletDecisionDialog button {
       min-height: 46px;
       padding: 8px 6px;
       border: 0;
@@ -159,8 +159,8 @@
       font-weight: 700;
       cursor: pointer;
     }
-    #walletDepositDialog button[value="approve"] { background: linear-gradient(#008c51, #007a45); }
-    #walletDepositDialog button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+    #walletDecisionDialog button[value="approve"] { background: linear-gradient(#008c51, #007a45); }
+    #walletDecisionDialog button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   </style>
 </head>
 <body>
@@ -296,7 +296,6 @@
           <div class="switch-btn" id="creditModeTable" onclick="setCreditMode('table')">ลูกค้าลงโต๊ะ</div>
         </div>
         
-        <input type="hidden" id="txtPendingRequestId" value="">
 
         <div class="form-group">
           <label id="targetLabel">รหัสสมาชิก</label>
@@ -530,16 +529,17 @@
       </div>
   </div>
 
-  <dialog id="walletDepositDialog" aria-labelledby="walletDepositTitle"
-    aria-describedby="walletDepositMember walletDepositAmount">
+  <dialog id="walletDecisionDialog" aria-labelledby="walletDecisionTitle"
+    aria-describedby="walletDecisionMember walletDecisionAmount walletDecisionNote">
     <form method="dialog">
       <div class="wallet-confirm-icon" aria-hidden="true">
         <i class="fa-solid fa-coins"></i>
         <i class="fa-solid fa-wallet"></i>
       </div>
-      <h2 id="walletDepositTitle">ยืนยันเติมเครดิต</h2>
-      <p id="walletDepositMember"></p>
-      <p id="walletDepositAmount"></p>
+      <h2 id="walletDecisionTitle">ยืนยันเติมเครดิต</h2>
+      <p id="walletDecisionMember"></p>
+      <p id="walletDecisionAmount"></p>
+      <p id="walletDecisionNote"></p>
       <div class="wallet-confirm-actions">
         <button type="submit" value="cancel" autofocus>ยกเลิก</button>
         <button type="submit" value="approve">ยืนยันเติมเงิน</button>
@@ -703,6 +703,10 @@
         ADMIN_API_HTTP_404: 'ยังไม่ได้ติดตั้ง Edge Function ชื่อ admin-api',
         ADMIN_API_HTTP_401: 'ตรวจการตั้งค่า Verify JWT ของ admin-api ให้เป็น OFF',
         SHOP_NOT_AVAILABLE: 'ไม่พบร้านที่เปิดใช้งานสำหรับรหัสร้านนี้',
+        REQUEST_NOT_PENDING: 'รายการนี้ออกจากคิวแล้ว',
+        WALLET_INSUFFICIENT_BALANCE: 'ยอดเงินใน Wallet ไม่พอสำหรับคำขอถอนนี้',
+        WALLET_REQUEST_UNAVAILABLE: 'ทำรายการ Wallet ไม่สำเร็จ กรุณาตรวจคิวก่อนลองอีกครั้ง',
+        PLAYER_ACCESS_REQUIRED: 'บัญชีสมาชิกของรายการนี้ยังใช้งานไม่ได้',
         ADMIN_DATABASE_ERROR: 'อ่านหรือบันทึกข้อมูลไม่สำเร็จ กรุณาตรวจ Logs ของ admin-api'
       };
       const box = document.getElementById('adminApiError');
@@ -1035,54 +1039,52 @@
                 <div style="font-size: 0.85rem; color: var(--text-muted);"><div>ช่องทาง: ${r.method}</div>${r.type === 'ถอนเงิน' ? '<div>เงื่อนไข: ' + (r.fee_option === 'ไม่หักค่าน้ำ' ? 'ไม่หักค่าน้ำ' : 'หักค่าน้ำ') + '</div>' : ''}<div>เวลา: ${new Date(r.created_at).toLocaleTimeString('th-TH')}</div></div>
                 ${slipBtn}
                 <div style="display: flex; gap: 10px; margin-top: 10px;">
-                    <button class="btn btn-red" style="padding: 8px;" onclick="rejectPendingRequest(${r.id}, '${r.uid}', '${r.type}', ${r.amount})">ปฏิเสธ</button>
+                    <button class="btn btn-red" style="padding: 8px;" data-reject-wallet>ปฏิเสธ</button>
                     <button class="btn btn-blue" style="padding: 8px;" data-manage-wallet>จัดการรายการ</button>
                 </div>
              `;
              const manage = card.querySelector('[data-manage-wallet]');
-             manage.addEventListener('click', () => {
-               if (r.type === 'ฝากเงิน') approveQueuedWalletDeposit(r, manage);
-               else handlePendingRequest(r.id, r.member_id, r.amount, r.type);
-             });
+             const reject = card.querySelector('[data-reject-wallet]');
+             manage.textContent = r.type === 'ฝากเงิน' ? 'เติมเงิน' : r.type;
+             manage.addEventListener('click', () => approveQueuedWalletRequest(r, manage, reject));
+             reject.addEventListener('click', () => rejectPendingRequest(r.id, r.uid, r.type, r.amount));
              listDiv.appendChild(card);
          });
        } catch (e) { console.error("Exception in loadPendingRequests:", e); }
     }
 
-    async function approveQueuedWalletDeposit(request, button) {
-      if (button.disabled) return;
-      const amount = Number(request.amount).toLocaleString('th-TH');
-      const dialog = document.getElementById('walletDepositDialog');
-      if (dialog.open) return;
-      document.getElementById('walletDepositMember').textContent = 'สมาชิก ' + formatMemberCode(currentShopId, request.member_id) + ' · ' + request.display_name;
-      document.getElementById('walletDepositAmount').textContent = '฿' + amount;
+    async function approveQueuedWalletRequest(request, button, rejectButton) {
+      const dialog = document.getElementById('walletDecisionDialog');
+      if (button.disabled || dialog.open || request.shop_id !== currentShopId) return;
+
+      const deposit = request.type === 'ฝากเงิน';
+      const action = deposit ? 'เติมเงิน' : request.type;
+      const note = request.type === 'ถอนค่าคอม' ? 'กดยืนยันหลังจากโอนค่าคอมให้สมาชิกแล้ว'
+        : request.type === 'ถอนเงิน' ? 'ระบบจะหักยอด Wallet ตามจำนวนที่ยืนยัน' : '';
+      document.getElementById('walletDecisionTitle').textContent = 'ยืนยัน' + action;
+      document.getElementById('walletDecisionMember').textContent = 'สมาชิก ' + formatMemberCode(currentShopId, request.member_id) + ' · ' + request.display_name;
+      document.getElementById('walletDecisionAmount').textContent = '฿' + Number(request.amount).toLocaleString('th-TH', {
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+      });
+      const noteElement = document.getElementById('walletDecisionNote');
+      noteElement.textContent = note;
+      noteElement.hidden = !note;
+      dialog.querySelector('[value="approve"]').textContent = 'ยืนยัน' + action;
       dialog.returnValue = '';
-      button.disabled = true;
+      button.disabled = rejectButton.disabled = true;
       try {
-        const decision = new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true }));
         dialog.showModal();
-        if (await decision !== 'approve') return;
-        await _supabase.approveWalletDeposit(request.id);
+        const decision = await new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true }));
+        if (decision !== 'approve' || request.shop_id !== currentShopId) return;
+        if (deposit) await _supabase.approveWalletDeposit(request.id);
+        else await _supabase.approveWalletWithdrawal(request.id);
         await loadPendingRequests();
       } catch (error) {
         if (error.message === 'REQUEST_NOT_PENDING') await loadPendingRequests();
         showAdminApiError(error.message);
       } finally {
-        button.disabled = false;
+        button.disabled = rejectButton.disabled = false;
       }
-    }
-
-    function handlePendingRequest(reqId, targetMemberId, amount, type) {
-        document.getElementById('txtPendingRequestId').value = reqId; 
-        switchAdminTab('control'); 
-        document.getElementById('creditModePrivate').click(); 
-        document.getElementById('txtTargetId').value = formatMemberCode(currentShopId, targetMemberId);
-        document.getElementById('txtAmount').value = amount;
-        document.getElementById('cardCreditManage').scrollIntoView({ behavior: 'smooth' });
-        
-        if (type === 'ถอนค่าคอม') {
-            alert(`รายการนี้เป็น "ถอนค่าคอมมิชชั่น" \nแอดมินต้องทำการโอนเงินสดให้ลูกค้าด้วยตัวเอง แล้วค่อยกลับมากดลบ/อนุมัติรายการในคิวครับ`);
-        }
     }
 
     async function rejectPendingRequest(id, uid, type, amount) {
@@ -1571,17 +1573,14 @@
         document.getElementById('targetLabel').innerText = m==='table'?"หมายเลขโต๊ะ":"รหัสสมาชิก"; 
         document.getElementById('txtTargetId').placeholder = m==='table'?"ระบุเบอร์โต๊ะ เช่น 4":"ระบุรหัสสมาชิก";
         
-        if(!document.getElementById('txtPendingRequestId').value) {
-           document.getElementById('txtTargetId').value = ""; 
-           document.getElementById('txtAmount').value = "";
-        }
+        document.getElementById('txtTargetId').value = "";
+        document.getElementById('txtAmount').value = "";
     }
     
     async function processCredit(type) {
       let tId = document.getElementById('txtTargetId').value.trim(); 
       let amountStr = document.getElementById('txtAmount').value;
       let amount = parseFloat(amountStr);
-      let pendingReqId = document.getElementById('txtPendingRequestId').value;
       
       if(!tId || !amountStr || isNaN(amount) || amount <= 0) return alert("กรุณากรอกข้อมูลให้ครบถ้วน"); 
       if (creditMode !== 'table') {
@@ -1631,10 +1630,6 @@
           }
           await _supabase.from('transactions').insert([{ shop_id: currentShopId, target_id: tId, type: type, amount: amount, admin_name: currentAdminName, target_type: 'user' }]);
           
-          if(pendingReqId) {
-             await _supabase.from('topup_requests').update({ status: 'Approved', admin_name: currentAdminName }).eq('shop_id', currentShopId).eq('id', pendingReqId);
-             document.getElementById('txtPendingRequestId').value = ""; 
-          }
           alert(`สำเร็จ! อัปเดตยอดเรียบร้อยแล้ว`);
         }
         

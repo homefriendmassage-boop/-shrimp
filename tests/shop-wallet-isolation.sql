@@ -8,6 +8,7 @@ declare
   owner_uid text := 'U' || replace(gen_random_uuid()::text, '-', '');
   member_uid text := 'U' || replace(gen_random_uuid()::text, '-', '');
   deposit_id text;
+  withdrawal_id text;
   result jsonb;
   balance_a numeric;
   balance_b numeric;
@@ -48,6 +49,35 @@ begin
       where shop_id = shop_a and target_id = 'M0000' and type = 'deposit' and amount = 100) <> 1
       or exists (select 1 from public.transactions where shop_id = shop_b and type = 'deposit') then
     raise exception 'Deposit ledger was not isolated';
+  end if;
+
+  insert into public.topup_requests (shop_id, uid, member_id, type, method, amount, status)
+    values (shop_a, owner_uid, 'M0000', 'ถอนเงิน', 'โอนเงิน', 30, 'Pending')
+    returning id::text into withdrawal_id;
+
+  if (public.approve_wallet_withdrawal(shop_b, withdrawal_id, owner_uid)->>'code') is distinct from 'REQUEST_NOT_PENDING' then
+    raise exception 'Shop B could access the withdrawal from Shop A';
+  end if;
+  if (public.approve_wallet_withdrawal(shop_a, withdrawal_id, owner_uid)->>'code') is distinct from 'APPROVED' then
+    raise exception 'Shop A withdrawal failed';
+  end if;
+  if (public.approve_wallet_withdrawal(shop_a, withdrawal_id, owner_uid)->>'code') is distinct from 'REQUEST_NOT_PENDING' then
+    raise exception 'Duplicate withdrawal was accepted';
+  end if;
+  select credit_balance into balance_a from public.users where shop_id = shop_a and uid = owner_uid;
+  select credit_balance into balance_b from public.users where shop_id = shop_b and uid = owner_uid;
+  if balance_a is distinct from 80 or balance_b is distinct from 20
+      or (select count(*) from public.transactions
+          where shop_id = shop_a and target_id = 'M0000' and type = 'withdraw' and amount = 30) <> 1 then
+    raise exception 'Withdrawal ledger or balance is incorrect';
+  end if;
+
+  insert into public.topup_requests (shop_id, uid, member_id, type, method, amount, status)
+    values (shop_a, owner_uid, 'M0000', 'ถอนเงิน', 'โอนเงิน', 81, 'Pending')
+    returning id::text into withdrawal_id;
+  if (public.approve_wallet_withdrawal(shop_a, withdrawal_id, owner_uid)->>'code') is distinct from 'WALLET_INSUFFICIENT_BALANCE'
+      or (select status from public.topup_requests where id::text = withdrawal_id) is distinct from 'Pending' then
+    raise exception 'Overdrawn withdrawal changed the request status';
   end if;
 
   insert into public.users (shop_id, uid, member_id, role, status)

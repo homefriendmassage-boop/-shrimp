@@ -255,7 +255,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'round_finalize_balanced', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action)) fail('INVALID_ACTION');
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
@@ -528,9 +528,11 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             fail('WALLET_REQUEST_INVALID');
           }
           const transfer = type === 'ฝากเงิน' && method === 'โอนเงิน';
-          const prefix = new URL('/storage/v1/object/public/slips/slips/', url).href + shopId + '_' + claims.sub + '_';
-          if (transfer && (typeof slip !== 'string' || !slip.startsWith(prefix) ||
-              !/^\d{13}\.[a-z0-9]{1,12}$/i.test(slip.slice(prefix.length)))) fail('WALLET_SLIP_INVALID');
+          if (transfer) {
+            const prefix = new URL('/storage/v1/object/public/slips/slips/', env('SUPABASE_URL')).href + shopId + '_' + claims.sub + '_';
+            if (typeof slip !== 'string' || !slip.startsWith(prefix) ||
+                !/^\d{13}\.[a-z0-9]{1,12}$/i.test(slip.slice(prefix.length))) fail('WALLET_SLIP_INVALID');
+          }
           let feeOption = '-';
           if (type === 'ถอนเงิน') {
             const settings = await db.from('system_settings').select('withdrawal_fee_mode')
@@ -596,10 +598,11 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (!['ENDED', 'RECOVERED'].includes(result.data)) fail(result.data || 'ROUND_FINALIZE_UNAVAILABLE', 409);
         return reply({ ok: true, recovered: result.data === 'RECOVERED' });
       }
-      if (input.action === 'wallet_approve_deposit') {
+      if (['wallet_approve_deposit', 'wallet_approve_withdrawal'].includes(input.action)) {
         const id = String(input.request_id ?? '');
         if (!/^(?:\d{1,20}|[a-f0-9-]{36})$/i.test(id)) fail('WALLET_REQUEST_INVALID');
-        const approval = await db.rpc('approve_wallet_deposit', {
+        const rpc = input.action === 'wallet_approve_deposit' ? 'approve_wallet_deposit' : 'approve_wallet_withdrawal';
+        const approval = await db.rpc(rpc, {
           p_shop: shopId, p_request: id, p_staff: claims.sub,
         });
         if (approval.error) fail('WALLET_REQUEST_UNAVAILABLE', 500);
