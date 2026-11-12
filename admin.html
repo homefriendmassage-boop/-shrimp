@@ -244,6 +244,7 @@
     </div>
 
     <a id="shopPortalLink" href="shop-create.html" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">หน้าจัดการร้านค้า</a>
+    <a id="saasAdminLink" href="admin.html?saas=1" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">แอดมิน SaaS · เปิด–ปิดร้าน</a>
     <a id="switchToPlayer" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">สลับไปหน้า Player</a>
     <div id="adminApiError" class="card hidden no-print" role="alert" style="color:var(--yellow-main)"></div>
 
@@ -565,7 +566,7 @@
       if (state) {
         const restored = new URL(state, location.origin);
         if (restored.origin === location.origin) {
-          for (const key of ['shop', 'tab', 'shop_invite', 'shop_portal']) if (!urlParams.has(key) && restored.searchParams.has(key)) {
+          for (const key of ['shop', 'tab', 'shop_invite', 'shop_portal', 'saas']) if (!urlParams.has(key) && restored.searchParams.has(key)) {
             urlParams.set(key, restored.searchParams.get(key));
           }
         }
@@ -588,6 +589,11 @@
           const invite = new URLSearchParams(location.search).get('shop_invite') || urlParams.get('shop_invite');
           if (invite) {
             location.replace('shop-create.html?invite=' + encodeURIComponent(invite));
+            return;
+          }
+          if (new URLSearchParams(location.search).get('saas') === '1' || urlParams.get('saas') === '1') {
+            const { mountSaasAdmin } = await import('./saas-admin.js?v=1');
+            await mountSaasAdmin();
             return;
           }
           if (new URLSearchParams(location.search).get('shop_portal') === '1' || urlParams.get('shop_portal') === '1') {
@@ -626,6 +632,8 @@
 
     async function checkAdminAccess(uid) {
       const shopPortalLink = document.getElementById('shopPortalLink');
+      const saasAdminLink = document.getElementById('saasAdminLink');
+      saasAdminLink.classList.add('hidden');
       const portalHref = 'shop-create.html?shop=' + encodeURIComponent(currentShopId);
       shopPortalLink.href = portalHref;
       shopPortalLink.classList.add('hidden');
@@ -644,7 +652,10 @@
         } else {
           document.getElementById('accessDeniedView').classList.add('hidden');
           document.getElementById('adminTabs').style.display = 'flex';
-          if (access.can_create_shop === true) shopPortalLink.classList.remove('hidden');
+          if (access.can_create_shop === true) {
+            shopPortalLink.classList.remove('hidden');
+            saasAdminLink.classList.remove('hidden');
+          }
           
           let roleBadge = "พนักงาน (Operator)";
           if (['Superadmin', 'Admin'].includes(currentUserRole)) {
@@ -674,6 +685,7 @@
         }
       } catch (error) {
         shopPortalLink.classList.add('hidden');
+        saasAdminLink.classList.add('hidden');
         currentUserRole = 'Customer';
         document.getElementById('adminTabs').style.display = 'none';
         for (const id of ['adminContentView', 'reportContentView', 'pendingContentView']) document.getElementById(id).classList.add('hidden');

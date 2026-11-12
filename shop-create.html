@@ -40,7 +40,8 @@
   <main>
     <h1 id="title">หน้าจัดการร้านค้า</h1>
     <section id="platform-panel" hidden>
-      <h2>ควบคุมร้านค้าในแพลตฟอร์ม</h2>
+      <h2>ตั้งค่าร้านค้าในแพลตฟอร์ม</h2>
+      <a href="admin.html?saas=1">เปิดหน้าแอดมิน SaaS เพื่อเปิด–ปิดร้าน</a>
       <div id="platform-shops"></div>
     </section>
     <section id="managed-panel" hidden>
@@ -205,7 +206,6 @@
       button.textContent = label;
       button.style.marginTop = '8px';
       button.addEventListener('click', async () => {
-        if (setting === 'service_enabled' && !confirm(label + ' สำหรับ ' + shop.shop_name + ' ใช่หรือไม่')) return;
         button.disabled = true;
         try {
           await request('platform_shop_control', { target_shop_id: shop.shop_id, setting, enabled });
@@ -357,7 +357,6 @@
           settings.style.marginTop = '8px';
           settings.addEventListener('click', () => openOaSettings(shop));
           row.append(settings);
-          addControl(row, shop, 'service_enabled', !active, active ? 'ปิดบริการร้าน' : 'เปิดบริการร้าน');
           const notice = document.createElement('button');
           notice.type = 'button';
           notice.className = 'secondary';
