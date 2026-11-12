@@ -286,27 +286,35 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (input.action === 'platform_shop_portal') {
         const [membership, canInvite] = await Promise.all([
           db.from('users')
-            .select('shop:shops!users_shop_id_fkey(shop_id,shop_name,status,line_oa_token,line_oa_bot_uid)')
+            .select('member_id,shop:shops!users_shop_id_fkey(shop_id,shop_name,status,line_oa_token,line_oa_bot_uid)')
             .eq('uid', claims.sub).eq('status', 'Active').in('role', ['Admin', 'Superadmin'])
             .order('shop_id'),
           canCreateShop(),
         ]);
         if (membership.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
-        const shops = (membership.data ?? []).flatMap(({ shop }) => shop ? [{
+        const shops = (membership.data ?? []).flatMap(({ shop, member_id }) => shop ? [{
           shop_id: shop.shop_id, shop_name: shop.shop_name, status: shop.status,
           oa_configured: Boolean(shop.line_oa_bot_uid || shop.line_oa_token?.trim()),
+          can_manage_billing: member_id === 'M0000' && shop.shop_id !== 'SHOP_000',
         }] : []);
         let planQuery = db.from('platform_shop_plan_requests')
           .select('shop_id,plan_code,trial_started_at,trial_ends_at');
         if (!canInvite && shops.length) planQuery = planQuery.in('shop_id', shops.map(shop => shop.shop_id));
-        const planRequests = (canInvite || shops.length) ? await planQuery : { data: [] };
-        if (planRequests.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+        let billingQuery = db.from('platform_billing_state').select('shop_id,plan_code,paid_until');
+        if (!canInvite && shops.length) billingQuery = billingQuery.in('shop_id', shops.map(shop => shop.shop_id));
+        const [planRequests, paidPlans] = (canInvite || shops.length)
+          ? await Promise.all([planQuery, billingQuery]) : [{ data: [] }, { data: [] }];
+        if (planRequests.error || paidPlans.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
         const plansByShop = new Map((planRequests.data ?? []).map(row => [row.shop_id, row]));
+        const paidByShop = new Map((paidPlans.data ?? []).map(row => [row.shop_id, row]));
         const now = Date.now();
         const planDetails = shopId => {
           const plan = plansByShop.get(shopId);
           const trialEnd = plan?.trial_ends_at ?? null;
+          const paid = paidByShop.get(shopId);
           return {
+            current_plan: paid?.plan_code ?? null,
+            paid_until: paid?.paid_until ?? null,
             requested_plan: plan?.plan_code ?? null,
             trial_ends_at: trialEnd,
             trial_state: plan?.plan_code !== 'free' ? null :

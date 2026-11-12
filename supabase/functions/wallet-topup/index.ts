@@ -89,7 +89,7 @@ Deno.serve(async (req) => {
     form.set("image", image);
     form.set("matchAccount", "true");
     form.set("matchAmount", amount);
-    form.set("checkDuplicate", "true");
+    form.set("checkDuplicate", "false");
     const response = await fetch("https://api.thunder.in.th/v2/verify/bank", {
       method: "POST", headers: { Authorization: "Bearer " + thunder }, body: form,
       signal: AbortSignal.timeout(15000),
@@ -103,7 +103,7 @@ Deno.serve(async (req) => {
     const bank = slip?.matchedAccount?.bank?.code;
     const number = slip?.matchedAccount?.bankNumber;
     if (slip?.isDuplicate === true) return reply("DUPLICATE_SLIP", 409);
-    if (slip?.isDuplicate !== false || typeof ref !== "string" || !ref.trim() || ref.length > 160 ||
+    if (typeof ref !== "string" || !ref.trim() || ref.length > 160 ||
         !Number.isFinite(time) || time > Date.now() + 60000) return reply("SLIP_NOT_VERIFIED", 422);
     if (slip.isAmountMatched !== true || slip.amountInSlip !== Number(amount)) return reply("AMOUNT_MISMATCH", 422);
     if (typeof bank !== "string" || typeof number !== "string") return reply("RECEIVER_MISMATCH", 422);
@@ -124,6 +124,10 @@ Deno.serve(async (req) => {
       p_id: id, p_shop: shop, p_uid: uid, p_ref: ref.trim(), p_hash: hash,
       p_amount: amount, p_bank: bank, p_number: normalizedNumber, p_path: path, p_slip_at: new Date(time).toISOString(),
     });
+    if (credit.error?.code === "P7201") {
+      await bucket.remove([path]);
+      return reply("SLIP_QUOTA_EXHAUSTED", 409);
+    }
     if (credit.error) return reply("WALLET_UNAVAILABLE", 503);
     if (credit.data === "CREDITED") {
       try {
