@@ -5,6 +5,16 @@ const APP_CONFIG = {
   LIFF_ID_ADMIN: "2012454809-41EMnP1K" // (ถ้ามี)
 };
 
+function playerEntryUrl(shopId, context = {}) {
+  const url = new URL('https://liff.line.me/' + APP_CONFIG.LIFF_ID_PLAYER);
+  url.searchParams.set('shop', shopId);
+  for (const key of ['table', 'd', 'ref']) {
+    const value = context[key];
+    if (value != null && value !== '') url.searchParams.set(key, value);
+  }
+  return url.href;
+}
+
 function formatMemberCode(shopId, memberId) {
   const shop = /^SHOP_([0-9]{3,})$/.exec(String(shopId ?? ''));
   const member = /^M([0-9]{4,})$/.exec(String(memberId ?? ''));

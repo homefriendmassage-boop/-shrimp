@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>ระบบผู้แนะนำ (Promoter)</title>
-  <script src="config.js?v=member-code-1"></script>
+  <script src="config.js?v=player-entry-1"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -83,8 +83,7 @@
         document.getElementById('commBalance').innerText = `฿${(user.commission_balance || 0).toLocaleString()}`;
 
         // สร้าง Link และ QR Code
-        let cleanLiff = APP_CONFIG.LIFF_ID_PLAYER.split('?')[0];
-        let refLink = `https://liff.line.me/${cleanLiff}?shop=${encodeURIComponent(currentShopId)}&ref=${encodeURIComponent(formatMemberCode(currentShopId, user.member_id))}`;
+        const refLink = playerEntryUrl(currentShopId, { ref: formatMemberCode(currentShopId, user.member_id) });
         document.getElementById('refLinkInput').value = refLink;
         document.getElementById('qrCodeImg').src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(refLink)}`;
         

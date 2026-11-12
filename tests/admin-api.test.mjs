@@ -9,6 +9,23 @@ const source = fs.readFileSync(new URL('../supabase/functions/admin-api/index.ts
 const { validateQuery, makeHandler } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
 const base = { table: 'users', columns: 'uid,role', filters: [], orders: [] };
 
+test('player links use a common LIFF and preserve only the intended shop context', () => {
+  const config = fs.readFileSync(new URL('../config.js', import.meta.url), 'utf8');
+  const context = vm.createContext({ URL });
+  vm.runInContext(config, context);
+  const link = context.playerEntryUrl('SHOP_001', {
+    table: 'A & 1', d: '2026-11-12', ref: 'M001-0003', shop: 'SHOP_002', shop_login: '1',
+  });
+  const url = new URL(link);
+  assert.equal(url.origin + url.pathname, 'https://liff.line.me/2012454809-UFGeUGbW');
+  assert.deepEqual(Object.fromEntries(url.searchParams), {
+    shop: 'SHOP_001', table: 'A & 1', d: '2026-11-12', ref: 'M001-0003',
+  });
+  for (const shop of ['SHOP_000', 'SHOP_002', 'SHOP_100']) {
+    assert.equal(context.playerEntryUrl(shop), url.origin + url.pathname + '?shop=' + shop);
+  }
+});
+
 test('only enumerated tables and plain columns are accessible', () => {
   for (const table of ['shops', 'membership_admins', 'auth.users', '__proto__']) assert.throws(() => validateQuery({ ...base, table }, 'Admin', 'SHOP_001'));
   assert.throws(() => validateQuery({ ...base, columns: '*,shops(*)' }, 'Admin', 'SHOP_001'));

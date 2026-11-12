@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Admin Panel - บ่อตกกุ้ง</title>
-  <script src="config.js?v=member-code-1"></script>
+  <script src="config.js?v=player-entry-1"></script>
   <script src="admin-api-client.js?v=5"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -650,7 +650,7 @@
           if (['Superadmin', 'Admin'].includes(currentUserRole)) {
             roleBadge = "แอดมินบ่อ · " + formatMemberCode(currentShopId, 'M0000');
             const playerLink = document.getElementById('switchToPlayer');
-            playerLink.href = 'https://liff.line.me/' + APP_CONFIG.LIFF_ID_PLAYER + '?shop=' + encodeURIComponent(currentShopId);
+            playerLink.href = playerEntryUrl(currentShopId);
             playerLink.classList.remove('hidden');
             shopPortalLink.classList.remove('hidden');
           }
@@ -1672,8 +1672,8 @@
     
     function showQrCode(tNo) { 
         document.getElementById('qrTableNoDisplay').innerText = tNo; 
-        let cleanLiff = APP_CONFIG.LIFF_ID_PLAYER.split('?')[0]; 
-        let qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`https://liff.line.me/${cleanLiff}?shop=${currentShopId}&table=${tNo}&d=${new Date().toISOString().split('T')[0]}`)}`; 
+        const playerUrl = playerEntryUrl(currentShopId, { table: tNo, d: new Date().toISOString().split('T')[0] });
+        const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' + encodeURIComponent(playerUrl);
         document.getElementById('qrImage').src = qrUrl; 
         document.getElementById('qrModal').classList.remove('hidden'); 
     }

@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <title>หน้าจัดการร้านค้า · บ่อกุ้ง</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script src="./config.js"></script>
+  <script src="./config.js?v=player-entry-1"></script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #131620; color: #f8fafc; font: 16px/1.5 system-ui, sans-serif; }
@@ -329,7 +329,7 @@
           (shop.oa_configured ? 'ตั้งค่า LINE OA แล้ว' : 'รอเชื่อม LINE OA') + planSummary(shop),
           active ? [
             ['เข้า Admin ร้านนี้', liffLink(APP_CONFIG.LIFF_ID_ADMIN, params)],
-            ['เปิดหน้า Player', liffLink(APP_CONFIG.LIFF_ID_PLAYER, params)],
+            ['ลิงก์ลูกค้าของร้าน', playerEntryUrl(shop.shop_id)],
           ] : []);
       }
       byId('managed-panel').hidden = false;
