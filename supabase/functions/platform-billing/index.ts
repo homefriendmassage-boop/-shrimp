@@ -24,12 +24,12 @@ type Receiver = {
 };
 const receiverFields = "transfer_method,transfer_number,recipient_name,bank_name,verified_bank_code,verified_bank_number,enabled";
 const normalizeNumber = (value: unknown) => typeof value === "string" ? value.replace(/[ -]/g, "") : "";
-let cachedReceiver: { key: string; until: number; registered: Promise<boolean> } | undefined;
+let cachedReceiver: { key: string; until: number; registration: Promise<string> } | undefined;
 
-function isReceiverRegistered(receiver: Receiver, thunder: string) {
+function checkReceiverRegistration(receiver: Receiver, thunder: string) {
   const key = receiver.verified_bank_code + ":" + receiver.verified_bank_number;
-  if (cachedReceiver?.key === key && cachedReceiver.until > Date.now()) return cachedReceiver.registered;
-  const registered = (async () => {
+  if (cachedReceiver?.key === key && cachedReceiver.until > Date.now()) return cachedReceiver.registration;
+  const registration = (async () => {
     let page = 1;
     const limit = 100;
     while (true) {
@@ -40,39 +40,32 @@ function isReceiverRegistered(receiver: Receiver, thunder: string) {
       });
       const result = await response.json().catch(() => null);
       if (!response.ok || result?.success !== true || !Array.isArray(result.data?.items)) {
-        console.warn("platform billing receiver lookup rejected", response.status);
-        return false;
+        return response.status === 401 || response.status === 403 ? "THUNDER_ACCOUNT_ACCESS_REQUIRED" : "THUNDER_LOOKUP_UNAVAILABLE";
       }
       if (result.data.items.some((item: { bankCode: string; bankNumber: string; extraVerify: string | null }) =>
         item.bankCode === receiver.verified_bank_code && normalizeNumber(item.bankNumber) === receiver.verified_bank_number &&
-        item.extraVerify !== "NAME")) return true;
+        item.extraVerify !== "NAME")) return "REGISTERED";
       if (page * limit >= result.data.total || result.data.items.length < limit || page >= 10) {
-        console.warn("platform billing receiver not registered for number matching");
-        return false;
+        return "RECEIVER_NOT_LINKED";
       }
       page++;
     }
-  })().catch(() => {
-    console.warn("platform billing receiver lookup unavailable");
-    return false;
-  });
-  cachedReceiver = { key, until: Date.now() + 60_000, registered };
-  return registered;
+  })().catch(() => "THUNDER_LOOKUP_UNAVAILABLE");
+  cachedReceiver = { key, until: Date.now() + 60_000, registration };
+  return registration;
 }
 
 async function billingReceiver(db: ReturnType<typeof createClient>, thunder: string) {
   const result = await db.from("platform_billing_receiver").select(receiverFields).eq("id", true).maybeSingle();
   if (result.error) throw new Error("BILLING_UNAVAILABLE");
   const receiver = result.data as Receiver | null;
-  if (!receiver || !thunder) {
-    console.warn(receiver ? "platform billing Thunder key unavailable" : "platform billing receiver unconfigured");
-    return { receiver, registered: false };
-  }
+  if (!receiver || !thunder) return { receiver, registration: receiver ? "THUNDER_KEY_REQUIRED" : "RECEIVER_REQUIRED" };
   const conflict = await db.from("wallet_receiving_accounts").select("shop_id")
     .eq("bank_code", receiver.verified_bank_code).eq("bank_number", receiver.verified_bank_number)
     .eq("enabled", true).limit(1);
   if (conflict.error) throw new Error("BILLING_UNAVAILABLE");
-  return { receiver, registered: conflict.data.length === 0 && await isReceiverRegistered(receiver, thunder) };
+  const registration = conflict.data.length ? "RECEIVER_CONFLICT" : await checkReceiverRegistration(receiver, thunder);
+  return { receiver, registration };
 }
 
 Deno.serve(async req => {
@@ -86,8 +79,12 @@ Deno.serve(async req => {
   const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
   if (req.method === "GET" && new URL(req.url).searchParams.has("readiness")) {
     try {
-      const { receiver, registered } = await billingReceiver(db, thunder);
-      return respond({ registered, available: Boolean(receiver?.enabled && registered && channel) });
+      const { receiver, registration } = await billingReceiver(db, thunder);
+      return respond({
+        registered: registration === "REGISTERED",
+        available: Boolean(receiver?.enabled && registration === "REGISTERED" && channel),
+        status: registration,
+      });
     } catch {
       return fail("BILLING_UNAVAILABLE", 503);
     }
@@ -131,8 +128,8 @@ Deno.serve(async req => {
     if (owner.error) return fail("BILLING_UNAVAILABLE", 503);
     if (!owner.data) return fail("OWNER_REQUIRED", 403);
 
-    const { receiver, registered } = await billingReceiver(db, thunder);
-    const available = Boolean(receiver?.enabled && registered);
+    const { receiver, registration } = await billingReceiver(db, thunder);
+    const available = Boolean(receiver?.enabled && registration === "REGISTERED");
 
     if (input.action === "summary") {
       const [products, plan, state, orders] = await Promise.all([
