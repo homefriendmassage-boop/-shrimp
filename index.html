@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>แอปผู้เล่น - บ่อตกกุ้ง</title>
   <script src="config.js?v=player-entry-1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script src="payment-ui.js?v=1"></script>
   <script src="membership-notice-client.js?v=2"></script>
   <script src="oa-link-client.js?v=2"></script>
   <script src="shop-login-check.js?v=1"></script>
@@ -147,7 +149,7 @@
 
       <div style="margin-bottom: 15px;">
         <label style="display: block; color: var(--text-muted); font-size: 0.9rem; margin-bottom: 5px;">จำนวนเงิน</label>
-        <input type="number" id="txtTopupAmount" placeholder="ระบุจำนวนเงิน" style="width: 100%; box-sizing: border-box; background: #0f111a; border: 1px solid var(--card-border); color: white; padding: 12px; border-radius: 8px; font-family: 'Kanit'; font-size: 1.2rem; outline: none;">
+        <input type="number" id="txtTopupAmount" inputmode="decimal" min="0.01" step="0.01" oninput="renderDepositPayment(true)" placeholder="ระบุจำนวนเงิน" style="width: 100%; box-sizing: border-box; background: #0f111a; border: 1px solid var(--card-border); color: white; padding: 12px; border-radius: 8px; font-family: 'Kanit'; font-size: 1.2rem; outline: none;">
       </div>
 
       <div style="margin-bottom: 15px;" id="paymentMethodSection">
@@ -158,6 +160,16 @@
         </select>
       </div>
 
+      <div id="depositPayment" hidden style="margin-bottom: 16px;">
+        <p id="depositReceiverName"></p>
+        <div id="depositQr" role="img" aria-label="QR พร้อมเพย์ของร้าน" style="width:fit-content;padding:12px;margin:10px auto;background:#fff;border-radius:8px" hidden></div>
+        <label for="depositBankNumber">เลขบัญชีร้าน</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input id="depositBankNumber" readonly style="flex:1;min-width:0;font:inherit">
+          <button type="button" onclick="copyPaymentNumber(document.getElementById('depositBankNumber'))">คัดลอก</button>
+        </div>
+      </div>
+      <p id="depositPaymentStatus" role="status" style="color:var(--text-muted)" hidden></p>
       <div style="margin-bottom: 20px; display: block;" id="slipUploadSection">
         <label style="display: block; color: var(--text-muted); font-size: 0.9rem; margin-bottom: 5px;">แนบสลิปโอนเงิน (บังคับ)</label>
         <input type="file" id="fileSlip" accept="image/*" onchange="updateSlipPreview()" style="width: 100%; box-sizing: border-box; background: #0f111a; border: 1px solid var(--card-border); color: white; padding: 10px; border-radius: 8px; font-family: 'Kanit'; font-size: 0.9rem; outline: none;">
@@ -166,7 +178,12 @@
         <small id="slipPreviewStatus" role="status" style="color: var(--text-muted);"></small>
       </div>
 
-      <p id="withdrawOptionsSection" style="display:none;color:var(--text-muted);">เงื่อนไขการถอนเป็นไปตามที่ร้านตั้งไว้</p>
+      <div id="withdrawOptionsSection" style="display:none;color:var(--text-muted);margin-bottom:16px;">
+        <label for="withdrawBank">ธนาคารรับเงิน</label>
+        <select id="withdrawBank" style="display:block;width:100%;padding:10px;margin:4px 0 10px;font:inherit"><option value="">เลือกธนาคาร</option></select>
+        <label for="withdrawBankNumber">เลขบัญชีรับเงิน</label>
+        <input id="withdrawBankNumber" inputmode="numeric" autocomplete="off" maxlength="24" style="display:block;width:100%;padding:10px;margin-top:4px;font:inherit">
+      </div>
 
       <div style="display: flex; gap: 10px;">
         <button onclick="closeTopupModal()" style="flex: 1; background: transparent; border: 1px solid var(--text-muted); color: var(--text-muted); border-radius: 8px; padding: 12px; font-family: 'Kanit'; cursor: pointer;">ยกเลิก</button>
@@ -393,7 +410,7 @@
       try {
         const restored = new URL(state, location.origin);
         if (restored.origin !== location.origin) return params;
-        for (const key of ['shop', 'table', 'd', 'ref', 'shop_login_check', 'shop_login']) {
+        for (const key of ['shop', 'table', 'd', 'ref', 'shop_login_check', 'shop_login', 'withdraw_confirm']) {
           if (!params.has(key) && restored.searchParams.has(key)) params.set(key, restored.searchParams.get(key));
         }
       } catch { /* Explicit query values remain authoritative. */ }
@@ -491,6 +508,11 @@
         document.getElementById('player-main').hidden = false;
         void loadPlayerEntry();
         await authenticateUser();
+        if (currentUserStatus === 'Active') {
+          const confirmation = urlParams.get('withdraw_confirm');
+          if (confirmation) await confirmWithdrawalFromLine(confirmation);
+          else if (readDepositDraft()) openTopupModal();
+        }
         startCountdownTimer();
       } catch {
         entry.hidden = false;
@@ -947,9 +969,93 @@
     // =====================================
     // โซนจัดการระบบฝาก/ถอนเครดิต (ผ่าน Supabase ตรง)
     // =====================================
+    let depositReceiver = null;
+    let withdrawalRetry = null;
+    const depositDraftKey = () => 'shop-deposit:' + currentShopId + ':' + currentLineUserId;
+
+    function readDepositDraft() {
+      try {
+        const draft = JSON.parse(localStorage.getItem(depositDraftKey()) || 'null');
+        return draft && /^\d{1,9}(\.\d{1,2})?$/.test(draft.amount) && Number(draft.amount) > 0 ? draft : null;
+      } catch { return null; }
+    }
+
+    function saveDepositDraft(amount) {
+      try {
+        if (!amount) localStorage.removeItem(depositDraftKey());
+        else localStorage.setItem(depositDraftKey(), JSON.stringify({ amount, receiver: depositReceiver }));
+      } catch { /* Browser storage can be disabled. */ }
+    }
+
+    function renderDepositPayment(remember = false) {
+      const transfer = document.getElementById('selTransactionType').value === 'ฝากเงิน' &&
+        document.getElementById('selTopupMethod').value === 'โอนเงิน';
+      const amount = document.getElementById('txtTopupAmount').value;
+      const valid = /^\d{1,9}(\.\d{1,2})?$/.test(amount) && Number(amount) > 0;
+      const block = document.getElementById('depositPayment');
+      const feedback = document.getElementById('depositPaymentStatus');
+      block.hidden = !transfer || !depositReceiver || !valid;
+      feedback.hidden = !transfer || Boolean(depositReceiver);
+      if (remember && transfer) saveDepositDraft(valid ? amount : '');
+      if (block.hidden) return;
+      document.getElementById('depositBankNumber').value = depositReceiver.bank_number;
+      document.getElementById('depositReceiverName').textContent = paymentBankName(depositReceiver.bank_code) + ' · ' + depositReceiver.account_name;
+      showPromptPayQr(document.getElementById('depositQr'), depositReceiver.promptpay, amount);
+    }
+
+    async function loadDepositReceiver() {
+      const feedback = document.getElementById('depositPaymentStatus');
+      feedback.textContent = 'กำลังโหลดบัญชีรับเงินของร้าน…';
+      try {
+        const result = await shopPaymentRequest(currentShopId, 'receiver', { shop_login: useShopLogin });
+        depositReceiver ||= result.receiver;
+        feedback.textContent = 'ร้านยังไม่ได้ตั้งค่าบัญชีรับเงิน';
+        renderDepositPayment(true);
+      } catch {
+        feedback.textContent = 'โหลดบัญชีรับเงินของร้านไม่สำเร็จ';
+      }
+    }
+
+    async function confirmWithdrawalFromLine(confirmationId) {
+      try {
+        await shopPaymentRequest(currentShopId, 'withdraw_confirm', {
+          confirmation_id: confirmationId, shop_login: useShopLogin,
+        });
+        const url = new URL(location.href);
+        url.searchParams.delete('withdraw_confirm');
+        url.searchParams.delete('liff.state');
+        url.searchParams.set('shop', currentShopId);
+        history.replaceState(null, '', url);
+        alert('ยืนยันแล้ว คำขอเข้าคิวรอโอนเงินจากร้าน');
+        openTopupModal();
+      } catch (error) {
+        alert(walletPaymentError(error));
+      }
+    }
+
+    function walletPaymentError(error) {
+      return ({
+        LINE_OA_LINK_REQUIRED: 'กรุณาผูกบัญชี LINE OA ของร้านเพื่อรับข้อความยืนยันถอนเงิน',
+        LINE_CONFIRM_UNAVAILABLE: 'ส่งข้อความยืนยันไม่สำเร็จ กรุณาลองใหม่',
+        WITHDRAWAL_EXPIRED: 'ลิงก์ยืนยันหมดอายุ กรุณาส่งคำขอถอนใหม่',
+        WITHDRAWAL_INVALID: 'ข้อมูลบัญชีรับเงินหรือลิงก์ยืนยันไม่ถูกต้อง',
+        WALLET_INSUFFICIENT_BALANCE: 'ยอด Wallet ไม่พอสำหรับรายการถอน',
+      })[error.message] || error.message;
+    }
+
     function openTopupModal() {
       if (currentUserStatus !== 'Active') { alert("บัญชียังไม่เปิดใช้งาน"); return; }
-      document.getElementById('topupModal').classList.remove('hidden'); toggleOptions();
+      const draft = readDepositDraft();
+      if (draft) {
+        document.getElementById('selTransactionType').value = 'ฝากเงิน';
+        document.getElementById('selTopupMethod').value = 'โอนเงิน';
+        document.getElementById('txtTopupAmount').value = draft.amount;
+        depositReceiver = draft.receiver;
+      }
+      fillPaymentBanks(document.getElementById('withdrawBank'));
+      document.getElementById('topupModal').classList.remove('hidden');
+      toggleOptions();
+      void loadDepositReceiver();
       loadWalletRequests();
     }
     
@@ -1004,7 +1110,12 @@
     }
 
     function closeTopupModal() { 
-      document.getElementById('topupModal').classList.add('hidden'); 
+      document.getElementById('topupModal').classList.add('hidden');
+      saveDepositDraft('');
+      depositReceiver = null;
+      withdrawalRetry = null;
+      document.getElementById('withdrawBankNumber').value = '';
+      document.getElementById('withdrawBank').value = '';
       document.getElementById('txtTopupAmount').value = ''; document.getElementById('fileSlip').value = '';
       updateSlipPreview();
       document.getElementById('btnSubmitTopup').disabled = false; document.getElementById('btnSubmitTopup').innerHTML = 'ส่งแจ้งแอดมิน';
@@ -1016,6 +1127,8 @@
       else { document.getElementById('withdrawOptionsSection').style.display = 'none'; document.getElementById('paymentMethodSection').style.display = 'block'; }
       if (type === 'ฝากเงิน' && method === 'โอนเงิน') document.getElementById('slipUploadSection').style.display = 'block';
       else document.getElementById('slipUploadSection').style.display = 'none';
+      document.getElementById('btnSubmitTopup').textContent = type === 'ถอนเงิน' ? 'ส่งไปยืนยันใน LINE' : 'ส่งแจ้งแอดมิน';
+      renderDepositPayment(true);
     }
 
     // ฟังก์ชันอัปโหลดรูปสลิปขึ้น Supabase Storage (รองรับ Multitenant)
@@ -1097,9 +1210,23 @@
       btnSubmit.textContent = slipFile ? 'กำลังอัปโหลดสลิป…' : 'กำลังส่งข้อมูล…';
 
       try {
+         if (type === 'ถอนเงิน') {
+           const bank_code = document.getElementById('withdrawBank').value;
+           const bank_number = document.getElementById('withdrawBankNumber').value.replace(/[ -]/g, '');
+           if (!bank_code || !/^\d{6,20}$/.test(bank_number)) throw new Error('WITHDRAWAL_INVALID');
+           const key = [amount, bank_code, bank_number].join(':');
+           if (withdrawalRetry?.key !== key) withdrawalRetry = { key, id: crypto.randomUUID() };
+           await shopPaymentRequest(currentShopId, 'withdraw_start', {
+             amount, bank_code, bank_number, delivery_key: withdrawalRetry.id, shop_login: useShopLogin,
+           });
+           alert('ส่งข้อความแล้ว กรุณากดยืนยันในแชต LINE ของร้านเพื่อเข้าคิวถอนเงิน');
+           closeTopupModal();
+           return;
+         }
          if (slipFile) {
            btnSubmit.textContent = 'กำลังตรวจสลิป…';
            if (await creditWalletSlip(slipFile, amount)) return;
+           if (depositReceiver) throw new Error('ระบบตรวจสลิปยังไม่พร้อม กรุณาเก็บสลิปไว้แล้วลองอีกครั้ง');
            btnSubmit.textContent = 'กำลังอัปโหลดสลิป…';
          }
          const slipUrl = slipFile ? await uploadSlipToSupabase(slipFile) : '';
@@ -1110,9 +1237,9 @@
          closeTopupModal();
       } catch (error) { 
           console.error("Supabase Insert Error:", error);
-          alert('เกิดข้อผิดพลาดในการบันทึกข้อมูล: ' + error.message); 
+          alert('ทำรายการไม่สำเร็จ: ' + walletPaymentError(error));
           btnSubmit.disabled = false; 
-          btnSubmit.innerHTML = 'ส่งแจ้งแอดมิน'; 
+          btnSubmit.textContent = type === 'ถอนเงิน' ? 'ส่งไปยืนยันใน LINE' : 'ส่งแจ้งแอดมิน';
       }
     }
 

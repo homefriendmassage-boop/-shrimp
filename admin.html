@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=player-entry-1"></script>
+  <script src="payment-ui.js?v=1"></script>
   <script src="admin-api-client.js?v=wallet-queue-1"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -383,6 +384,17 @@
         </div>
       </div>
       
+      <div class="card hidden" id="shopPaymentSettings">
+        <div class="card-title">บัญชีรับเงินของร้าน</div>
+        <form id="shopPaymentForm">
+          <div class="form-group"><label for="shopPaymentBank">ธนาคาร</label><select id="shopPaymentBank" class="form-control" required><option value="">เลือกธนาคาร</option></select></div>
+          <div class="form-group"><label for="shopPaymentNumber">เลขบัญชี</label><input id="shopPaymentNumber" class="form-control" inputmode="numeric" maxlength="24" required></div>
+          <div class="form-group"><label for="shopPaymentPromptPay">เลขพร้อมเพย์</label><input id="shopPaymentPromptPay" class="form-control" inputmode="numeric" maxlength="20" required></div>
+          <p id="shopPaymentStatus" role="status"></p>
+          <button id="saveShopPayment" class="btn btn-blue" type="submit">บันทึกบัญชีรับเงิน</button>
+        </form>
+      </div>
+
       <div class="card" id="cardCancelBet">
         <div class="card-title"><i class="fa-solid fa-ban"></i> ยกเลิกบิล (Refund)</div>
         <div class="form-group"><label>รหัสบิล (Bet ID)</label><input type="text" id="txtBetId" class="form-control" placeholder="เช่น B17000..."></div>
@@ -678,6 +690,7 @@
              document.getElementById('cardSettings').classList.add('hidden');
           } else {
              loadSettings();
+             void loadShopPaymentSettings();
              generateReport(); 
           }
           
@@ -1019,6 +1032,63 @@
     // ==========================================
     // คิวรอดำเนินการ 
     // ==========================================
+    async function loadShopPaymentSettings() {
+      const bank = document.getElementById('shopPaymentBank');
+      const status = document.getElementById('shopPaymentStatus');
+      fillPaymentBanks(bank);
+      document.getElementById('shopPaymentSettings').classList.remove('hidden');
+      try {
+        const { receiver } = await shopPaymentRequest(currentShopId, 'settings');
+        bank.value = receiver?.bank_code || '';
+        document.getElementById('shopPaymentNumber').value = receiver?.bank_number || '';
+        document.getElementById('shopPaymentPromptPay').value = receiver?.promptpay || '';
+        status.textContent = receiver?.account_name || '';
+      } catch {
+        status.textContent = 'โหลดบัญชีรับเงินไม่สำเร็จ';
+      }
+    }
+
+    document.getElementById('shopPaymentForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = document.getElementById('saveShopPayment');
+      if (button.disabled) return;
+      const status = document.getElementById('shopPaymentStatus');
+      button.disabled = true;
+      status.textContent = 'กำลังตรวจบัญชีรับเงิน…';
+      try {
+        const saved = await shopPaymentRequest(currentShopId, 'save_settings', {
+          bank_code: document.getElementById('shopPaymentBank').value,
+          bank_number: document.getElementById('shopPaymentNumber').value,
+          promptpay: document.getElementById('shopPaymentPromptPay').value,
+        });
+        status.textContent = 'บันทึกแล้ว · ' + saved.account_name;
+      } catch (error) {
+        status.textContent = ({
+          THUNDER_RECEIVER_NOT_LINKED: 'เพิ่มบัญชีนี้ใน Branch Thunder ที่ใช้ตรวจสลิปของร้านก่อน แล้วกดบันทึกอีกครั้ง',
+          RECEIVER_CONFLICT: 'บัญชีนี้ถูกใช้กับร้านอื่นหรือบัญชีแพลตฟอร์มแล้ว',
+          RECEIVER_INVALID: 'ตรวจสอบเลขบัญชีและเลขพร้อมเพย์อีกครั้ง',
+        })[error.message] || 'บันทึกบัญชีรับเงินไม่สำเร็จ';
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    async function loadWithdrawalDestinations(shop, list, loadId) {
+      try {
+        const { destinations } = await shopPaymentRequest(shop, 'destinations');
+        if (shop !== currentShopId || loadId !== pendingQueueApplied) return;
+        const accounts = new Map(destinations.map(item => [String(item.request_id), item]));
+        for (const row of list.children) {
+          const destination = accounts.get(row.dataset.walletRequestId);
+          if (!destination) continue;
+          const details = document.createElement('div');
+          row.dataset.bankDisplay = 'ธนาคาร' + paymentBankName(destination.bank_code) + ' · ' + destination.bank_number;
+          details.textContent = 'โอนเข้า' + row.dataset.bankDisplay;
+          row.append(details);
+        }
+      } catch { /* Existing queue remains available. */ }
+    }
+
     let pendingQueueLoad = 0;
     let pendingQueueApplied = 0;
     let walletDecision = null;
@@ -1071,21 +1141,22 @@
              manage.textContent = r.type === 'ฝากเงิน' ? 'เติมเงิน' : r.type;
              const submitting = walletDecision?.submitting && walletDecision.id === r.id;
              manage.disabled = reject.disabled = Boolean(submitting);
-             manage.addEventListener('click', () => approveQueuedWalletRequest(r));
+             manage.addEventListener('click', () => approveQueuedWalletRequest(r, card.dataset.bankDisplay));
              reject.addEventListener('click', () => rejectPendingRequest(r.id, r.uid, r.type, r.amount));
              listDiv.appendChild(card);
          });
+         if (reqs.some(item => item.type === 'ถอนเงิน')) void loadWithdrawalDestinations(shop, listDiv, loadId);
        } catch (e) { console.error("Exception in loadPendingRequests:", e); }
     }
 
-    function approveQueuedWalletRequest(request) {
+    function approveQueuedWalletRequest(request, bankDisplay) {
       const dialog = document.getElementById('walletDecisionDialog');
       if (walletDecision || dialog.open || request.shop_id !== currentShopId) return;
 
       const deposit = request.type === 'ฝากเงิน';
       const action = deposit ? 'เติมเงิน' : request.type;
       const note = request.type === 'ถอนค่าคอม' ? 'กดยืนยันหลังจากโอนค่าคอมให้สมาชิกแล้ว'
-        : request.type === 'ถอนเงิน' ? 'ระบบจะหักยอด Wallet ตามจำนวนที่ยืนยัน' : '';
+        : request.type === 'ถอนเงิน' ? [bankDisplay, 'ระบบจะหักยอด Wallet ตามจำนวนที่ยืนยัน'].filter(Boolean).join(' · ') : '';
       document.getElementById('walletDecisionTitle').textContent = 'ยืนยัน' + action;
       document.getElementById('walletDecisionMember').textContent = 'สมาชิก ' + formatMemberCode(currentShopId, request.member_id) + ' · ' + request.display_name;
       document.getElementById('walletDecisionAmount').textContent = '฿' + Number(request.amount).toLocaleString('th-TH', {

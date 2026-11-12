@@ -12,3 +12,6 @@ verify_jwt = false
 
 [functions.shop-referrals]
 verify_jwt = false
+
+[functions.shop-payments]
+verify_jwt = false

@@ -8,7 +8,8 @@
   <title>หน้าจัดการร้านค้า · บ่อกุ้ง</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="./config.js?v=player-entry-1"></script>
-  <script src="./platform-billing.js?v=inline-1"></script>
+  <script src="./payment-ui.js?v=1"></script>
+  <script src="./platform-billing.js?v=qr-1"></script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #131620; color: #f8fafc; font: 16px/1.5 system-ui, sans-serif; }
@@ -41,6 +42,11 @@
     #billing-dialog h3 { margin-top: 12px; }
     #billing-dialog #billing-feedback { min-height: 24px; }
     #billing-slip-form { padding: 0; }
+    #billing-qr { width: fit-content; padding: 12px; margin: 12px auto; background: #fff; border-radius: 8px; }
+    .billing-bank-row { display: flex; gap: 8px; align-items: center; margin: 6px 0 12px; }
+    .billing-bank-row input { min-width: 0; }
+    .billing-bank-row button { width: auto; padding: 6px 10px; flex-shrink: 0; font-size: .85rem; }
+    #billing-slip-preview { display: block; width: 100%; max-height: 260px; object-fit: contain; }
     .billing-products { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
     .billing-product { display: grid; gap: 4px; text-align: left; }
     .billing-product span { color: #a7efcb; }
@@ -149,12 +155,17 @@
           <h3 id="billing-order"></h3>
           <p id="billing-method"></p>
           <p id="billing-name"></p>
-          <label>เลขสำหรับโอน <input id="billing-number" readonly></label>
-          <button id="billing-copy" class="secondary" type="button">คัดลอกเลขสำหรับโอน</button>
+          <div id="billing-qr" role="img" aria-label="QR พร้อมเพย์ตามยอดชำระ" hidden></div>
+          <label for="billing-number" id="billing-number-label">เลขบัญชี</label>
+          <div class="billing-bank-row">
+            <input id="billing-number" readonly>
+            <button id="billing-copy" class="secondary" type="button">คัดลอก</button>
+          </div>
           <form id="billing-slip-form">
             <label>แนบสลิปหลังโอนเงิน
               <input name="image" type="file" accept="image/jpeg,image/png,image/gif,image/webp" required>
             </label>
+            <img id="billing-slip-preview" alt="รูปสลิปที่แนบ" hidden>
             <button id="billing-submit" type="submit">ส่งสลิปเพื่อตรวจสอบ</button>
             <button id="billing-back" class="secondary" type="button">กลับไปดูแพ็กเกจ</button>
           </form>
