@@ -392,7 +392,7 @@
     }
 
     async function requestBoard(action, fields) {
-      const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
+      const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/mc-board', {
         method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(9000),
         headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY },
         body: JSON.stringify({ action, shop_id: boardShop, ...fields }),
@@ -409,7 +409,7 @@
       button.disabled = true;
       set('boardUnlockStatus', 'กำลังตรวจรหัสผ่าน…');
       try {
-        const { session } = await requestBoard('mc_board_unlock', { password: input.value });
+        const { session } = await requestBoard('unlock', { password: input.value });
         saveSession(session);
         await refreshBoard();
       } catch (error) {
@@ -431,7 +431,7 @@
       const session = boardSession;
       if (!session) return;
       try {
-        const { board } = await requestBoard('public_cash_board', { board_session: session });
+        const { board } = await requestBoard('read', { board_session: session });
         if (session !== boardSession) return;
         unlockForm.hidden = true;
         boardContent.hidden = false;

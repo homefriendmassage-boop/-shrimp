@@ -15,3 +15,6 @@ verify_jwt = false
 
 [functions.shop-payments]
 verify_jwt = false
+
+[functions.mc-board]
+verify_jwt = false

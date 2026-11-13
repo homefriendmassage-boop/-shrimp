@@ -1,11 +1,11 @@
 // Admin-only transport. LINE ID tokens are verified by admin-api on every request.
 function createAdminApiClient(config, getShopId) {
-  async function call(payload) {
+  async function call(payload, endpoint = 'admin-api') {
     const token = liff.getIDToken();
     if (!token) throw new Error('LINE_AUTH_INVALID');
     let response;
     try {
-      response = await fetch(config.SUPABASE_URL + '/functions/v1/admin-api', {
+      response = await fetch(config.SUPABASE_URL + '/functions/v1/' + endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', apikey: config.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + token },
         body: JSON.stringify({ ...payload, shop_id: getShopId() }),
@@ -48,7 +48,7 @@ function createAdminApiClient(config, getShopId) {
   return {
     from,
     placeTableCashBet: details => call({ action: 'table_cash_bet', ...details }),
-    setBoardPassword: password => call({ action: 'mc_board_set_password', password }),
+    setBoardPassword: password => call({ action: 'set_password', password }, 'mc-board'),
     createCashTables: (count, limit) => call({ action: 'table_bulk_create', count, cash_limit: limit }),
     tableQr: table => call({ action: 'table_qr', table_no: table }),
     recordTableCash: (table, type, amount, id) => call({

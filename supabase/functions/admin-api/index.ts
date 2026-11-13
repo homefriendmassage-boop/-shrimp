@@ -216,64 +216,6 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
     return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
   }
 
-  const hex = bytes => Array.from(new Uint8Array(bytes), value => value.toString(16).padStart(2, '0')).join('');
-  const unhex = value => Uint8Array.from(value.match(/../g), byte => parseInt(byte, 16));
-  const encoder = new TextEncoder();
-
-  async function boardPasswordHash(password, salt) {
-    const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
-    return hex(await crypto.subtle.deriveBits({
-      name: 'PBKDF2', salt: unhex(salt), iterations: 600000, hash: 'SHA-256',
-    }, key, 256));
-  }
-
-  async function boardSessionSignature(shop, revision, expires) {
-    const key = await crypto.subtle.importKey('raw', encoder.encode(serverKey(env)),
-      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-    return hex(await crypto.subtle.sign('HMAC', key, encoder.encode(JSON.stringify(['mc-board', shop, revision, expires]))));
-  }
-
-  function equalHex(first, second) {
-    if (first.length !== second.length) return false;
-    let difference = 0;
-    for (let i = 0; i < first.length; i++) difference |= first.charCodeAt(i) ^ second.charCodeAt(i);
-    return difference === 0;
-  }
-
-  async function readBoard(input, shopId) {
-    if (!/^SHOP_[0-9]{3,24}$/.test(shopId)) fail('SHOP_INVALID');
-    const db = database();
-    if (input.action === 'mc_board_unlock') {
-      if (typeof input.password !== 'string' || input.password.length < 8 || input.password.length > 128) {
-        fail('BOARD_PASSWORD_INVALID', 400);
-      }
-      const access = await db.rpc('reserve_mc_board_attempt', { p_shop: shopId });
-      if (access.error) fail('BOARD_UNAVAILABLE', 500);
-      const row = access.data?.[0];
-      if (!row) {
-        const setting = await db.from('mc_board_access').select('revision,shops!inner(status)')
-          .eq('shop_id', shopId).eq('shops.status', 'active').maybeSingle();
-        if (setting.error) fail('BOARD_UNAVAILABLE', 500);
-        if (!setting.data) fail('BOARD_SETUP_REQUIRED', 403);
-        fail('BOARD_TRY_LATER', 429);
-      }
-      if (!equalHex(await boardPasswordHash(input.password, row.salt), row.password_hash)) fail('BOARD_PASSWORD_INCORRECT', 401);
-      const expires = Math.floor(Date.now() / 1000) + 12 * 60 * 60;
-      const signature = await boardSessionSignature(shopId, row.revision, expires);
-      return { ok: true, session: [row.revision, expires, signature].join('.') };
-    }
-    const session = typeof input.board_session === 'string'
-      ? /^([a-f0-9-]{36})[.]([0-9]{10})[.]([a-f0-9]{64})$/.exec(input.board_session) : null;
-    if (!session || !shopInviteIdPattern.test(session[1]) || Number(session[2]) <= Math.floor(Date.now() / 1000) ||
-        !equalHex(session[3], await boardSessionSignature(shopId, session[1], Number(session[2])))) {
-      fail('BOARD_PASSWORD_REQUIRED', 401);
-    }
-    const result = await db.rpc('read_mc_board', { p_shop: shopId, p_revision: session[1] });
-    if (result.error) fail('BOARD_UNAVAILABLE', 500);
-    if (!result.data) fail('BOARD_PASSWORD_REQUIRED', 401);
-    return { ok: true, board: result.data };
-  }
-
   async function playerEntry(shopId) {
     if (!/^SHOP_[0-9]{3,24}$/.test(shopId)) fail('SHOP_INVALID');
     const db = database();
@@ -329,9 +271,15 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
-      if (['public_cash_board', 'mc_board_unlock'].includes(input.action)) return reply(await readBoard(input, shopId));
+      if (input.action === 'public_cash_board') {
+        if (!/^SHOP_[0-9]{3,24}$/.test(shopId)) fail('SHOP_INVALID');
+        const result = await database().rpc('read_public_cash_board', { p_shop: shopId });
+        if (result.error) fail('BOARD_UNAVAILABLE', 500);
+        if (!result.data) fail('SHOP_NOT_AVAILABLE', 404);
+        return reply({ ok: true, board: result.data });
+      }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'mc_board_set_password', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
@@ -724,18 +672,6 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       const shop = await db.from('shops').select('shop_id,status').eq('shop_id', shopId).maybeSingle();
       if (shop.error) fail('DATABASE_ERROR', 500);
       if (!shop.data || String(shop.data.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
-      if (input.action === 'mc_board_set_password') {
-        if (!['Admin', 'Superadmin'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
-        if (typeof input.password !== 'string' || input.password.length < 8 || input.password.length > 128 ||
-            !input.password.trim()) fail('BOARD_PASSWORD_INVALID', 400);
-        const salt = hex(crypto.getRandomValues(new Uint8Array(16)).buffer);
-        const saved = await db.from('mc_board_access').upsert({
-          shop_id: shopId, salt, password_hash: await boardPasswordHash(input.password, salt),
-          revision: crypto.randomUUID(), attempt_window: new Date().toISOString(), attempt_count: 0,
-        }, { onConflict: 'shop_id' });
-        if (saved.error) fail('BOARD_PASSWORD_SAVE_FAILED', 500);
-        return reply({ ok: true });
-      }
       if (input.action === 'access') {
         const picture = lineProfilePicture(claims.picture);
         if (picture) await db.from('users').update({ profile_pic: picture }).eq('shop_id', shopId).eq('uid', claims.sub);
