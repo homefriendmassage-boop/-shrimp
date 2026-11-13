@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>แอปผู้เล่น - บ่อตกกุ้ง</title>
-  <script src="config.js?v=player-entry-1"></script>
+  <script src="config.js?v=cash-table-1"></script>
+  <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="payment-ui.js?v=1"></script>
   <script src="membership-notice-client.js?v=2"></script>
@@ -393,7 +394,8 @@
     let currentDisplayName = "";
     let selectedBetType = "";
     let playMode = "private"; 
-    let userTableNo = ""; 
+    let userTableNo = "";
+    let cashTableQr = null;
     let currentUserStatus = "Inactive";
     let currentUserRole = "Customer";
     let memberId = "";
@@ -410,7 +412,7 @@
       try {
         const restored = new URL(state, location.origin);
         if (restored.origin !== location.origin) return params;
-        for (const key of ['shop', 'table', 'd', 'ref', 'shop_login_check', 'shop_login', 'withdraw_confirm']) {
+        for (const key of ['shop', 'table', 'd', 'table_token', 'ref', 'shop_login_check', 'shop_login', 'withdraw_confirm']) {
           if (!params.has(key) && restored.searchParams.has(key)) params.set(key, restored.searchParams.get(key));
         }
       } catch { /* Explicit query values remain authoritative. */ }
@@ -474,7 +476,7 @@
 
         if (!liff.isLoggedIn()) {
           const redirect = new URL(location.pathname, location.origin);
-          for (const key of ['shop', 'table', 'd', 'ref', 'shop_login', 'withdraw_confirm']) {
+          for (const key of ['shop', 'table', 'd', 'table_token', 'ref', 'shop_login', 'withdraw_confirm']) {
             if (urlParams.has(key)) redirect.searchParams.set(key, urlParams.get(key));
           }
           liff.login({ redirectUri: redirect.href });
@@ -483,11 +485,13 @@
 
         if (urlParams.get('table')) {
           const qrDate = urlParams.get('d');
-          const todayDate = new Date().toISOString().split('T')[0];
-          if (qrDate && qrDate !== todayDate) {
+          const tableToken = urlParams.get('table_token');
+          const todayDate = shopAccountingDay();
+          if (qrDate !== todayDate || !/^[a-f0-9]{64}$/.test(tableToken || '')) {
             alert("QR Code โต๊ะนี้หมดอายุแล้ว! (สแกนข้ามวัน) กรุณาขอ QR Code ใหม่จากพนักงานครับ");
           } else {
             userTableNo = urlParams.get('table');
+            cashTableQr = { table_no: userTableNo, table_day: qrDate, table_token: tableToken };
           }
         }
         if (urlParams.has('ref')) {
@@ -660,7 +664,8 @@
         document.getElementById('bettingView').classList.remove('hidden');
         document.getElementById('pendingView').classList.add('hidden');
         document.getElementById('bottomNavMenu').style.display = 'flex';
-        fetchDashboard();
+        if (cashTableQr) setMode('table');
+        else fetchDashboard();
       } catch (error) {
         if (useShopLogin && error.message === 'OA_ACCOUNT_NOT_LINKED') {
           showShopLoginFallback('บัญชี LINE นี้ยังไม่ได้ผูกกับสมาชิกของบ่อทดสอบ2');
@@ -791,7 +796,9 @@
 
     function renderLiveSnapshot(snapshot, table) {
       const credit = playMode === 'table' ? (table ? snapshot.table_credit : null) : snapshot.credit;
-      document.getElementById('creditDisplay').textContent = credit == null ? '—' : '฿' + Number(credit).toLocaleString('th-TH');
+      document.getElementById('creditDisplay').textContent = credit == null ? '—'
+        : playMode === 'table' && Number(credit) < 0 ? 'ค้าง ฿' + Math.abs(Number(credit)).toLocaleString('th-TH')
+        : '฿' + Number(credit).toLocaleString('th-TH');
       const round = snapshot.round;
       const result = snapshot.last_result;
       const totals = snapshot.totals;
@@ -875,6 +882,10 @@
     function playerBetError(error) {
       const messages = {
         ROUND_CLOSED: 'รอบนี้ปิดรับแล้วหรือเปลี่ยนรอบ กรุณาตรวจรอบปัจจุบัน',
+        TABLE_QR_EXPIRED: 'QR โต๊ะหมดอายุเวลา 06:00 น. กรุณาขอ QR ใหม่จากร้าน',
+        TABLE_QR_INVALID: 'QR โต๊ะนี้ใช้ไม่ได้ กรุณาขอสแกนจากร้านอีกครั้ง',
+        CASH_TABLE_REQUIRED: 'โต๊ะนี้ยังไม่ได้เปิดโหมดเงินสด กรุณาแจ้งพนักงาน',
+        TABLE_CREDIT_LIMIT: 'ยอดค้างจะเกินวงเงินของโต๊ะ กรุณาติดต่อพนักงาน',
         CREDIT_INSUFFICIENT: 'เครดิตส่วนตัวไม่พอ กรุณาเติมเงิน',
         PLAYER_ACCESS_REQUIRED: 'บัญชีนี้ยังไม่มีสิทธิ์ทำรายการในร้านนี้',
         BET_NOT_FOUND: 'ไม่พบบิลส่วนตัวของคุณในร้านนี้',
@@ -888,8 +899,8 @@
       if (betSubmitting) return;
       if (currentUserRole === 'Promoter') { alert('ผู้แนะนำไม่สามารถแทงได้ครับ'); return; }
       if (!isRoundOpen || !displayedRoundId) { alert('ขณะนี้ปิดรับแทงแล้วครับ'); return; }
-      if (playMode === 'table') {
-        alert('การยืนยันบิลลงโต๊ะยังไม่พร้อมใช้งาน กรุณาแจ้งผู้ดูแลร้าน');
+      if (playMode === 'table' && (!cashTableQr || cashTableQr.table_day !== shopAccountingDay())) {
+        alert('กรุณาสแกน QR โต๊ะเงินสดของรอบบัญชีปัจจุบัน');
         return;
       }
       const field = document.getElementById('txtAmount');
@@ -899,7 +910,10 @@
         alert('กรุณากรอกยอดให้ถูกต้อง ทศนิยมไม่เกิน 2 ตำแหน่ง');
         return;
       }
-      const details = { round_id: displayedRoundId, bet_type: selectedBetType, amount };
+      const details = {
+        round_id: displayedRoundId, bet_type: selectedBetType, amount,
+        ...(playMode === 'table' ? cashTableQr : {}),
+      };
       const key = JSON.stringify([currentShopId, details]);
       if (pendingBet?.key !== key) pendingBet = { key, id: crypto.randomUUID() };
 

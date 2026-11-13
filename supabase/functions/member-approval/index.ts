@@ -119,14 +119,14 @@ async function deliverNotification(db, shop, application, kind, manual = false) 
       to = target.data;
     }
     if (kind === 'submitted') {
-      to = shop.membership_notice_recipient_uid;
+      to = shop.membership_notice_recipient_uid || shop.admin_group_id;
       if (!to) try {
         const owners = JSON.parse(Deno.env.get('MEMBERSHIP_OWNER_UIDS') || '{}');
         to = owners?.[shop.shop_id];
       } catch { throw new Error('MEMBERSHIP_OWNER_UIDS_INVALID'); }
     }
     const token = shop.line_oa_token?.trim();
-    if (typeof to !== 'string' || !/^U[0-9a-f]{32}$/i.test(to)) throw new Error('MEMBERSHIP_OWNER_UID_MISSING');
+    if (typeof to !== 'string' || !(kind === 'submitted' ? /^[UC][0-9a-f]{32}$/i : /^U[0-9a-f]{32}$/i).test(to)) throw new Error('MEMBERSHIP_OWNER_UID_MISSING');
     if (!token) throw new Error('SHOP_OA_TOKEN_MISSING');
     const claim = await db.rpc('claim_membership_notice', {
       p_application: application.id, p_kind: kind, p_manual: manual
@@ -187,7 +187,7 @@ Deno.serve(async req => {
     const key = getPrivilegedKey();
     if (!key) return error('SUPABASE_SERVER_KEY_MISSING', 503);
     const db = createClient(dbUrl, key, { auth: { persistSession: false, autoRefreshToken: false } });
-    const { data: shop, error: shopError } = await db.from('shop_oa_runtime').select('shop_id,shop_name,status,line_oa_token,liff_id_admin,line_notifications_enabled,membership_notice_recipient_uid').eq('shop_id', shopId).maybeSingle();
+    const { data: shop, error: shopError } = await db.from('shop_oa_runtime').select('shop_id,shop_name,status,line_oa_token,liff_id_admin,line_notifications_enabled,membership_notice_recipient_uid,admin_group_id').eq('shop_id', shopId).maybeSingle();
     if (shopError) return error('DATABASE_ERROR', 500);
     if (!shop || String(shop.status).toLowerCase() !== 'active') return error('SHOP_NOT_AVAILABLE', 404);
     if (action === 'shop') {

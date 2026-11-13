@@ -4,9 +4,9 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const fields = {
   users: 'uid shop_id member_id display_name profile_pic role status credit_balance total_deposit commission_balance referrer_uid backer_share backer_water_fee backer_wallet created_at',
-  tables: 'id shop_id table_no credit created_at',
+  tables: 'id shop_id table_no credit created_at cash_limit',
   rounds: 'round_id shop_id status weight result created_at end_time_ms resolver_type',
-  bets: 'bet_id shop_id round_id uid table_no bet_type amount status play_mode payout created_at',
+  bets: 'bet_id shop_id round_id uid table_no bet_type amount status play_mode payout created_at cash_table',
   backer_logs: 'id shop_id round_id uid member_id share_percent gap_amount result_status pnl_amount water_fee_deducted wallet_balance_after created_at',
   transactions: 'id shop_id target_id type amount admin_name target_type created_at',
   topup_requests: 'id shop_id uid member_id display_name type amount method fee_option slip_url status admin_name created_at',
@@ -14,7 +14,7 @@ const fields = {
 };
 const writes = {
   users: { update: 'role status credit_balance total_deposit commission_balance backer_share backer_water_fee backer_wallet' },
-  tables: { insert: 'shop_id table_no credit', update: 'credit', delete: '' },
+  tables: { insert: 'shop_id table_no credit', update: 'credit cash_limit', delete: '' },
   rounds: { insert: 'shop_id round_id status end_time_ms resolver_type', update: 'status end_time_ms resolver_type weight result' },
   bets: { update: 'status payout' },
   backer_logs: { insert: 'shop_id round_id uid member_id share_percent gap_amount result_status pnl_amount water_fee_deducted wallet_balance_after' },
@@ -77,7 +77,7 @@ export function validateQuery(input, role, shopId) {
   const orders = input.orders ?? [];
   if (!Array.isArray(filters) || filters.length > 16 || !Array.isArray(orders) || orders.length > 4) fail('QUERY_INVALID');
   for (const f of filters) {
-    if (!f || !includes(fields[table], f.column) || !['eq', 'neq', 'gte', 'lte', 'like', 'in'].includes(f.op)) fail('FILTER_INVALID');
+    if (!f || !includes(fields[table], f.column) || !['eq', 'neq', 'gte', 'lte', 'lt', 'like', 'in'].includes(f.op)) fail('FILTER_INVALID');
     if (f.op === 'in' ? !Array.isArray(f.value) || f.value.length > 100 || f.value.some(v => !primitive(v)) : !primitive(f.value)) fail('FILTER_INVALID');
     if (f.column === 'shop_id' && (f.op !== 'eq' || f.value !== shopId)) fail('SHOP_MISMATCH', 403);
   }
@@ -101,6 +101,8 @@ export function validateQuery(input, role, shopId) {
           if (!includes(allowed, key) || (!primitive(value) && value !== null)) fail('VALUE_NOT_ALLOWED', 403);
           if (key === 'shop_id' && value !== shopId) fail('SHOP_MISMATCH', 403);
           if (['credit_balance', 'total_deposit', 'commission_balance', 'backer_wallet', 'credit', 'payout', 'amount'].includes(key) && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) fail('AMOUNT_INVALID');
+          if (key === 'cash_limit' && value !== null &&
+              (typeof value !== 'number' || value < 0.01 || value > 999999999)) fail('AMOUNT_INVALID');
           if (key === 'role' && !['Customer', 'Promoter', 'Backer', 'Operator', 'Admin'].includes(String(value))) fail('ROLE_INVALID');
           if (table === 'users' && key === 'status' && !['Active', 'Inactive'].includes(String(value))) fail('STATUS_INVALID');
         }
@@ -199,6 +201,18 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
     return createDb(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
   }
 
+  function tableDay() {
+    return new Date(Date.now() + 3600000).toISOString().slice(0, 10);
+  }
+
+  async function tableQrSignature(shop, table, day) {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey('raw', encoder.encode(serverKey(env)),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const digest = await crypto.subtle.sign('HMAC', key, encoder.encode(JSON.stringify(['cash-table', shop, table, day])));
+    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
   async function playerEntry(shopId) {
     if (!/^SHOP_[0-9]{3,24}$/.test(shopId)) fail('SHOP_INVALID');
     const db = database();
@@ -255,8 +269,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action)) fail('INVALID_ACTION');
-      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_qr', 'table_cash_payment', 'table_cash_report', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
@@ -332,7 +346,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           invitations = issued.data ?? [];
         }
         if (canInvite) {
-          const managed = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,line_oa_bot_uid,live_enabled,line_notifications_enabled,membership_notice_recipient_uid').order('shop_id');
+          const managed = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,line_oa_bot_uid,live_enabled,line_notifications_enabled,membership_notice_recipient_uid,admin_group_id').order('shop_id');
           if (managed.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
           platformShops = (managed.data ?? []).map(({ line_oa_token, line_oa_bot_uid, ...shop }) => ({
             ...shop, oa_configured: Boolean(line_oa_bot_uid || line_oa_token?.trim()),
@@ -344,26 +358,58 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           can_invite: canInvite, invitations, platform_shops: platformShops
         });
       }
-      if (input.action === 'platform_save_notice_recipient') {
+      if (['platform_capture_notice', 'platform_save_notice_recipient'].includes(input.action)) {
         if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
         const target = input.target_shop_id;
-        const recipient = typeof input.recipient_uid === 'string' ? input.recipient_uid.trim() : '';
-        if (typeof target !== 'string' || !/^[\w-]{1,80}$/.test(target) ||
-            !/^U[0-9a-f]{32}$/.test(recipient)) fail('NOTICE_RECIPIENT_INVALID');
-        const shop = await db.from('shop_oa_runtime').select('line_oa_token').eq('shop_id', target).maybeSingle();
-        if (shop.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
-        if (!shop.data?.line_oa_token) fail('SHOP_OA_NOT_READY', 409);
-        let profile;
-        try {
-          profile = await fetcher('https://api.line.me/v2/bot/profile/' + recipient, {
-            headers: { Authorization: 'Bearer ' + shop.data.line_oa_token }, signal: AbortSignal.timeout(5000),
-          });
-        } catch { fail('OA_VERIFY_UNAVAILABLE', 503); }
-        if (profile.status === 400 || profile.status === 404) fail('NOTICE_RECIPIENT_NOT_FOUND', 422);
-        if (profile.status === 401 || profile.status === 403) fail('OA_TOKEN_INVALID', 422);
-        if (!profile.ok) fail('OA_VERIFY_UNAVAILABLE', 503);
-        const saved = await db.from('shops').update({ membership_notice_recipient_uid: recipient })
-          .eq('shop_id', target).select('shop_id').maybeSingle();
+        if (typeof target !== 'string' || !/^SHOP_[0-9]{3,24}$/.test(target)) fail('SHOP_INVALID');
+
+        if (input.action === 'platform_capture_notice') {
+          if (!['owner', 'group'].includes(input.kind)) fail('NOTICE_RECIPIENT_INVALID');
+          if (input.code !== undefined) {
+            if (!shopInviteIdPattern.test(input.code)) fail('NOTICE_RECIPIENT_INVALID');
+            const capture = await db.from('shop_notice_capture').select('recipient_id,expires_at')
+              .eq('code', input.code).eq('shop_id', target).eq('created_by', claims.sub).eq('kind', input.kind).maybeSingle();
+            if (capture.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+            if (!capture.data || Date.parse(capture.data.expires_at) <= Date.now()) fail('NOTICE_CAPTURE_EXPIRED', 409);
+            return reply({ ok: true, recipient_id: capture.data.recipient_id });
+          }
+          const runtime = await db.from('shop_oa_runtime').select('line_oa_token').eq('shop_id', target).maybeSingle();
+          if (runtime.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+          if (!runtime.data?.line_oa_token) fail('SHOP_OA_NOT_READY', 409);
+          const code = crypto.randomUUID();
+          const capture = await db.from('shop_notice_capture').upsert({
+            code, shop_id: target, created_by: claims.sub, kind: input.kind, recipient_id: null,
+            expires_at: new Date(Date.now() + 600000).toISOString(),
+          }, { onConflict: 'shop_id,created_by,kind' });
+          if (capture.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+          return reply({ ok: true, code });
+        }
+
+        const recipient = typeof input.recipient_uid === 'string' ? input.recipient_uid.trim() : null;
+        const group = typeof input.group_id === 'string' ? input.group_id.trim() : null;
+        if (recipient === null || (recipient && !/^U[0-9a-f]{32}$/.test(recipient)) ||
+            (group && !/^C[0-9a-f]{32}$/.test(group))) fail('NOTICE_RECIPIENT_INVALID');
+        const runtime = await db.from('shop_oa_runtime').select('line_oa_token').eq('shop_id', target).maybeSingle();
+        if (runtime.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+        if ((recipient || group) && !runtime.data?.line_oa_token) fail('SHOP_OA_NOT_READY', 409);
+        for (const [id, path, error] of [
+          [recipient, 'profile/' + recipient, 'NOTICE_RECIPIENT_NOT_FOUND'],
+          [group, 'group/' + group + '/summary', 'NOTICE_GROUP_NOT_FOUND'],
+        ]) {
+          if (!id) continue;
+          let verified;
+          try {
+            verified = await fetcher('https://api.line.me/v2/bot/' + path, {
+              headers: { Authorization: 'Bearer ' + runtime.data.line_oa_token }, signal: AbortSignal.timeout(5000),
+            });
+          } catch { fail('OA_VERIFY_UNAVAILABLE', 503); }
+          if (verified.status === 400 || verified.status === 404 || (id === group && verified.status === 403)) fail(error, 422);
+          if (verified.status === 401 || verified.status === 403) fail('OA_TOKEN_INVALID', 422);
+          if (!verified.ok) fail('OA_VERIFY_UNAVAILABLE', 503);
+        }
+        const values = { membership_notice_recipient_uid: recipient || null };
+        if (group !== null) values.admin_group_id = group || null;
+        const saved = await db.from('shops').update(values).eq('shop_id', target).select('shop_id').maybeSingle();
         if (saved.error || !saved.data) fail('SHOP_PORTAL_UNAVAILABLE', 500);
         return reply({ ok: true });
       }
@@ -520,9 +566,18 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           if (typeof input.round_id !== 'string' || !input.round_id || input.round_id.length > 100 ||
             typeof input.amount !== 'string' || !/^\d{1,9}(?:\.\d{1,2})?$/.test(input.amount) ||
             !['คู่', 'คี่'].includes(input.bet_type)) fail('BET_INVALID');
-          const result = await db.rpc('place_player_private_bet', {
+          const params = {
             p_shop: shopId, p_uid: claims.sub, p_round: input.round_id, p_id: id, p_type: input.bet_type, p_amount: input.amount,
-          });
+          };
+          const table = input.table_no;
+          if (table !== undefined) {
+            if (typeof table !== 'string' || !/^\d{1,8}$/.test(table)) fail('BET_INVALID');
+            if (input.table_day !== tableDay()) fail('TABLE_QR_EXPIRED', 409);
+            if (input.table_token !== await tableQrSignature(shopId, table, input.table_day)) fail('TABLE_QR_INVALID', 403);
+          }
+          const result = table === undefined
+            ? await db.rpc('place_player_private_bet', params)
+            : await db.rpc('place_player_cash_table_bet', { ...params, p_table: table, p_day: input.table_day, p_staff: false });
           if (result.error) fail('BET_UNAVAILABLE', 500);
           if (result.data?.code === 'BET_LIMIT') return reply({ ok: false, ...result.data }, 409);
           if (result.data?.code !== 'PLACED') fail(result.data?.code || 'BET_UNAVAILABLE', 409);
@@ -597,6 +652,68 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (picture) await db.from('users').update({ profile_pic: picture }).eq('shop_id', shopId).eq('uid', claims.sub);
         return reply({ ok: true, staff: staff.data, can_create_shop: await canCreateShop() });
       }
+      if (['table_cash_report', 'table_send_cash_report'].includes(input.action)) {
+        if (staff.data.role === 'Operator') fail('ADMIN_REQUIRED', 403);
+        if (typeof input.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.day)) fail('TABLE_DATE_INVALID');
+        const result = await db.rpc('cash_table_daily_report', { p_shop: shopId, p_day: input.day });
+        if (result.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
+        if (input.action === 'table_cash_report') return reply({ ok: true, tables: result.data });
+        const runtime = await db.from('shop_oa_runtime').select('line_oa_token,admin_group_id,membership_notice_recipient_uid,line_notifications_enabled')
+          .eq('shop_id', shopId).maybeSingle();
+        if (runtime.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
+        const settings = runtime.data;
+        const recipient = settings?.admin_group_id || settings?.membership_notice_recipient_uid;
+        if (!settings?.line_oa_token || settings.line_notifications_enabled === false ||
+            !/^[CU][0-9a-f]{32}$/.test(recipient || '')) fail('TABLE_REPORT_LINE_NOT_READY', 409);
+        const amount = value => Number(value).toLocaleString('th-TH', { maximumFractionDigits: 2 });
+        const lines = (result.data ?? []).map(row => 'โต๊ะ ' + row.table_no + ' · ลง ฿' + amount(row.played) +
+          ' · ชนะ ฿' + amount(row.won) + ' · รับสด ฿' + amount(row.received) + ' · จ่ายสด ฿' + amount(row.paid));
+        const report = ['รายงานเงินสด ' + shopId, 'วันที่บัญชี ' + input.day + ' · 06:00 ถึงก่อน 06:00 วันถัดไป',
+          ...(lines.length ? lines : ['ไม่มีรายการเงินสด'])].join('\n');
+        if (report.length > 5000) fail('TABLE_REPORT_TOO_LONG', 409);
+        if (typeof input.delivery_id !== 'string' || !shopInviteIdPattern.test(input.delivery_id)) fail('TABLE_REPORT_UNAVAILABLE', 400);
+        const sent = await fetcher('https://api.line.me/v2/bot/message/push', {
+          method: 'POST', headers: { Authorization: 'Bearer ' + settings.line_oa_token,
+            'Content-Type': 'application/json', 'X-Line-Retry-Key': input.delivery_id },
+          body: JSON.stringify({ to: recipient, messages: [{ type: 'text', text: report }] }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!sent.ok && !(sent.status === 409 && sent.headers.has('x-line-accepted-request-id'))) fail('TABLE_REPORT_LINE_FAILED', 502);
+        return reply({ ok: true });
+      }
+      if (input.action === 'table_cash_bet') {
+        if (typeof input.table_no !== 'string' || !/^\d{1,8}$/.test(input.table_no) ||
+            typeof input.round_id !== 'string' || !input.round_id || input.round_id.length > 100 ||
+            !shopInviteIdPattern.test(input.bet_id) || !['คู่','คี่'].includes(input.bet_type) ||
+            typeof input.amount !== 'string' || !/^\d{1,9}(?:\.\d{1,2})?$/.test(input.amount)) fail('BET_INVALID');
+        const result = await db.rpc('place_player_cash_table_bet', {
+          p_shop: shopId, p_uid: claims.sub, p_round: input.round_id, p_id: input.bet_id, p_type: input.bet_type,
+          p_amount: input.amount, p_table: input.table_no, p_day: tableDay(), p_staff: true,
+        });
+        if (result.error) fail('BET_UNAVAILABLE', 500);
+        if (result.data?.code !== 'PLACED') fail(result.data?.code || 'BET_UNAVAILABLE', 409);
+        return reply({ ok: true, bet_id: result.data.bet_id });
+      }
+      if (['table_qr', 'table_cash_payment'].includes(input.action)) {
+        const table = input.table_no;
+        if (typeof table !== 'string' || !/^\d{1,8}$/.test(table)) fail('TABLE_INVALID');
+        if (input.action === 'table_qr') {
+          const desk = await db.from('tables').select('cash_limit').eq('shop_id', shopId).eq('table_no', table).maybeSingle();
+          if (desk.error) fail('DATABASE_ERROR', 500);
+          if (!desk.data?.cash_limit) fail('CASH_TABLE_REQUIRED', 409);
+          const day = tableDay();
+          return reply({ ok: true, day, token: await tableQrSignature(shopId, table, day) });
+        }
+        if (!shopInviteIdPattern.test(input.entry_id) || !['deposit','withdraw'].includes(input.type) ||
+            typeof input.amount !== 'string' || !/^\d{1,9}(?:\.\d{1,2})?$/.test(input.amount)) fail('AMOUNT_INVALID');
+        const result = await db.rpc('record_cash_table_payment', {
+          p_shop: shopId, p_table: table, p_id: input.entry_id, p_type: input.type,
+          p_amount: input.amount, p_staff: staff.data.display_name || staff.data.member_id,
+        });
+        if (result.error) fail('TABLE_PAYMENT_UNAVAILABLE', 500);
+        if (result.data?.code !== 'RECORDED') fail(result.data?.code || 'TABLE_PAYMENT_UNAVAILABLE', 409);
+        return reply({ ok: true, balance: result.data.balance });
+      }
       if (input.action === 'round_finalize_balanced') {
         if (typeof input.round_id !== 'string' || !input.round_id || input.round_id.length > 100 ||
             !Number.isFinite(input.weight) || input.weight <= 0 || input.weight > 1000000) fail('ROUND_WEIGHT_INVALID');
@@ -651,19 +768,27 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       else query = query.delete();
       if (spec.operation !== 'insert') query = query.eq('shop_id', shopId);
       for (const f of spec.filters) query = query[f.op](f.column, f.value);
+      if (spec.table === 'tables' && spec.operation === 'update' && Object.hasOwn(input.values, 'credit')) {
+        query = query.is('cash_limit', null);
+      }
+      const changingBet = spec.table === 'bets' && spec.operation === 'update';
+      if (changingBet) query = query.eq('status', 'Active');
       const walletDecision = spec.table === 'topup_requests' && spec.operation === 'update' &&
         ['Approved', 'Rejected'].includes(input.values?.status);
       if (walletDecision) query = query.eq('status', 'Pending').select(input.returning ? spec.columns : 'uid,type,amount,status');
+      else if (changingBet) query = query.select(spec.columns);
       else if (spec.operation !== 'select' && input.returning) query = query.select(spec.columns);
       for (const o of spec.orders) query = query.order(o.column, { ascending: o.ascending });
       if (spec.operation === 'select') query = query.limit(input.limit ?? 1000);
       if (input.single) query = query.single();
       const result = await query;
       if (result.error) {
+        if (result.error.message === 'CASH_TABLE_OPEN_BALANCE') fail('CASH_TABLE_OPEN_BALANCE', 409);
         if (spec.table === 'tables' && spec.operation === 'insert' && result.error.code === '23505') fail('TABLE_ALREADY_EXISTS', 409);
         console.error('admin-api database error', spec.table, spec.operation, result.error.code);
         fail('ADMIN_DATABASE_ERROR', 500);
       }
+      if (changingBet && !result.data?.length) fail('BET_NOT_ACTIVE', 409);
       if (walletDecision) {
         const rejectionReason = input.values.status === 'Rejected' && typeof input.rejection_reason === 'string'
           ? input.rejection_reason.trim().slice(0, 300) : '';
