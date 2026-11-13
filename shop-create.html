@@ -57,6 +57,7 @@
 <body>
   <main>
     <h1 id="title">หน้าจัดการร้านค้า</h1>
+    <p><a id="shop-customer-link" hidden></a></p>
     <section id="platform-panel" hidden>
       <h2>ตั้งค่าร้านค้าในแพลตฟอร์ม</h2>
       <a href="admin.html?saas=1">กลับหน้าแอดมิน SaaS</a>
@@ -470,6 +471,15 @@
             if (shopSelect.value) location.assign('shop-create.html?shop=' + encodeURIComponent(shopSelect.value));
           };
         }
+        const customerLink = byId('shop-customer-link');
+        const customerShop = selected || (data.can_invite ? data.platform_shops?.find(shop => shop.shop_id === sourceShop) : null);
+        customerLink.hidden = !customerShop;
+        if (customerShop) {
+          document.title = 'จัดการร้าน · ' + customerShop.shop_name;
+          customerLink.textContent = 'ลิงก์ลูกค้า · ' + customerShop.shop_name;
+          customerLink.href = /^SHOP_00[012]$/.test(customerShop.shop_id)
+            ? 'shops/' + customerShop.shop_id + '/' : liffLink(APP_CONFIG.LIFF_ID_PLAYER, { shop: customerShop.shop_id });
+        }
         const canRefer = selected?.can_refer_shop ??
           (selected?.can_manage_billing && String(selected.status).toLowerCase() === 'active');
         byId('billing-inline').hidden = !selected?.can_manage_billing;
@@ -486,7 +496,8 @@
             : data.shops.length ? 'เลือกร้านจากเมนูด้านบน' : 'บัญชี LINE นี้ยังไม่มีร้านที่จัดการได้';
           if (managed) {
             const admin = byId('shop-overview-admin');
-            admin.href = liffLink(APP_CONFIG.LIFF_ID_ADMIN, { shop: managed.shop_id });
+            admin.href = /^SHOP_00[012]$/.test(managed.shop_id)
+              ? 'shops/' + managed.shop_id + '/admin.html' : liffLink(APP_CONFIG.LIFF_ID_ADMIN, { shop: managed.shop_id });
             admin.hidden = false;
           }
           if (managed && data.can_invite) {

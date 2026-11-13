@@ -192,7 +192,7 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
       if (typeof deliveryKey !== 'string' || !uuid.test(deliveryKey)) return fail('WITHDRAWAL_INVALID');
       const draft = await db.from('wallet_withdrawal_confirmations').upsert({
         delivery_key: deliveryKey, shop_id: shop, uid, amount, bank_code: bank, bank_number: number,
-      }, { onConflict: 'delivery_key', ignoreDuplicates: true });
+      }, { onConflict: 'shop_id,delivery_key', ignoreDuplicates: true });
       if (draft.error) return fail('PAYMENTS_UNAVAILABLE', 503);
       const stored = await db.from('wallet_withdrawal_confirmations').select('id,amount,bank_code,bank_number,expires_at')
         .eq('delivery_key', deliveryKey).eq('shop_id', shop).eq('uid', uid).maybeSingle();
@@ -204,7 +204,7 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
       link.searchParams.set('withdraw_confirm', stored.data.id);
       const total = Number(amount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const sent = await fetcher('https://api.line.me/v2/bot/message/push', {
-        method: 'POST', headers: { Authorization: 'Bearer ' + oa.data.line_oa_token, 'Content-Type': 'application/json', 'X-Line-Retry-Key': deliveryKey },
+        method: 'POST', headers: { Authorization: 'Bearer ' + oa.data.line_oa_token, 'Content-Type': 'application/json', 'X-Line-Retry-Key': stored.data.id },
         body: JSON.stringify({ to: target.data, messages: [{
           type: 'flex', altText: 'ยืนยันคำขอถอนเงิน', contents: {
             type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [

@@ -627,6 +627,22 @@
       try { fetch(APP_CONFIG.GAS_URL, { method: 'POST', body: JSON.stringify({ action: action, shopId: currentShopId, ...payloadData }), headers: { 'Content-Type': 'text/plain;charset=utf-8' } }); } catch (e) {}
     }
 
+    async function loadAdminShopName(shopId) {
+      try {
+        const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY },
+          body: JSON.stringify({ action: 'player_entry', shop_id: shopId }),
+          signal: AbortSignal.timeout(6000)
+        });
+        if (!response.ok || currentShopId !== shopId) return;
+        const { shop_name } = await response.json();
+        if (currentShopId !== shopId || typeof shop_name !== 'string' || !shop_name.trim()) return;
+        document.title = 'Admin Panel · ' + shop_name;
+        document.querySelector('.header-title').textContent = 'Admin Panel · ' + shop_name;
+      } catch { /* A shop name lookup must not delay sign-in. */ }
+    }
+
     async function initializeApp() {
       const urlParams = new URLSearchParams(window.location.search);
       const state = urlParams.get('liff.state');
@@ -640,6 +656,10 @@
       }
       if (urlParams.get('shop')) {
           currentShopId = urlParams.get('shop');
+      }
+
+      if (!urlParams.has('saas') && !urlParams.has('shop_invite') && !urlParams.has('shop_portal')) {
+        void loadAdminShopName(currentShopId);
       }
 
       const dateInput = document.getElementById('repDateSelector');

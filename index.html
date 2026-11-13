@@ -498,8 +498,8 @@
         if (urlParams.has('ref')) {
           const referrer = parseMemberCode(currentShopId, urlParams.get('ref'));
           try {
-            if (referrer) sessionStorage.setItem('referrer_id', referrer);
-            else sessionStorage.removeItem('referrer_id');
+            if (referrer) sessionStorage.setItem('referrer_id:' + currentShopId, referrer);
+            else sessionStorage.removeItem('referrer_id:' + currentShopId);
           } catch { /* Storage availability must not block access. */ }
         }
 
@@ -1268,7 +1268,7 @@
            const bank_code = document.getElementById('withdrawBank').value;
            const bank_number = document.getElementById('withdrawBankNumber').value.replace(/[ -]/g, '');
            if (!bank_code || !/^\d{6,20}$/.test(bank_number)) throw new Error('WITHDRAWAL_INVALID');
-           const key = [amount, bank_code, bank_number].join(':');
+           const key = [currentShopId, amount, bank_code, bank_number].join(':');
            if (withdrawalRetry?.key !== key) withdrawalRetry = { key, id: crypto.randomUUID() };
            await shopPaymentRequest(currentShopId, 'withdraw_start', {
              amount, bank_code, bank_number, delivery_key: withdrawalRetry.id, shop_login: useShopLogin,
