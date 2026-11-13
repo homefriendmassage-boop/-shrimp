@@ -1586,27 +1586,51 @@
       } catch (error) { status.textContent = 'บันทึก' + label + 'แล้ว แต่แจ้งเตือนไม่สำเร็จ [' + error.message + ']'; }
     }
 
+    function nextShopRoundId(shop, previousId, time = Date.now()) {
+      const shopNumber = /^SHOP_([0-9]{3,24})$/.exec(shop)?.[1];
+      if (!shopNumber) throw new Error('รหัสร้านไม่ถูกต้อง');
+      const date = shopAccountingDay(time).slice(2).replaceAll('-', '');
+      const prefix = 'R-' + date + '-';
+      const previous = /^R-([0-9]{6})-([0-9]+)(?:-SHOP_[0-9]{3,24})?$/.exec(previousId ?? '');
+      const number = previous?.[1] === date ? Number(previous[2]) + 1 : 1;
+      return prefix + number + '-SHOP_' + shopNumber;
+    }
+
     async function controlRound(cmd) {
-      if (cmd === 'createRound') {
-        if(!confirm('ยืนยันการเปิดรอบใหม่?')) return;
-        document.getElementById('btnOpenRound').innerText = 'กำลังเปิด...';
-        try {
-          const { data: lr } = await _supabase.from('rounds').select('status, round_id').eq('shop_id', currentShopId).order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1);
-          if (lr?.[0]?.status === 'Closed') throw new Error('รอบ ' + lr[0].round_id + ' ปิดรับแล้ว กรุณากรอกน้ำหนักจริงแล้วกด คำนวณ + ตัดผล ก่อนเปิดรอบใหม่');
-          if (lr?.[0] && lr[0].status !== 'Ended') throw new Error('กรุณาปิดรับและตัดผลรอบ ' + lr[0].round_id + ' ก่อนเปิดรอบใหม่');
-          let d = new Date(); let prefix = `R-${d.getFullYear().toString().substring(2)}${(d.getMonth()+1).toString().padStart(2,'0')}${d.getDate().toString().padStart(2,'0')}`;
-          let nn = 1; if (lr && lr.length > 0 && lr[0].round_id.startsWith(prefix)) nn = parseInt(lr[0].round_id.split('-')[2]) + 1;
-          let rndName = `${prefix}-${nn}`;
-          const { data: [set] } = await _supabase.from('system_settings').select('round_duration').eq('shop_id', currentShopId).limit(1);
-          let duration = set ? set.round_duration : 15;
-          await _supabase.from('rounds').insert([{ shop_id: currentShopId, round_id: rndName, status: 'Open', end_time_ms: new Date().getTime() + (duration * 60000), resolver_type: 'none' }]);
-          
-          notifyRoundEvent(rndName, 'opened');
-          
-          document.getElementById('resolverStatusMsg').style.display = 'none';
-          alert(`เปิดรอบ ${rndName} สำเร็จ!`);
-        } catch(e) { alert(e.message); }
-        document.getElementById('btnOpenRound').innerHTML = '<i class="fa-solid fa-play"></i> 1. เปิดรอบใหม่'; fetchAdminDashboard();
+      if (cmd !== 'createRound') return;
+      const button = document.getElementById('btnOpenRound');
+      if (button.disabled || !confirm('ยืนยันการเปิดรอบใหม่?')) return;
+      const label = button.innerHTML;
+      const shop = currentShopId;
+      button.disabled = true;
+      button.textContent = 'กำลังเปิด...';
+      try {
+        const { data: rounds } = await _supabase.from('rounds').select('status, round_id').eq('shop_id', shop)
+          .order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1);
+        const latest = rounds?.[0];
+        if (latest?.status === 'Closed') throw new Error('รอบ ' + latest.round_id + ' ปิดรับแล้ว กรุณากรอกน้ำหนักจริงแล้วกด คำนวณ + ตัดผล ก่อนเปิดรอบใหม่');
+        if (latest && latest.status !== 'Ended') throw new Error('กรุณาปิดรับและตัดผลรอบ ' + latest.round_id + ' ก่อนเปิดรอบใหม่');
+        const { data: [settings] } = await _supabase.from('system_settings').select('round_duration').eq('shop_id', shop).limit(1);
+        const duration = Number(settings?.round_duration) || 15;
+        if (shop !== currentShopId) return;
+        const now = Date.now();
+        const roundId = nextShopRoundId(shop, latest?.round_id, now);
+        const { data: opened } = await _supabase.from('rounds').insert([{
+          shop_id: shop, round_id: roundId, status: 'Open', end_time_ms: now + duration * 60000, resolver_type: 'none'
+        }]).select('round_id');
+        if (opened?.[0]?.round_id !== roundId) throw new Error('ยังยืนยันผลการเปิดรอบไม่ได้ กรุณาตรวจสถานะรอบล่าสุด');
+        if (shop !== currentShopId) return;
+        void notifyRoundEvent(roundId, 'opened');
+        document.getElementById('resolverStatusMsg').style.display = 'none';
+        alert('เปิดรอบ ' + roundId + ' สำเร็จ!');
+      } catch (error) {
+        alert(error.message === 'ADMIN_DATABASE_ERROR'
+          ? 'เปิดรอบไม่ได้ กรุณาตรวจสถานะรอบล่าสุด หากยังไม่มีรอบเปิดให้ลองอีกครั้ง'
+          : error.message);
+      } finally {
+        button.innerHTML = label;
+        button.disabled = false;
+        void fetchAdminDashboard();
       }
     }
 
