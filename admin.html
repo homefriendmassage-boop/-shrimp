@@ -6,7 +6,7 @@
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=cash-table-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=cash-table-2"></script>
+  <script src="admin-api-client.js?v=mc-board-3"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -341,6 +341,7 @@
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0">
           <button type="button" class="btn btn-outline" onclick="createTableRange(this)">สร้างโต๊ะชุด</button>
           <a class="btn btn-outline" id="cashBoardLink" target="_blank" rel="noopener">จอทีวีและ MC</a>
+          <button class="btn btn-outline hidden" id="boardPasswordSettings" type="button">ตั้งรหัสผ่านจอ MC</button>
           <label>แสดงโต๊ะ <select class="form-control" id="tableFilter">
             <option value="visible">ทุกโต๊ะที่แสดง</option><option value="open">เปิดรับยอด</option>
             <option value="pending">รอผล</option><option value="receive">ต้องรับเงิน</option>
@@ -581,6 +582,19 @@
       </div>
   </div>
 
+  <dialog id="boardPasswordDialog" aria-labelledby="boardPasswordTitle" style="background:#171925;color:white;border:1px solid #465472;border-radius:14px;max-width:min(400px,85vw)">
+    <form id="boardPasswordForm">
+      <h2 id="boardPasswordTitle">ตั้งรหัสผ่านจอทีวีและ MC</h2>
+      <label for="newBoardPassword">รหัสใหม่ 8–128 ตัวอักษร</label>
+      <input id="newBoardPassword" class="form-control" type="password" minlength="8" maxlength="128" autocomplete="new-password" required>
+      <label for="confirmBoardPassword">ยืนยันรหัสใหม่</label>
+      <input id="confirmBoardPassword" class="form-control" type="password" minlength="8" maxlength="128" autocomplete="new-password" required>
+      <p id="boardPasswordFeedback" role="status"></p>
+      <button class="btn btn-blue" type="submit">บันทึกรหัสผ่าน</button>
+      <button class="btn btn-outline" id="closeBoardPassword" type="button">ปิด</button>
+    </form>
+  </dialog>
+
   <dialog id="walletDecisionDialog" aria-labelledby="walletDecisionTitle"
     aria-describedby="walletDecisionMember walletDecisionAmount walletDecisionNote">
     <form>
@@ -730,6 +744,7 @@
           fetchAdminDashboard(); 
           setInterval(fetchAdminDashboard, 3000); 
           loadTableList();
+          document.getElementById('boardPasswordSettings').classList.toggle('hidden', !['Admin', 'Superadmin'].includes(currentUserRole));
           document.getElementById('cashBoardLink').href = 'board.html?shop=' + encodeURIComponent(currentShopId);
           setInterval(() => {
             if (!document.hidden && document.getElementById('cardTableManage').getClientRects().length) {
@@ -2190,6 +2205,33 @@
       }
     }
     function toggleSettings() { const c = document.getElementById('settingsContent'); const i = document.getElementById('settingsIcon'); if(c.classList.contains('open')){ c.classList.remove('open'); i.className="fa-solid fa-chevron-down"; } else{ c.classList.add('open'); i.className="fa-solid fa-chevron-up"; } }
+
+    const boardPasswordDialog = document.getElementById('boardPasswordDialog');
+    const boardPasswordForm = document.getElementById('boardPasswordForm');
+    const boardPasswordFeedback = document.getElementById('boardPasswordFeedback');
+    document.getElementById('boardPasswordSettings').onclick = () => {
+      boardPasswordFeedback.textContent = '';
+      boardPasswordDialog.showModal();
+    };
+    document.getElementById('closeBoardPassword').onclick = () => boardPasswordDialog.close();
+    boardPasswordDialog.addEventListener('close', () => boardPasswordForm.reset());
+    boardPasswordForm.onsubmit = async event => {
+      event.preventDefault();
+      const password = document.getElementById('newBoardPassword').value;
+      if (password !== document.getElementById('confirmBoardPassword').value) {
+        boardPasswordFeedback.textContent = 'รหัสผ่านสองช่องต้องตรงกัน';
+        return;
+      }
+      const button = boardPasswordForm.querySelector('button[type="submit"]');
+      button.disabled = true;
+      try {
+        await _supabase.setBoardPassword(password);
+        boardPasswordForm.reset();
+        boardPasswordFeedback.textContent = 'บันทึกแล้ว จอที่เปิดอยู่ต้องกรอกรหัสใหม่';
+      } catch {
+        boardPasswordFeedback.textContent = 'บันทึกไม่ได้ กรุณาตรวจรหัสแล้วลองใหม่';
+      } finally { button.disabled = false; }
+    };
 
     initializeApp();
   </script>

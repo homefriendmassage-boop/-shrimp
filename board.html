@@ -157,13 +157,19 @@
     .history-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:16px 14px 12px; }
     .history-heading h2 { margin:0; font-size:clamp(1rem,1.6vw,1.25rem); }
     .history-heading time { margin-inline-start:auto; color:#cbd5e1; font-size:.9rem; white-space:nowrap; }
-    .daily-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)) minmax(0,1.55fr); gap:6px; margin:0; padding:0 12px 12px; }
+    .daily-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; margin:0; padding:0 12px 12px; }
     .daily-summary div { min-width:0; background:#222637; border-radius:9px; padding:7px clamp(4px,1vw,10px); text-align:center; }
     .daily-summary .summary-even { background:#1e3a70; }
     .daily-summary .summary-odd { background:#672832; }
     .daily-summary dt { color:#d2dbea; font-size:clamp(.69rem,1.1vw,.9rem); }
     .daily-summary dd { margin:0; font-size:clamp(.85rem,1.7vw,1.35rem); font-weight:600; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
-    #dayTotal { color:#55dfa8; }
+    [hidden] { display:none !important; }
+    .board-gate { width:min(100%,400px); margin:28px auto; padding:22px; border:1px solid var(--card-border); border-radius:14px; background:#171925; box-sizing:border-box; }
+    .board-gate h2 { margin:0 0 12px; font-size:1.25rem; }
+    .board-gate label, .board-gate input { display:block; width:100%; box-sizing:border-box; }
+    .board-gate input, .board-gate button { margin-top:8px; padding:10px; border:1px solid #465472; border-radius:8px; background:#252e42; color:white; font:inherit; }
+    .board-gate button { cursor:pointer; background:#244981; }
+    .board-gate p { min-height:1.5em; margin-bottom:0; color:#cbd5e1; }
     .history-scroll { max-height:clamp(240px,58vh,780px); overflow:auto; scrollbar-gutter:stable; }
     .history-scroll:focus-visible { outline:2px solid var(--blue-main); outline-offset:-2px; }
     .round-columns { display:grid; grid-template-columns:repeat(3,minmax(164px,1fr)); gap:1px; background:var(--card-border); align-items:start; }
@@ -198,6 +204,14 @@
       </div>
     </div>
 
+    <form class="board-gate" id="boardUnlock">
+      <h2>ปลดล็อกจอทีวีและ MC</h2>
+      <label for="boardPassword">รหัสผ่านจอของร้าน</label>
+      <input id="boardPassword" type="password" minlength="8" maxlength="128" autocomplete="current-password" required>
+      <button type="submit">เปิดจอ</button>
+      <p id="boardUnlockStatus" role="status"></p>
+    </form>
+    <div id="boardContent" hidden>
     <div class="board-layout">
       <section aria-label="รอบปัจจุบัน">
         <div class="header-info">
@@ -257,7 +271,6 @@
           <div><dt>จบรอบ</dt><dd id="dayRounds">—</dd></div>
           <div class="summary-even"><dt>ผลรวมคู่</dt><dd id="dayEven">—</dd></div>
           <div class="summary-odd"><dt>ผลรวมคี่</dt><dd id="dayOdd">—</dd></div>
-          <div><dt>ยอดรวมรอบที่จบ</dt><dd id="dayTotal">—</dd></div>
         </dl>
         <p class="history-message" id="boardHistoryMessage">กำลังโหลดผลรอบ</p>
         <div class="history-scroll" id="boardHistoryScroll" tabindex="0" role="region" aria-label="ตารางผลแต่ละรอบ">
@@ -279,6 +292,8 @@
     <div class="board-tools">
       <button type="button" id="boardFullscreen">เต็มจอ</button>
       <span id="boardConnection" role="status">กำลังเชื่อมต่อ</span>
+      <button type="button" id="boardLock">ล็อกจอ</button>
+    </div>
     </div>
   </div>
 
@@ -351,27 +366,75 @@
         : remaining > 0 ? 'เปิดรับยอด' : 'ปิดรับยอด · รอผล');
     }
 
-    async function refreshBoard() {
+    const unlockForm = document.getElementById('boardUnlock');
+    const boardContent = document.getElementById('boardContent');
+    const sessionKey = 'mc-board-session:' + boardShop;
+    let boardSession;
+    let boardRefreshTimer;
+    try { boardSession = sessionStorage.getItem(sessionKey); } catch {}
+
+    function saveSession(session) {
+      boardSession = session;
       try {
-        const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
-          method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(9000),
-          headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY },
-          body: JSON.stringify({ action: 'public_cash_board', shop_id: boardShop }),
-        });
-        const { board } = await response.json();
-        if (!response.ok || !board) {
-          if (response.status === 404) {
-            currentRound = null;
-            updateBoardTimer();
-            for (const id of ['roundIdDisplay', 'evenAmount', 'oddAmount', 'totalAmount', 'evenCount', 'oddCount', 'lastWeight', 'lastWinner', 'boardTables', 'boardDay', 'dayRounds', 'dayEven', 'dayOdd', 'dayTotal']) set(id, '—');
-            for (const side of ['even', 'odd']) document.getElementById(side + 'Progress').style.width = '0%';
-            document.getElementById('boardDay').removeAttribute('datetime');
-            renderHistory([], 'ร้านนี้ยังไม่เปิดบริการ');
-            set('boardConnection', 'ร้านนี้ยังไม่เปิดบริการ');
-            return;
-          }
-          throw new Error('BOARD_UNAVAILABLE');
-        }
+        if (session) sessionStorage.setItem(sessionKey, session);
+        else sessionStorage.removeItem(sessionKey);
+      } catch {}
+    }
+
+    function lockBoard(message = '') {
+      clearTimeout(boardRefreshTimer);
+      saveSession(null);
+      currentRound = null;
+      boardContent.hidden = true;
+      unlockForm.hidden = false;
+      set('boardShopName', 'จอทีวีและ MC');
+      set('boardUnlockStatus', message);
+    }
+
+    async function requestBoard(action, fields) {
+      const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/mc-board', {
+        method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(9000),
+        headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY },
+        body: JSON.stringify({ action, shop_id: boardShop, ...fields }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.code || 'BOARD_UNAVAILABLE');
+      return data;
+    }
+
+    unlockForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = unlockForm.querySelector('button');
+      const input = document.getElementById('boardPassword');
+      button.disabled = true;
+      set('boardUnlockStatus', 'กำลังตรวจรหัสผ่าน…');
+      try {
+        const { session } = await requestBoard('unlock', { password: input.value });
+        saveSession(session);
+        await refreshBoard();
+      } catch (error) {
+        set('boardUnlockStatus', ({
+          BOARD_PASSWORD_INVALID: 'กรอกรหัสผ่าน 8–128 ตัวอักษร',
+          BOARD_PASSWORD_INCORRECT: 'รหัสผ่านไม่ถูกต้อง',
+          BOARD_SETUP_REQUIRED: 'ร้านยังไม่ได้ตั้งรหัสผ่านหรือยังไม่เปิดบริการ',
+          BOARD_TRY_LATER: 'ลองหลายครั้งแล้ว กรุณารอ 1 นาที',
+        })[error.message] || 'เชื่อมต่อไม่ได้ กรุณาลองใหม่');
+      } finally {
+        input.value = '';
+        button.disabled = false;
+      }
+    });
+
+    document.getElementById('boardLock').onclick = () => lockBoard();
+
+    async function refreshBoard() {
+      const session = boardSession;
+      if (!session) return;
+      try {
+        const { board } = await requestBoard('read', { board_session: session });
+        if (session !== boardSession) return;
+        unlockForm.hidden = true;
+        boardContent.hidden = false;
         set('boardShopName', board.shop_name);
         currentRound = board.round;
         set('roundIdDisplay', board.round ? 'รอบ ' + board.round.round_id : 'รอบ —');
@@ -395,7 +458,6 @@
         set('dayRounds', board.daily.rounds ?? Number(board.daily.even) + Number(board.daily.odd));
         set('dayEven', board.daily.even);
         set('dayOdd', board.daily.odd);
-        set('dayTotal', board.daily.total == null ? '—' : money(board.daily.total));
         if (historyDay !== board.accounting_day) {
           historyDay = board.accounting_day;
           historyPage = 0;
@@ -403,10 +465,16 @@
         }
         renderHistory(board.history ?? []);
         set('boardConnection', 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' }));
-      } catch {
-        set('boardConnection', 'ข้อมูลอาจไม่ล่าสุด · กำลังเชื่อมต่อใหม่');
+      } catch (error) {
+        if (session !== boardSession) return;
+        if (error.message === 'BOARD_PASSWORD_REQUIRED') {
+          lockBoard('กรุณากรอกรหัสผ่านเพื่อเปิดจออีกครั้ง');
+        } else {
+          set('boardUnlockStatus', 'เชื่อมต่อไม่ได้ กำลังลองใหม่');
+          set('boardConnection', 'ข้อมูลอาจไม่ล่าสุด · กำลังเชื่อมต่อใหม่');
+        }
       } finally {
-        setTimeout(refreshBoard, 3000);
+        if (session === boardSession) boardRefreshTimer = setTimeout(refreshBoard, 3000);
       }
     }
 
