@@ -6,7 +6,7 @@
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=round-name-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=mc-board-3"></script>
+  <script src="admin-api-client.js?v=withdrawal-receipt-1"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -607,6 +607,12 @@
       <p id="walletDecisionAmount"></p>
       <p id="walletDecisionNote"></p>
       <a id="walletDecisionSlip" class="btn btn-outline" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" hidden>ดูรูปสลิป</a>
+      <div id="withdrawalReceiptFields" hidden>
+        <label for="withdrawalReceipt">แนบรูปสลิปโอนเงิน (JPG หรือ PNG ไม่เกิน 1 MB)</label>
+        <input id="withdrawalReceipt" class="form-control" type="file" accept="image/jpeg,image/png">
+        <p id="withdrawalReceiptError" role="alert"></p>
+        <img id="withdrawalReceiptPreview" alt="ตัวอย่างสลิปโอนเงิน" hidden style="max-width:100%;max-height:180px;object-fit:contain">
+      </div>
       <div class="wallet-confirm-actions">
         <button type="button" value="cancel" autofocus>ยกเลิก</button>
         <button type="submit" value="approve">ยืนยันเติมเงิน</button>
@@ -1227,6 +1233,7 @@
       if (walletDecision || dialog.open || request.shop_id !== currentShopId) return;
 
       const deposit = request.type === 'ฝากเงิน';
+      const withdrawal = request.type === 'ถอนเงิน';
       const needsReview = deposit && request.fee_option === 'slip_review';
       const action = deposit ? 'เติมเงิน' : request.type;
       const note = request.type === 'ถอนค่าคอม' ? 'กดยืนยันหลังจากโอนค่าคอมให้สมาชิกแล้ว'
@@ -1244,7 +1251,21 @@
       slipLink.removeAttribute('href');
       const approve = dialog.querySelector('[value="approve"]');
       approve.textContent = 'ยืนยัน' + action;
-      approve.disabled = needsReview;
+      approve.disabled = needsReview || withdrawal;
+      const fileInput = document.getElementById('withdrawalReceipt');
+      const preview = document.getElementById('withdrawalReceiptPreview');
+      document.getElementById('withdrawalReceiptFields').hidden = !withdrawal;
+      fileInput.value = '';
+      let previewUrl;
+      const receiptError = document.getElementById('withdrawalReceiptError');
+      receiptError.textContent = '';
+      function clearReceiptPreview() {
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = null;
+        preview.removeAttribute('src');
+        preview.hidden = true;
+      }
+
       showWalletQueueStatus('');
       const events = new AbortController();
       const decision = {
@@ -1253,12 +1274,24 @@
         submitting: false,
         close(approved) {
           events.abort();
+          clearReceiptPreview();
+          fileInput.value = '';
           dialog.close();
           if (!approved) walletDecision = null;
         },
       };
       walletDecision = decision;
       const options = { signal: events.signal };
+      fileInput.addEventListener('change', () => {
+        clearReceiptPreview();
+        const file = fileInput.files[0];
+        approve.disabled = !file || !['image/jpeg','image/png'].includes(file.type) || file.size > 1_000_000 || !file.size;
+        receiptError.textContent = file && approve.disabled ? 'กรุณาเลือกรูป JPG หรือ PNG ขนาดไม่เกิน 1 MB' : '';
+        if (approve.disabled) return;
+        previewUrl = URL.createObjectURL(file);
+        preview.src = previewUrl;
+        preview.hidden = false;
+      }, options);
       dialog.querySelector('[value="cancel"]').addEventListener('click', () => decision.close(false), options);
       dialog.addEventListener('cancel', event => {
         event.preventDefault();
@@ -1271,6 +1304,7 @@
           decision.close(false);
           return;
         }
+        const receipt = fileInput.files[0];
         decision.submitting = true;
         decision.close(true);
         showWalletQueueStatus('กำลังยืนยันรายการ…');
@@ -1278,11 +1312,12 @@
         const card = () => Array.from(list.children).find(row => row.dataset.walletRequestId === String(request.id));
         card()?.querySelectorAll('button').forEach(button => button.disabled = true);
         try {
-          if (deposit) await _supabase.approveWalletDeposit(request.id);
-          else await _supabase.approveWalletWithdrawal(request.id);
+          const result = deposit ? await _supabase.approveWalletDeposit(request.id)
+            : await _supabase.approveWalletWithdrawal(request.id, receipt);
           pendingQueueApplied = pendingQueueLoad + 1;
           card()?.remove();
-          showWalletQueueStatus(action + 'สำเร็จ');
+          if (withdrawal) showWithdrawalNotification(result, () => _supabase.approveWalletWithdrawal(request.id), 'ยืนยันการโอนแล้ว');
+          else showWalletQueueStatus(action + 'สำเร็จ');
         } catch (error) {
           if (error.message === 'REQUEST_NOT_PENDING') {
             pendingQueueApplied = pendingQueueLoad + 1;
@@ -1324,14 +1359,35 @@
       }
     }
 
+    function showWithdrawalNotification(result, retry, label) {
+      showWalletQueueStatus(label + (result.notified ? ' · LINE รับคำขอแจ้งลูกค้าแล้ว' : ' · ยังส่งแจ้งลูกค้าไม่สำเร็จ'));
+      if (result.notified) return;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn-outline';
+      button.textContent = 'ลองแจ้งลูกค้าอีกครั้ง';
+      button.onclick = async () => {
+        button.disabled = true;
+        try { showWithdrawalNotification(await retry(), retry, label); }
+        catch { button.disabled = false; }
+      };
+      document.getElementById('walletQueueStatus').append(' ', button);
+    }
+
     async function rejectPendingRequest(id, uid, type, amount) {
-        const reason = prompt("ระบุเหตุผลที่ปฏิเสธ (ไม่เกิน 300 ตัวอักษร):", type === 'ฝากเงิน' ? '' : 'ข้อมูลไม่ถูกต้อง')?.trim();
+        const reason = prompt("ระบุเหตุผลที่ปฏิเสธ (ไม่เกิน 300 ตัวอักษร):", ['ฝากเงิน','ถอนเงิน'].includes(type) ? '' : 'ข้อมูลไม่ถูกต้อง')?.trim();
         if (reason === undefined) return;
-        if (type === 'ฝากเงิน' && (!reason || reason.length > 300)) {
+        if (['ฝากเงิน','ถอนเงิน'].includes(type) && (!reason || reason.length > 300)) {
             alert("กรุณาระบุเหตุผลที่ปฏิเสธ 1–300 ตัวอักษร");
             return;
         }
         try {
+            if (type === 'ถอนเงิน') {
+                const retry = () => _supabase.rejectWalletWithdrawal(id, reason);
+                showWithdrawalNotification(await retry(), retry, 'ปฏิเสธรายการแล้ว');
+                await loadPendingRequests();
+                return;
+            }
             if (type === 'ถอนค่าคอม') {
                 const { data: u } = await _supabase.from('users').select('commission_balance').eq('shop_id', currentShopId).eq('uid', uid).single();
                 if(u) await _supabase.from('users').update({ commission_balance: u.commission_balance + amount }).eq('shop_id', currentShopId).eq('uid', uid);

@@ -234,7 +234,8 @@ async function creditNotice(db, shop, transactionId) {
 }
 
 async function dispatch(db, shop, round, batches, kind) {
-  const message = roundFlex(shop, round, kind);
+  const roundName = round.round_id.replace(/^R-([0-9]{6})-([0-9]+)-SHOP_([0-9]{3,24})$/, 'R-$1-$3-$2');
+  const message = roundFlex(shop, { ...round, round_id: roundName }, kind);
   let accepted = 0;
   let failed = 0;
   for (const batch of batches) {

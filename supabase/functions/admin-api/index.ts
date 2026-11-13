@@ -129,6 +129,8 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
     const shop = await db.from('shop_oa_runtime').select('line_oa_token,liff_id_admin,admin_group_id,line_notifications_enabled,membership_notice_recipient_uid').eq('shop_id', shopId).maybeSingle();
     const token = shop.data?.line_oa_token;
     if (!token || shop.data?.line_notifications_enabled === false) return;
+    const withdrawal = request.type === 'ถอนเงิน' && request.status !== 'Pending';
+    const rejected = request.status === 'Rejected';
     const credited = request.status === 'Approved' && request.type === 'ฝากเงิน';
     const rejectedDeposit = request.status === 'Rejected' && request.type === 'ฝากเงิน';
     const profile = credited && request.member_id ? null : await db.from('users').select('display_name,member_id,profile_pic')
@@ -137,7 +139,7 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
     const member = formatMemberCode(shopId, request.member_id || profile?.data?.member_id);
     const picture = lineProfilePicture(request.profile_pic || profile?.data?.profile_pic);
     const titles = { Pending: 'ได้รับคำขอ', Approved: 'ทำรายการสำเร็จ', Rejected: 'คำขอถูกปฏิเสธ' };
-    const title = credited ? '🎉 เติมเครดิตสำเร็จ' : rejectedDeposit ? '❌ เติมเงินไม่สำเร็จ' : titles[request.status] + ' · ' + request.type;
+    const title = withdrawal ? (rejected ? 'ถอนเงินไม่สำเร็จ' : 'โอนเงินถอนสำเร็จ') : credited ? '🎉 เติมเครดิตสำเร็จ' : rejectedDeposit ? '❌ เติมเงินไม่สำเร็จ' : titles[request.status] + ' · ' + request.type;
     const adminLiff = shop.data?.liff_id_admin || env('MEMBERSHIP_LIFF_ID_ADMIN') || '2012454809-41EMnP1K';
     const opensQueue = request.status === 'Pending' && request.staff_recipient === true;
     const bubble = { type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
@@ -148,7 +150,7 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
         : [{ type: 'text', text: name + (member ? ' · สมาชิก ' + member : ''), wrap: true }]),
       { type: 'text', text: (credited ? 'ยอดที่เติม ฿' : 'ยอดรายการ ฿') + Number(request.amount).toLocaleString('th-TH', { maximumFractionDigits: 2 }),
         ...(credited ? { size: 'xl', weight: 'bold', color: '#047857' } : {}), wrap: true },
-      ...(rejectedDeposit ? [{ type: 'box', layout: 'vertical', spacing: 'xs', paddingAll: '12px',
+      ...(rejected ? [{ type: 'box', layout: 'vertical', spacing: 'xs', paddingAll: '12px',
         backgroundColor: '#FEE2E2', cornerRadius: 'md', contents: [
           { type: 'text', text: 'เหตุผลที่แอดมินปฏิเสธ', color: '#991B1B', weight: 'bold', wrap: true },
           { type: 'text', text: request.rejection_reason || 'แอดมินไม่ได้ระบุเหตุผล', color: '#991B1B', wrap: true },
@@ -166,15 +168,25 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
     }
     const target = await db.rpc('resolve_shop_oa_recipient', { p_shop: shopId, p_member: request.uid });
     if (target.error) console.error('wallet LINE recipient lookup failed');
+    let accepted = false;
     if (target.data) {
       try {
+        const messages = [{ type: 'flex', altText: title, contents: bubble }];
+        if (request.receipt_path) {
+          const { data, error } = await db.storage.from('slips-private').createSignedUrl(request.receipt_path, 7 * 86400);
+          if (error || !data?.signedUrl) return false;
+          messages.push({ type: 'image', originalContentUrl: data.signedUrl, previewImageUrl: data.signedUrl });
+        }
         const result = await fetcher('https://api.line.me/v2/bot/message/push', {
-          method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ to: target.data, messages: [{ type: 'flex', altText: title, contents: bubble }] }),
+          method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json',
+            ...(request.notice_key ? { 'X-Line-Retry-Key': request.notice_key } : {}) },
+          body: JSON.stringify({ to: target.data, messages }),
           signal: AbortSignal.timeout(3000),
         });
-        if (!result.ok) console.error('wallet LINE notification rejected', result.status);
-      } catch { console.error('wallet LINE notification unavailable'); }
+        accepted = result.ok || (result.status === 409 && result.headers.has('x-line-accepted-request-id'));
+        if (!accepted) console.error('wallet LINE notification rejected', result.status);
+        return accepted;
+  } catch { console.error('wallet LINE notification unavailable'); return false; }
     }
     const group = shop.data?.admin_group_id || shop.data?.membership_notice_recipient_uid;
     if (request.status === 'Pending' && /^[CUR][0-9a-f]{32}$/i.test(group || '') && group !== target.data &&
@@ -264,11 +276,20 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
     try {
       if (req.method !== 'POST') fail('METHOD_NOT_ALLOWED', 405);
       if (req.headers.get('origin') && req.headers.get('origin') !== origin) fail('ORIGIN_NOT_ALLOWED', 403);
-      if (!(req.headers.get('content-type') || '').toLowerCase().startsWith('application/json')) fail('UNSUPPORTED_CONTENT_TYPE', 415);
-      const raw = await req.text();
-      if (raw.length > 65536) fail('REQUEST_TOO_LARGE', 413);
+      const contentType = (req.headers.get('content-type') || '').toLowerCase();
       let input;
-      try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
+      let receipt;
+      if (contentType.startsWith('multipart/form-data')) {
+        if (Number(req.headers.get('content-length')) > 1_100_000) fail('REQUEST_TOO_LARGE', 413);
+        const form = await req.formData().catch(() => fail('INVALID_FORM'));
+        input = { action: 'wallet_approve_withdrawal', shop_id: form.get('shop_id'), request_id: form.get('request_id') };
+        receipt = form.get('receipt');
+      } else {
+        if (!contentType.startsWith('application/json')) fail('UNSUPPORTED_CONTENT_TYPE', 415);
+        const raw = await req.text();
+        if (raw.length > 65536) fail('REQUEST_TOO_LARGE', 413);
+        try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
+      }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
       if (input.action === 'public_cash_board') {
@@ -279,7 +300,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, board: result.data });
       }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'wallet_reject_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
@@ -647,7 +668,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (input.include_wallet_requests === true) {
           if (profile.data.status !== 'Active') fail('PLAYER_ACCESS_REQUIRED', 403);
           const [requests, credits] = await Promise.all([
-            db.from('topup_requests').select('type,amount,status,created_at')
+            db.from('topup_requests').select('type,amount,status,created_at,withdrawal_receipt_path,withdrawal_rejection_reason')
               .eq('shop_id', shopId).eq('uid', claims.sub)
               .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(10),
             db.from('wallet_slip_credits').select('amount,credited_at')
@@ -660,7 +681,17 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           }));
           const history = [...requests.data, ...automatic]
             .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)).slice(0, 10);
-          return reply({ ok: true, wallet_requests: history });
+          const walletRequests = await Promise.all(history.map(async ({
+            withdrawal_receipt_path, withdrawal_rejection_reason, ...entry
+          }) => {
+            if (withdrawal_rejection_reason) entry.rejection_reason = withdrawal_rejection_reason;
+            if (withdrawal_receipt_path && entry.type === 'ถอนเงิน' && entry.status === 'Approved') {
+              const { data } = await db.storage.from('slips-private').createSignedUrl(withdrawal_receipt_path, 300);
+              if (data?.signedUrl) entry.receipt_url = data.signedUrl;
+            }
+            return entry;
+          }));
+          return reply({ ok: true, wallet_requests: walletRequests });
         }
         return reply({ ok: true, staff, state: 'Approved', player: profile.data, live_enabled: shop.data.live_enabled === true });
       }
@@ -760,6 +791,40 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (!['ENDED', 'RECOVERED'].includes(result.data)) fail(result.data || 'ROUND_FINALIZE_UNAVAILABLE', 409);
         return reply({ ok: true, recovered: result.data === 'RECOVERED' });
       }
+      if (['wallet_approve_withdrawal','wallet_reject_withdrawal'].includes(input.action)) {
+        const id = String(input.request_id ?? '');
+        if (!/^SHOP_[0-9]{3,24}$/.test(shopId) || !/^\d{1,10}$/.test(id)) fail('WALLET_REQUEST_INVALID');
+        const row = await db.from('topup_requests').select('type,status')
+          .eq('shop_id',shopId).eq('id',id).maybeSingle();
+        if (row.error) fail('WALLET_REQUEST_UNAVAILABLE',500);
+        if (!row.data) fail('REQUEST_NOT_PENDING',409);
+        if (row.data.type === 'ถอนเงิน') {
+          const rejecting = input.action === 'wallet_reject_withdrawal';
+          const reason = rejecting && typeof input.rejection_reason === 'string' ? input.rejection_reason.trim() : null;
+          if (rejecting && (!reason || reason.length > 300)) fail('WITHDRAWAL_REASON_REQUIRED');
+          let path = null;
+          const bucket = db.storage.from('slips-private');
+          if (!rejecting && row.data.status === 'Pending') {
+            if (!(receipt instanceof File)) fail('WITHDRAWAL_RECEIPT_REQUIRED');
+            const bytes = new Uint8Array(await receipt.slice(0,8).arrayBuffer());
+            const jpg = receipt.type === 'image/jpeg' && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+            const png = receipt.type === 'image/png' && [137,80,78,71,13,10,26,10].every((b,i) => bytes[i] === b);
+            if ((!jpg && !png) || receipt.size > 1_000_000) fail('WITHDRAWAL_RECEIPT_INVALID');
+            path = shopId + '/withdrawal-receipts/' + id + '/' + crypto.randomUUID() + (jpg ? '.jpg' : '.png');
+            const saved = await bucket.upload(path, receipt, { contentType: receipt.type });
+            if (saved.error) fail('WITHDRAWAL_RECEIPT_UPLOAD_FAILED',503);
+          }
+          const decision = await db.rpc('decide_player_withdrawal', {
+            p_shop:shopId, p_request:id, p_staff:claims.sub, p_receipt:path, p_reason:reason,
+          });
+          if (decision.error) fail('WALLET_REQUEST_UNAVAILABLE',500);
+          if (path && decision.data?.receipt_path !== path) await bucket.remove([path]).catch(() => {});
+          if (decision.data?.code !== 'DECIDED') fail(decision.data?.code || 'WALLET_REQUEST_UNAVAILABLE',409);
+          const notified = await notifyWalletPlayer(db, fetcher, env, shopId, decision.data);
+          return reply({ ok:true, notified: notified === true });
+        }
+        if (input.action === 'wallet_reject_withdrawal' || receipt) fail('WALLET_REQUEST_INVALID');
+      }
       if (['wallet_approve_deposit', 'wallet_approve_withdrawal'].includes(input.action)) {
         const id = String(input.request_id ?? '');
         if (!/^(?:\d{1,20}|[a-f0-9-]{36})$/i.test(id)) fail('WALLET_REQUEST_INVALID');
@@ -811,7 +876,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (changingBet) query = query.eq('status', 'Active');
       const walletDecision = spec.table === 'topup_requests' && spec.operation === 'update' &&
         ['Approved', 'Rejected'].includes(input.values?.status);
-      if (walletDecision) query = query.eq('status', 'Pending').select(input.returning ? spec.columns : 'uid,type,amount,status');
+      if (walletDecision) query = query.neq('type', 'ถอนเงิน').eq('status', 'Pending').select(input.returning ? spec.columns : 'uid,type,amount,status');
       else if (changingBet) query = query.select(spec.columns);
       else if (spec.operation !== 'select' && input.returning) query = query.select(spec.columns);
       for (const o of spec.orders) query = query.order(o.column, { ascending: o.ascending });

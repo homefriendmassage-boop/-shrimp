@@ -1121,6 +1121,24 @@
           const amount = Number(request.amount).toLocaleString('th-TH', { style: 'currency', currency: 'THB' });
           const date = new Date(request.created_at).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
           row.textContent = request.type + ' ' + amount + ' · ' + (labels.get(request.status) ?? 'ไม่ทราบสถานะ') + ' · ' + date;
+          if (request.rejection_reason) {
+            const reason = document.createElement('p');
+            reason.textContent = 'เหตุผลที่ปฏิเสธ: ' + request.rejection_reason;
+            row.append(reason);
+          }
+          if (request.receipt_url) {
+            const link = document.createElement('a');
+            link.href = request.receipt_url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            const image = document.createElement('img');
+            image.src = request.receipt_url;
+            image.alt = 'สลิปโอนเงินถอน';
+            image.loading = 'lazy';
+            image.style.cssText = 'display:block;max-width:100%;max-height:180px;object-fit:contain';
+            link.append(image);
+            row.append(link);
+          }
           list.appendChild(row);
         }
         status.textContent = result.wallet_requests.length ? '' : 'ยังไม่มีรายการ Wallet';
