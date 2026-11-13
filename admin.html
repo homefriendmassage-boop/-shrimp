@@ -6,7 +6,7 @@
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=round-name-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=mc-board-3"></script>
+  <script src="admin-api-client.js?v=referral-wallet-1"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -488,7 +488,11 @@
             <div style="font-size: 0.8rem; color: var(--text-muted);">ยกเลิกบิล</div><div id="repCancelled" style="font-size: 1.1rem; font-weight: bold; color: var(--text-muted);">฿0</div>
           </div>
           <div style="background: #0f111a; padding: 10px; border-radius: 8px; border: 1px solid var(--card-border);">
-            <div style="font-size: 0.8rem; color: var(--text-muted);">ค่าน้ำสุทธิ (Net)</div><div id="repNetProfit" style="font-size: 1.1rem; font-weight: bold; color: var(--green-main);">฿0</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">ค่าน้ำหลังหักค่าแนะนำ</div><div id="repNetProfit" style="font-size: 1.1rem; font-weight: bold; color: var(--green-main);">฿0</div>
+          </div>
+          <div style="background:#0f111a;padding:10px;border-radius:8px;border:1px solid var(--card-border)">
+            <div style="font-size:.8rem;color:var(--text-muted)">ค่าแนะนำที่เข้า Wallet</div>
+            <div id="repReferralCommission" style="font-size:1.1rem;font-weight:bold;color:var(--red-main)">—</div>
           </div>
         </div>
         
@@ -1352,6 +1356,7 @@
     async function generateReport() {
       cachedReportData = {};
       if (currentUserRole === 'Operator') return; 
+      document.getElementById('repReferralCommission').textContent = '—';
       const listDiv = document.getElementById('roundReportList');
       listDiv.innerHTML = '<div style="text-align:center; color: var(--text-muted); padding: 15px;">กำลังคำนวณรายงาน...</div>';
       
@@ -1421,12 +1426,19 @@
             });
         }
 
+        const referral = await _supabase.dailyReferralCommission(selDate);
+        if (document.getElementById('repDateSelector').value !== selDate) return;
+        const commission = Number(referral.referral_commission);
+        const money = value => value.toLocaleString('th-TH', { maximumFractionDigits: 2 });
+        document.getElementById('repReferralCommission').textContent = '฿' + money(commission)
+          + ' · ' + referral.referral_recipients + ' ผู้แนะนำ';
+        gNet -= commission;
         document.getElementById('repTotalDeposit').innerText = `฿${tDep.toLocaleString()}`; document.getElementById('repTotalWithdraw').innerText = `฿${tWd.toLocaleString()}`;
         document.getElementById('repGrossBet').innerText = `฿${gGross.toLocaleString()}`; document.getElementById('repPayout').innerText = `-฿${gPayout.toLocaleString()}`;
         document.getElementById('repCancelled').innerText = `฿${gCancel.toLocaleString()}`; document.getElementById('repNetProfit').innerText = `฿${gNet.toLocaleString()}`;
         document.getElementById('repNetProfit').style.color = gNet >= 0 ? 'var(--green-main)' : 'var(--red-main)';
         
-        cachedReportData = { dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: 0, adminName: currentAdminName, backerSummaries: backerSummaries };
+        cachedReportData = { dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, adminName: currentAdminName, backerSummaries: backerSummaries };
       } catch (e) { listDiv.innerHTML = '<div style="text-align:center; color:red; padding: 15px;">การดึงรายงานขัดข้อง: ' + e.message + '</div>'; }
     }
 
@@ -1443,7 +1455,7 @@
         if(paperType === 'A4') document.getElementById('signAdminNameA4').innerText = currentAdminName;
         
         document.getElementById(`p_grossBet${paperType}`).innerText = rd.grossBet.toLocaleString(); document.getElementById(`p_payout${paperType}`).innerText = rd.payout.toLocaleString();
-        document.getElementById(`p_cancelled${paperType}`).innerText = rd.cancelled.toLocaleString(); document.getElementById(`p_comm${paperType}`).innerText = rd.comm.toLocaleString();
+        document.getElementById(`p_cancelled${paperType}`).innerText = rd.cancelled.toLocaleString(); document.getElementById(`p_comm${paperType}`).innerText = rd.comm.toLocaleString('th-TH', { maximumFractionDigits: 2 });
         document.getElementById(`p_netProfit${paperType}`).innerText = rd.netProfit.toLocaleString();
         document.getElementById(`p_depCount${paperType}`).innerText = rd.countDep + (paperType === 'A4' ? " รายการ" : ""); document.getElementById(`p_totalDep${paperType}`).innerText = rd.totalDep.toLocaleString();
         document.getElementById(`p_wdCount${paperType}`).innerText = rd.countWd + (paperType === 'A4' ? " รายการ" : ""); document.getElementById(`p_totalWd${paperType}`).innerText = rd.totalWd.toLocaleString();
@@ -1753,8 +1765,8 @@
         const roundId = lr[0].round_id; const res = (w % 2 === 0) ? 'คู่' : 'คี่';
         const resolverType = lr[0].resolver_type;
         
-        const { data: [set] } = await _supabase.from('system_settings').select('water_margin, comm_rate').eq('shop_id', currentShopId).limit(1);
-        const margin = set ? set.water_margin : 0.05; const commRate = set ? set.comm_rate : 0.01;
+        const { data: [set] } = await _supabase.from('system_settings').select('water_margin').eq('shop_id', currentShopId).limit(1);
+        const margin = set ? set.water_margin : 0.05;
 
         const { data: bets, error: betsError } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('round_id', roundId).neq('status', 'Cancelled');
         if (betsError) throw new Error("ดึงข้อมูลบิลไม่ได้: " + betsError.message);
@@ -1818,15 +1830,8 @@
                   const { data: tData } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', bet.table_no).single();
                   if(tData) await _supabase.from('tables').update({ credit: tData.credit + payout }).eq('shop_id', currentShopId).eq('table_no', bet.table_no);
               } else {
-                  const { data: uData } = await _supabase.from('users').select('credit_balance, referrer_uid').eq('shop_id', currentShopId).eq('uid', bet.uid).single();
-                  if(uData) {
-                      await _supabase.from('users').update({ credit_balance: uData.credit_balance + payout }).eq('shop_id', currentShopId).eq('uid', bet.uid);
-                      if (uData.referrer_uid && uData.referrer_uid !== '-') {
-                         let commAmount = bet.amount * commRate;
-                         const { data: refUser } = await _supabase.from('users').select('commission_balance, uid').eq('shop_id', currentShopId).eq('member_id', uData.referrer_uid).single();
-                         if(refUser) await _supabase.from('users').update({ commission_balance: (refUser.commission_balance || 0) + commAmount }).eq('shop_id', currentShopId).eq('uid', refUser.uid);
-                      }
-                  }
+                  const { data: uData } = await _supabase.from('users').select('credit_balance').eq('shop_id', currentShopId).eq('uid', bet.uid).single();
+                  if (uData) await _supabase.from('users').update({ credit_balance: uData.credit_balance + payout }).eq('shop_id', currentShopId).eq('uid', bet.uid);
               }
             } else { await _supabase.from('bets').update({ status: 'Lose', payout: 0 }).eq('shop_id', currentShopId).eq('bet_id', bet.bet_id); }
           }

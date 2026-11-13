@@ -220,6 +220,7 @@ export function dailyFinanceFlex(day, shopName, data, preparedBy) {
     timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short',
   });
   const margin = Number(data.settled_stake) - Number(data.payout) - Number(data.pnl);
+  const referral = Number(data.referral_commission ?? 0);
   const netCash = Number(data.cash_in) - Number(data.cash_out);
   const title = 'รายงานสรุปยอดประจำวัน';
   const sections = [
@@ -227,7 +228,9 @@ export function dailyFinanceFlex(day, shopName, data, preparedBy) {
       row('ยอดเล่นที่ตัดผล', money(data.settled_stake)),
       row('จ่ายผู้ชนะ', signedMoney(-Number(data.payout)), movementColor(-Number(data.payout))),
       row('ผลสุทธิผู้รับจบ', signedMoney(-Number(data.pnl)), movementColor(-Number(data.pnl))),
-      row('ค่าน้ำสุทธิก่อนค่าคอมและค่าใช้จ่าย', signedMoney(margin), movementColor(margin), true),
+      row('ค่าน้ำสุทธิก่อนค่าคอมและค่าใช้จ่าย', signedMoney(margin), movementColor(margin)),
+      row('ค่าแนะนำที่เข้า Wallet', signedMoney(-referral), movementColor(-referral)),
+      row('ค่าน้ำหลังหักค่าแนะนำ ก่อนค่าใช้จ่าย', signedMoney(margin - referral), movementColor(margin - referral), true),
     ]),
     section('การเงินบ่อ', [
       row('รับเงินสดจากโต๊ะ', signedMoney(Number(data.cash_in)), color.green),
@@ -362,10 +365,10 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, board: result.data });
       }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-      const playerRequest = ['player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
+      const playerRequest = ['promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
       const shopLogin = input.shop_login === true;
       if (shopLogin && (!playerRequest || shopId !== 'SHOP_001')) fail('SHOP_LOGIN_NOT_ALLOWED', 403);
@@ -640,6 +643,14 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (shop.error) fail('DATABASE_ERROR', 500);
         if (String(shop.data?.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
 
+        if (input.action === 'promoter_profile') {
+          const promoter = await db.from('users').select('uid,member_id,display_name,credit_balance,commission_balance')
+            .eq('shop_id', shopId).eq('uid', claims.sub).eq('role', 'Promoter').eq('status', 'Active').maybeSingle();
+          if (promoter.error) fail('DATABASE_ERROR', 500);
+          if (!promoter.data) fail('PLAYER_ACCESS_REQUIRED', 403);
+          return reply({ ok: true, promoter: promoter.data });
+        }
+
         const profile = await db.from('users').select(input.action === 'wallet_request' ? 'uid,role,status,member_id,credit_balance,display_name' : 'uid,role,status,member_id,credit_balance')
           .eq('uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (profile.error) fail('DATABASE_ERROR', 500);
@@ -729,19 +740,27 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         }
         if (input.include_wallet_requests === true) {
           if (profile.data.status !== 'Active') fail('PLAYER_ACCESS_REQUIRED', 403);
-          const [requests, credits] = await Promise.all([
+          const [requests, credits, referrals] = await Promise.all([
             db.from('topup_requests').select('type,amount,status,created_at')
               .eq('shop_id', shopId).eq('uid', claims.sub)
               .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(10),
             db.from('wallet_slip_credits').select('amount,credited_at')
               .eq('shop_id', shopId).eq('uid', claims.sub)
               .order('credited_at', { ascending: false }).order('transaction_ref', { ascending: false }).limit(10),
+            profile.data.role === 'Promoter'
+              ? db.from('referral_commission_credits').select('amount,credited_at')
+                .eq('shop_id', shopId).eq('referrer_uid', claims.sub)
+                .order('credited_at', { ascending: false }).order('bet_id').limit(10)
+              : { data: [] },
           ]);
-          if (requests.error || credits.error) fail('WALLET_REQUESTS_UNAVAILABLE', 500);
+          if (requests.error || credits.error || referrals.error) fail('WALLET_REQUESTS_UNAVAILABLE', 500);
           const automatic = credits.data.map(entry => ({
             type: 'ฝากเงิน', amount: entry.amount, status: 'Approved', created_at: entry.credited_at,
           }));
-          const history = [...requests.data, ...automatic]
+          const commission = referrals.data.map(entry => ({
+            type: 'ค่าแนะนำ', amount: entry.amount, status: 'Approved', created_at: entry.credited_at,
+          }));
+          const history = [...requests.data, ...automatic, ...commission]
             .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)).slice(0, 10);
           return reply({ ok: true, wallet_requests: history });
         }
@@ -760,11 +779,16 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (picture) await db.from('users').update({ profile_pic: picture }).eq('shop_id', shopId).eq('uid', claims.sub);
         return reply({ ok: true, staff: staff.data, can_create_shop: await canCreateShop() });
       }
-      if (['table_cash_report', 'table_send_cash_report'].includes(input.action)) {
+      if (['table_cash_report', 'table_send_cash_report', 'daily_referral_commission'].includes(input.action)) {
         if (staff.data.role === 'Operator') fail('ADMIN_REQUIRED', 403);
         if (typeof input.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.day)) fail('TABLE_DATE_INVALID');
         const date = new Date(input.day + 'T00:00:00Z');
         if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== input.day) fail('TABLE_DATE_INVALID');
+        if (input.action === 'daily_referral_commission') {
+          const result = await db.rpc('daily_referral_commission', { p_shop: shopId, p_day: input.day });
+          if (result.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
+          return reply({ ok: true, ...result.data });
+        }
         if (input.action === 'table_cash_report') {
           const result = await db.rpc('cash_table_daily_report', { p_shop: shopId, p_day: input.day });
           if (result.error) fail('TABLE_REPORT_UNAVAILABLE', 500);

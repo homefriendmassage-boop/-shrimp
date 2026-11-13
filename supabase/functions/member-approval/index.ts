@@ -236,8 +236,17 @@ Deno.serve(async req => {
       .eq('shop_id', shopId).eq('line_uid', uid).maybeSingle();
     if (action === 'apply') {
       const displayName = typeof input.display_name === 'string' ? input.display_name.trim().slice(0, 80) : '';
+      let referralMemberId = null;
+      if (typeof input.referral_member_id === 'string' && /^M[0-9]{4,19}$/.test(input.referral_member_id)) {
+        const referral = await db.from('users').select('member_id').eq('shop_id', shopId)
+          .eq('member_id', input.referral_member_id).neq('uid', uid)
+          .eq('role', 'Promoter').eq('status', 'Active').maybeSingle();
+        if (referral.error) return error('DATABASE_ERROR', 500);
+        referralMemberId = referral.data?.member_id ?? null;
+      }
       const result = await db.from('membership_applications').upsert({
-        shop_id: shopId, line_uid: uid, display_name: displayName, profile_pic: picture, state: 'Pending'
+        shop_id: shopId, line_uid: uid, display_name: displayName, profile_pic: picture, state: 'Pending',
+        ...(referralMemberId ? { referral_member_id: referralMemberId } : {})
       }, { onConflict: 'shop_id,line_uid', ignoreDuplicates: true });
       if (result.error) return error('DATABASE_ERROR', 500);
     }
