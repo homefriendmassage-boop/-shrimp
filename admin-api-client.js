@@ -55,6 +55,7 @@ function createAdminApiClient(config, getShopId) {
       action: 'table_cash_payment', table_no: table, type, amount, entry_id: id,
     }),
     sendTableCashReport: (day, id) => call({ action: 'table_send_cash_report', day, delivery_id: id }),
+    dailyReferralCommission: day => call({ action: 'daily_referral_commission', day }),
     tableCashReport: day => call({ action: 'table_cash_report', day }),
     finalizeBalancedRound: (roundId, weight) => call({ action: 'round_finalize_balanced', round_id: roundId, weight }),
     approveWalletDeposit: requestId => call({ action: 'wallet_approve_deposit', request_id: String(requestId) }),

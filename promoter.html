@@ -33,18 +33,21 @@
 
     <div class="card">
       <div class="wallet-box">
-        <div style="color: #94a3b8; font-size: 0.9rem;">ยอดค่าคอมมิชชั่นสะสม</div>
-        <div id="commBalance" style="font-size: 2.5rem; font-weight: bold; color: #10b981; margin-top: 5px;">฿0.00</div>
+        <div style="color: #94a3b8; font-size: 0.9rem;">ยอด Wallet ปัจจุบัน</div>
+        <div id="promoterWallet" style="font-size: 2.5rem; font-weight: bold; color: #10b981; margin-top: 5px;">฿0.00</div>
         <div style="font-size: 0.8rem; color: #ec4899; margin-top: 8px;">ผู้แนะนำ: <span id="promoterName">กำลังโหลด...</span></div>
       </div>
-      <button class="btn bg-pink" onclick="requestWithdraw()"><i class="fa-solid fa-money-bill-transfer"></i> แจ้งถอนค่าคอมมิชชั่น</button>
+      <p>ค่าแนะนำจากบิลที่เข้าเงื่อนไขจะเข้า Wallet อัตโนมัติเมื่อตัดผลรอบ</p>
+      <a id="promoterWalletLink">เปิด Wallet ในหน้าผู้เล่น</a>
+      <p id="legacyCommission" hidden></p>
+      <button id="legacyWithdraw" hidden class="btn bg-pink" onclick="requestWithdraw()"><i class="fa-solid fa-money-bill-transfer"></i> แจ้งถอนค่าคอมมิชชั่น</button>
     </div>
 
     <div class="card">
       <h3 style="margin-top: 0; border-bottom: 1px dashed #2a2d3d; padding-bottom: 10px;" class="text-pink">
           <i class="fa-solid fa-link"></i> ลิงก์ชวนเพื่อนของคุณ
       </h3>
-      <p style="font-size: 0.9rem; color: #94a3b8;">ให้เพื่อนของคุณสแกน QR Code หรือกดลิงก์ด้านล่างเพื่อเข้าเล่น คุณจะได้รับส่วนแบ่งเมื่อเพื่อนมีการแทงกุ้ง</p>
+      <p style="font-size: 0.9rem; color: #94a3b8;">ให้เพื่อนของคุณสแกน QR Code หรือกดลิงก์ด้านล่างเพื่อเข้าเล่น คุณจะได้รับค่าแนะนำเมื่อเพื่อนสมัครผ่านลิงก์นี้และชนะบิลส่วนตัว</p>
       
       <div style="background: white; padding: 15px; border-radius: 12px; display: inline-block; margin: 10px auto; text-align: center; width: 100%; box-sizing: border-box;">
           <img id="qrCodeImg" src="https://via.placeholder.com/200?text=Loading+QR..." alt="QR Code" style="width: 200px; height: 200px; margin: 0 auto;">
@@ -68,19 +71,34 @@
     async function initPromoter() {
       try {
         await liff.init({ liffId: APP_CONFIG.LIFF_ID_PLAYER });
-        if (!liff.isLoggedIn()) { liff.login(); return; }
+        if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
         
-        const profile = await liff.getProfile();
-        const { data: user } = await _supabase.from('users').select('*').eq('shop_id', currentShopId).eq('uid', profile.userId).single();
-        
-        if (!user || user.role !== 'Promoter') {
+        const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY,
+            Authorization: 'Bearer ' + liff.getIDToken() },
+          body: JSON.stringify({ action: 'promoter_profile', shop_id: currentShopId }),
+          signal: AbortSignal.timeout(12000)
+        });
+        const result = await response.json();
+        if (!response.ok && response.status !== 403) throw new Error(result.code || 'PROMOTER_UNAVAILABLE');
+        const user = result.promoter;
+        if (!user) {
             document.body.innerHTML = `<div style="text-align:center; padding:50px; color:red; font-family:'Kanit';"><h3>ไม่มีสิทธิ์เข้าถึง</h3><p>บัญชีของคุณไม่ใช่ผู้แนะนำ (Promoter)</p><button onclick="window.location.href='index.html?shop=' + encodeURIComponent(currentShopId)" style="margin-top:20px; padding:10px; border-radius:8px;">กลับหน้าหลัก</button></div>`;
             return;
         }
 
         currentUser = user;
         document.getElementById('promoterName').innerText = user.display_name;
-        document.getElementById('commBalance').innerText = `฿${(user.commission_balance || 0).toLocaleString()}`;
+        const money = amount => '฿' + Number(amount || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 });
+        document.getElementById('promoterWallet').textContent = money(user.credit_balance);
+        document.getElementById('promoterWalletLink').href = playerEntryUrl(currentShopId);
+        if (Number(user.commission_balance) > 0) {
+          const legacy = document.getElementById('legacyCommission');
+          legacy.textContent = 'ยอดค่าคอมเดิม ' + money(user.commission_balance);
+          legacy.hidden = false;
+          document.getElementById('legacyWithdraw').hidden = false;
+        }
 
         // สร้าง Link และ QR Code
         const refLink = playerEntryUrl(currentShopId, { ref: formatMemberCode(currentShopId, user.member_id) });

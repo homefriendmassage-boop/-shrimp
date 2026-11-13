@@ -17,14 +17,20 @@ async function fetchWithDeadline(url,options,ms=12000){
   try{return await fetch(url,{...options,signal:controller.signal})}
   finally{clearTimeout(timer)}
 }
-const shopId=new URLSearchParams(location.search).get('shop')||'';
+const params = new URLSearchParams(location.search);
+const shopId = params.get('shop') || '';
+const referral = parseMemberCode(shopId, params.get('ref'));
 async function request(action, retryNotification=false){
  const retry=$('retryNotification');
  let retryAt;
  $('result').textContent=retryNotification?'กำลังลองส่งแจ้งเตือน…':'กำลังตรวจสอบสมาชิก…';
  $('apply').disabled=true;retry.disabled=true;
  try{
-  const body={action,shop_id:shopId};if(action==='apply')body.display_name=$('name').value.trim();
+  const body = { action, shop_id: shopId };
+  if (action === 'apply') {
+   body.display_name = $('name').value.trim();
+   if (referral) body.referral_member_id = referral;
+  }
   const r=await fetchWithDeadline('https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval',{
    method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+liff.getIDToken(),apikey:APP_CONFIG.SUPABASE_ANON_KEY},body:JSON.stringify(body)
   });

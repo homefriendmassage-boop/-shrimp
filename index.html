@@ -561,7 +561,12 @@
       for (const id of ['bettingView', 'historyView', 'statsView']) document.getElementById(id).classList.add('hidden');
       document.getElementById('bottomNavMenu').style.display = 'none';
       const apply = document.getElementById('membershipApplyLink');
-      apply.href = 'staging/member-apply.html?shop=' + encodeURIComponent(currentShopId);
+      const applyParams = new URLSearchParams({ shop: currentShopId });
+      const ref = parseMemberCode(currentShopId, playerEntryParams().get('ref'));
+      let savedRef = ref;
+      try { savedRef ||= sessionStorage.getItem('referrer_id:' + currentShopId); } catch { /* Optional storage. */ }
+      if (savedRef) applyParams.set('ref', formatMemberCode(currentShopId, savedRef));
+      apply.href = 'staging/member-apply.html?' + applyParams;
       apply.classList.toggle('hidden', !canApply);
     }
 
