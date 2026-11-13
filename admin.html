@@ -6,7 +6,7 @@
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=round-name-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=referral-wallet-1"></script>
+  <script src="admin-api-client.js?v=member-access-1"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -381,11 +381,11 @@
           <label style="display: block; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 5px;">เปลี่ยนระดับสิทธิ์:</label>
           <div style="display: flex; gap: 10px;">
              <select id="selChangeRole" class="form-control" style="flex: 2; padding: 8px;" onchange="checkRoleChange()">
-               <option value="Customer">Customer (ผู้เล่นทั่วไป)</option>
-               <option value="Promoter">Promoter (ผู้แนะนำ/ห้ามเล่น)</option>
-               <option value="Operator">Operator (พนักงาน)</option>
-               <option value="Admin">Admin (แอดมินบ่อ)</option>
-               <option value="Backer">Backer (เพิ่มเข้าทีมรับจบ)</option>
+               <option value="Customer">ผู้เล่นทั่วไป (Customer)</option>
+               <option value="Promoter">ผู้แนะนำลูกค้า (Promoter)</option>
+               <option value="Operator">พนักงานบ่อ (Operator)</option>
+               <option value="Admin">เจ้าของบ่อ / ผู้ดูแลร้าน (Admin)</option>
+               <option value="Backer">ทีมรับจบ (Backer)</option>
              </select>
              <button class="btn btn-blue" style="flex: 1; padding: 8px;" onclick="updateUserRole()">บันทึกข้อมูล</button>
           </div>
@@ -749,9 +749,9 @@
             saasAdminLink.classList.remove('hidden');
           }
           
-          let roleBadge = "พนักงาน (Operator)";
+          let roleBadge = 'พนักงานบ่อ (Operator)';
           if (['Superadmin', 'Admin'].includes(currentUserRole)) {
-            roleBadge = "แอดมินบ่อ · " + formatMemberCode(currentShopId, 'M0000');
+            roleBadge = 'ผู้ดูแลร้าน (Admin) · ' + formatMemberCode(currentShopId, user.member_id);
             const playerLink = document.getElementById('switchToPlayer');
             playerLink.href = playerEntryUrl(currentShopId);
             playerLink.classList.remove('hidden');
@@ -1050,6 +1050,12 @@
         document.getElementById('backerRoleNote').style.display = role === 'Backer' ? 'block' : 'none';
     }
 
+    const shopRoleLabels = {
+        Admin: 'เจ้าของบ่อ / ผู้ดูแลร้าน (Admin)', Operator: 'พนักงานบ่อ (Operator)',
+        Promoter: 'ผู้แนะนำลูกค้า (Promoter)', Customer: 'ผู้เล่นทั่วไป (Customer)',
+        Backer: 'ทีมรับจบ (Backer)', Superadmin: 'ผู้ดูแลแพลตฟอร์ม (Superadmin)',
+    };
+
     async function searchUser() { 
         const search = document.getElementById('txtSearchUser').value.trim();
         selectedUserIdForManage = '';
@@ -1081,7 +1087,7 @@
                 else if(u.role === 'Promoter') rCls = 'role-promoter'; 
                 
                 document.getElementById('uManageRoleBadge').className = `badge-role ${rCls}`; 
-                document.getElementById('uManageRoleBadge').innerText = u.role || 'Customer'; 
+                document.getElementById('uManageRoleBadge').textContent = shopRoleLabels[u.role || 'Customer'] || u.role;
                 document.getElementById('selChangeRole').value = (u.role === 'Superadmin') ? 'Admin' : (u.role || 'Customer'); 
                 checkRoleChange();
 
@@ -1090,25 +1096,31 @@
         } catch (e) { alert("เกิดข้อผิดพลาดในการค้นหา"); } 
     }
     
-    async function updateUserStatus(ns) { if(!selectedUserIdForManage) return; await _supabase.from('users').update({ status: ns }).eq('shop_id', currentShopId).eq('uid', selectedUserIdForManage); alert(`อัปเดตสถานะสำเร็จ`); document.getElementById('userInfoContainer').style.display = 'none'; document.getElementById('txtSearchUser').value = ''; }
-    
-    async function updateUserRole() { 
-        if(!selectedUserIdForManage) return; 
-        let nr = document.getElementById('selChangeRole').value; 
-        if (nr === 'Admin' && document.getElementById('txtSearchUser').value.trim() !== selectedUserIdForManage) {
-            return alert('กรุณาค้นหาด้วย LINE User ID ของสมาชิกก่อนตั้งเป็นแอดมิน');
+    async function saveMemberAccess(changes, successMessage) {
+        const memberUid = selectedUserIdForManage;
+        if (!memberUid) return;
+        try {
+            await _supabase.setMemberAccess(memberUid, changes);
+            if (selectedUserIdForManage === memberUid) await searchUser();
+            alert(successMessage);
+        } catch (error) {
+            const messages = {
+                ADMIN_REQUIRED: 'บัญชีนี้ไม่มีสิทธิ์เปลี่ยนบทบาทหรือสถานะของสมาชิก',
+                LAST_SHOP_ADMIN: 'ร้านต้องมี Admin ที่เปิดใช้งานอย่างน้อยหนึ่งคน',
+                PROTECTED_ROLE: 'บัญชีผู้ดูแลแพลตฟอร์มแก้ไขจากหน้านี้ไม่ได้',
+                MEMBER_NOT_FOUND: 'ไม่พบสมาชิกในร้านนี้',
+            };
+            alert(messages[error.message] || 'บันทึกสิทธิ์ไม่สำเร็จ [' + error.message + ']');
         }
-        let updateData = { role: nr };
-        if(nr === 'Backer') { updateData.backer_share = 0; updateData.backer_water_fee = 10; }
-        
-        const { error } = await _supabase.from('users').update(updateData).eq('shop_id', currentShopId).eq('uid', selectedUserIdForManage); 
-        if(error) return alert("อัปเดตสิทธิ์ล้มเหลว: " + error.message);
-        
-        if(nr === 'Backer') alert(`อัปเดตเป็นพาร์ทเนอร์รับจบเรียบร้อย!\n\nกรุณากดปุ่ม "จัดทีมคนรับจบ" ด้านบนเพื่อแบ่งสัดส่วน % ให้ถูกต้องครับ`); 
-        else if (nr === 'Promoter') alert(`อัปเดตสิทธิ์เป็น "ผู้แนะนำ (Promoter)" เรียบร้อยแล้ว\nบัญชีนี้จะไม่สามารถเข้าเล่นเกมได้ แต่แนะนำเพื่อนได้ตามปกติครับ`);
-        else alert(`อัปเดตสิทธิ์สำเร็จ`); 
-        
-        document.getElementById('userInfoContainer').style.display = 'none'; document.getElementById('txtSearchUser').value = ''; 
+    }
+
+    function updateUserStatus(status) {
+        return saveMemberAccess({ status }, 'อัปเดตสถานะสำเร็จ');
+    }
+
+    function updateUserRole() {
+        const role = document.getElementById('selChangeRole').value;
+        return saveMemberAccess({ role }, 'อัปเดตสิทธิ์เป็น ' + shopRoleLabels[role] + ' แล้ว');
     }
 
     // ==========================================
