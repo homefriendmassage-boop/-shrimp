@@ -48,6 +48,7 @@ function createAdminApiClient(config, getShopId) {
   return {
     from,
     placeTableCashBet: details => call({ action: 'table_cash_bet', ...details }),
+    setBoardPassword: password => call({ action: 'mc_board_set_password', password }),
     createCashTables: (count, limit) => call({ action: 'table_bulk_create', count, cash_limit: limit }),
     tableQr: table => call({ action: 'table_qr', table_no: table }),
     recordTableCash: (table, type, amount, id) => call({
