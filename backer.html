@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Backer Dashboard - บัญชีคนรับจบ</title>
-  <script src="config.js?v=member-code-1"></script>
+  <script src="config.js?v=round-name-1"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -204,7 +204,7 @@
            div.className = 'log-item';
            div.innerHTML = `
              <div>
-               <div class="log-title">รอบ ${l.round_id}</div>
+               <div class="log-title">รอบ ${formatRoundName(l.round_id)}</div>
                <div class="log-sub"><i class="fa-regular fa-clock"></i> ${timeStr} | ทุนที่ลง: ฿${l.gap_amount.toLocaleString()}</div>
              </div>
              <div>

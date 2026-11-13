@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>บอร์ดสด - บ่อตกกุ้ง</title>
-  <script src="config.js"></script>
+  <script src="config.js?v=round-name-1"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap');
@@ -340,7 +340,7 @@
         table.setAttribute('aria-label', 'ผลรอบลำดับ ' + (start + offset + 1) + ' ถึง ' + (start + offset + roundsPerColumn));
         for (const round of page.slice(offset, offset + roundsPerColumn)) {
           const row = table.tBodies[0].insertRow();
-          row.insertCell().textContent = round.round_id;
+          row.insertCell().textContent = formatRoundName(round.round_id);
           row.insertCell().textContent = round.weight ?? '—';
           const result = document.createElement('span');
           result.className = 'result-chip ' + (round.result === 'คู่' ? 'result-even' : round.result === 'คี่' ? 'result-odd' : '');
@@ -439,7 +439,7 @@
         boardContent.hidden = false;
         set('boardShopName', board.shop_name);
         currentRound = board.round;
-        set('roundIdDisplay', board.round ? 'รอบ ' + board.round.round_id : 'รอบ —');
+        set('roundIdDisplay', board.round ? 'รอบ ' + formatRoundName(board.round.round_id) : 'รอบ —');
         updateBoardTimer();
         const totals = board.totals;
         const total = Number(totals.even) + Number(totals.odd);

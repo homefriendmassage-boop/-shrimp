@@ -30,3 +30,8 @@ function parseMemberCode(shopId, input) {
   const canonical = 'M' + code[1];
   return formatMemberCode(shopId, canonical) === value ? canonical : null;
 }
+
+
+function formatRoundName(roundId) {
+  return String(roundId ?? '').replace(/^R-([0-9]{6})-([0-9]+)-SHOP_([0-9]{3,24})$/, 'R-$1-$3-$2');
+}
