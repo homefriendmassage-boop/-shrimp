@@ -6,8 +6,9 @@
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=round-name-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=mc-board-3"></script>
+  <script src="admin-api-client.js?v=cash-shift-1"></script>
   <script src="accounting-day.js?v=1"></script>
+  <script src="cash-shift-report.js?v=1" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -501,6 +502,34 @@
         </div>
       </div>
       
+      <section class="card" id="cashShiftPanel">
+        <div class="card-title">ใบปิดกะเงินสด</div>
+        <p>ใช้วันที่บัญชีที่เลือกด้านบน กรอกยอดรับ–จ่ายจากทุกช่องทางตามรายการจริงของกะ โดยกรอกค่าใช้จ่ายและเงินเข้า–ออกธนาคารในช่องของแต่ละรายการ</p>
+        <details>
+          <summary>กรอกใบปิดกะ</summary>
+          <form id="cashShiftForm" style="display:grid;gap:12px;margin-top:12px">
+            <label>ชื่อกะ <input name="shift_name" class="form-control" required maxlength="80" placeholder="เช่น กะเย็น"></label>
+            <div data-shift-amounts style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px"></div>
+            <div data-shift-expenses style="display:grid;gap:8px"></div>
+            <button type="button" data-add-expense class="btn btn-outline">เพิ่มค่าใช้จ่ายและหลักฐาน</button>
+            <label>หมายเหตุ <input name="note" class="form-control" maxlength="500"></label>
+            <output data-shift-preview aria-live="polite"></output>
+            <button type="submit" class="btn btn-green">บันทึกปิดกะ</button>
+          </form>
+        </details>
+        <p data-shift-status role="status"></p>
+        <div data-saved-shifts></div>
+      </section>
+      <section class="card" id="walletReconciliationPanel">
+        <div class="card-title">กระทบยอด Wallet ลูกค้า</div>
+        <div data-wallet-summary role="status"></div>
+        <div data-wallet-movements style="overflow-x:auto"></div>
+        <div data-wallet-pages hidden style="margin-top:10px">
+          <button type="button" data-prev class="btn btn-outline">ก่อนหน้า</button>
+          <span data-page></span>
+          <button type="button" data-next class="btn btn-outline">ถัดไป</button>
+        </div>
+      </section>
       <section class="card">
         <div class="card-title">รายงานเงินสดรายโต๊ะ</div>
         <p style="color:var(--text-muted)">รับและจ่ายเงินสดนับตามเวลาที่บันทึกจริง</p>
@@ -1362,6 +1391,7 @@
       const yy = year.slice(-2);
       const [startAt, endAt] = shopAccountingWindow(selDate);
       void loadCashTableReport(selDate);
+      void loadCashShiftReport(selDate);
       try {
         const { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId)
           .gte('created_at', startAt).lt('created_at', endAt).order('created_at', { ascending: false });

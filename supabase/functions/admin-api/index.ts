@@ -195,6 +195,44 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
   } catch { console.error('wallet LINE notification unavailable'); }
 }
 
+const shiftAmounts = ['opening_cash', 'cash_received', 'cash_paid', 'transfer_received',
+  'transfer_paid', 'bank_withdrawal', 'bank_deposit', 'counted_cash'];
+
+function requireAccountingDay(day) {
+  if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) fail('TABLE_DATE_INVALID');
+  const date = new Date(day + 'T00:00:00Z');
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== day) fail('TABLE_DATE_INVALID');
+}
+
+function cashShiftInput(input) {
+  const amount = value => {
+    if (typeof value !== 'string' || !/^\d{1,10}(?:\.\d{1,2})?$/.test(value)) fail('CASH_SHIFT_INVALID');
+    return Number(value);
+  };
+  const label = (value, limit) => {
+    if (typeof value !== 'string' || value.length > limit) fail('CASH_SHIFT_INVALID');
+    return value.trim();
+  };
+  if (typeof input.shift_id !== 'string' || !shopInviteIdPattern.test(input.shift_id) ||
+      !Array.isArray(input.expenses) || input.expenses.length > 30) fail('CASH_SHIFT_INVALID');
+  const shiftName = label(input.shift_name, 80);
+  if (!shiftName) fail('CASH_SHIFT_INVALID');
+  const expenses = input.expenses.map(entry => {
+    const description = label(entry?.description, 120);
+    const evidence = label(entry?.evidence, 500);
+    const value = amount(entry?.amount);
+    if (!description || !evidence || !value || !['cash', 'transfer'].includes(entry?.channel)) fail('CASH_SHIFT_INVALID');
+    return { description, evidence, amount: value, channel: entry.channel };
+  });
+  const total = channel => expenses.filter(entry => entry.channel === channel)
+    .reduce((sum, entry) => sum + Math.round(entry.amount * 100), 0) / 100;
+  return {
+    shift_id: input.shift_id, shift_name: shiftName, note: label(input.note, 500), expenses,
+    ...Object.fromEntries(shiftAmounts.map(key => [key, amount(input[key])])),
+    cash_expenses: total('cash'), transfer_expenses: total('transfer'),
+  };
+}
+
 export function dailyFinanceFlex(day, shopName, data, preparedBy) {
   const color = {
     white: '#F8FAFC', muted: '#ADB9CE', blue: '#80B3FF', green: '#50D8A7',
@@ -263,6 +301,26 @@ export function dailyFinanceFlex(day, shopName, data, preparedBy) {
   ];
   if (Number(data.unclassified_bills) > 0) {
     sections[5].contents.push(row('บิลเดิมที่ไม่ระบุช่องทาง', count(data.unclassified_bills, 'บิล'), color.amber));
+  }
+  if (data.wallet_reconciliation) {
+    const wallet = data.wallet_reconciliation;
+    const summary = sections[2].contents;
+    if (wallet.opening !== null) {
+      summary.push(
+        row(wallet.coverage === 'partial' ? 'ยอดเริ่มเก็บข้อมูล' : 'ยอดต้นวัน', money(wallet.opening)),
+        row('เพิ่มเครดิตระหว่างช่วง', signedMoney(Number(wallet.increases)), color.green),
+        row('ลดเครดิตระหว่างช่วง', signedMoney(-Number(wallet.decreases)), color.red),
+        row(wallet.is_open_day ? 'ยอดถึงเวลารายงาน' : 'ยอดปลายวัน', money(wallet.closing), color.amber, true),
+      );
+    } else {
+      summary.push(text('ไม่มีข้อมูลกระทบยอดสำหรับวันที่เลือก', { color: color.muted, size: 'xs' }));
+    }
+  }
+  if (data.shift_summary?.length) {
+    sections.push(section('ใบปิดกะเงินสด', data.shift_summary.map(shift =>
+      row(shift.shift_name, signedMoney(Number(shift.cash_difference)), movementColor(Number(shift.cash_difference)))
+    )));
+    sections.at(-1).contents.splice(1, 0, text('ผลต่างเงินสดนับจริงเทียบกับยอดตามระบบ', { color: color.muted, size: 'xs' }));
   }
   return { type: 'flex', altText: (title + ' · ' + shopName + ' · ' + day).slice(0, 300), contents: {
     type: 'bubble', size: 'mega',
@@ -362,7 +420,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, board: result.data });
       }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'cash_shift_report', 'cash_shift_close', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
@@ -760,11 +818,31 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (picture) await db.from('users').update({ profile_pic: picture }).eq('shop_id', shopId).eq('uid', claims.sub);
         return reply({ ok: true, staff: staff.data, can_create_shop: await canCreateShop() });
       }
+      if (['cash_shift_report', 'cash_shift_close'].includes(input.action)) {
+        if (!['Admin', 'Superadmin'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
+        requireAccountingDay(input.day);
+        if (input.action === 'cash_shift_close') {
+          if (input.day > tableDay()) fail('TABLE_DATE_INVALID');
+          const close = cashShiftInput(input);
+          const result = await db.from('cash_shift_closes').upsert({
+            ...close, shop_id: shopId, accounting_day: input.day, closed_by: claims.sub,
+          }, { onConflict: 'shop_id,accounting_day,shift_id', ignoreDuplicates: true });
+          if (result.error) fail('CASH_SHIFT_UNAVAILABLE', 500);
+          return reply({ ok: true });
+        }
+        const page = input.page ?? 0;
+        if (!Number.isInteger(page) || page < 0 || page > 1000000) fail('CASH_SHIFT_INVALID');
+        const [shifts, wallet] = await Promise.all([
+          db.from('cash_shift_closes').select('*').eq('shop_id', shopId)
+            .eq('accounting_day', input.day).order('closed_at'),
+          db.rpc('wallet_daily_reconciliation', { p_shop: shopId, p_day: input.day, p_page: page }),
+        ]);
+        if (shifts.error || wallet.error || !wallet.data) fail('CASH_SHIFT_UNAVAILABLE', 500);
+        return reply({ ok: true, shifts: shifts.data, wallet: wallet.data });
+      }
       if (['table_cash_report', 'table_send_cash_report'].includes(input.action)) {
         if (staff.data.role === 'Operator') fail('ADMIN_REQUIRED', 403);
-        if (typeof input.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.day)) fail('TABLE_DATE_INVALID');
-        const date = new Date(input.day + 'T00:00:00Z');
-        if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== input.day) fail('TABLE_DATE_INVALID');
+        requireAccountingDay(input.day);
         if (input.action === 'table_cash_report') {
           const result = await db.rpc('cash_table_daily_report', { p_shop: shopId, p_day: input.day });
           if (result.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
@@ -782,9 +860,16 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (!settings?.line_oa_token || settings.line_notifications_enabled === false || !validRecipient) {
           fail('TABLE_REPORT_LINE_NOT_READY', 409);
         }
-        const result = await db.rpc('daily_group_finance_report', { p_shop: shopId, p_day: input.day });
-        if (result.error || !result.data) fail('TABLE_REPORT_UNAVAILABLE', 500);
-        const report = dailyFinanceFlex(input.day, settings.shop_name || shopId, result.data, staff.data.display_name);
+        const [result, wallet, shifts] = await Promise.all([
+          db.rpc('daily_group_finance_report', { p_shop: shopId, p_day: input.day }),
+          db.rpc('wallet_daily_reconciliation', { p_shop: shopId, p_day: input.day, p_page: 0 }),
+          db.from('cash_shift_closes').select('shift_name,cash_difference').eq('shop_id', shopId)
+            .eq('accounting_day', input.day).order('closed_at', { ascending: false }).limit(10),
+        ]);
+        if (result.error || !result.data || wallet.error || shifts.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
+        const report = dailyFinanceFlex(input.day, settings.shop_name || shopId, {
+          ...result.data, wallet_reconciliation: wallet.data, shift_summary: shifts.data,
+        }, staff.data.display_name);
         if (typeof input.delivery_id !== 'string' || !shopInviteIdPattern.test(input.delivery_id)) fail('TABLE_REPORT_UNAVAILABLE', 400);
         const sent = await fetcher('https://api.line.me/v2/bot/message/push', {
           method: 'POST', headers: { Authorization: 'Bearer ' + settings.line_oa_token,

@@ -52,7 +52,7 @@ function setup({ role = 'Admin', active = true, absent = false, aud = 'channel',
   const createDb = () => ({ from(table) {
     const record = { table, calls: [] }; queries.push(record);
     const chain = {};
-    for (const method of ['select', 'eq', 'neq', 'gte', 'lte', 'like', 'in', 'order', 'limit', 'insert', 'update', 'delete', 'single', 'maybeSingle']) {
+    for (const method of ['select', 'eq', 'neq', 'gte', 'lte', 'like', 'in', 'order', 'limit', 'insert', 'update', 'delete', 'upsert', 'single', 'maybeSingle']) {
       chain[method] = (...args) => { record.calls.push([method, ...args]); return chain; };
     }
     chain.then = (resolve, reject) => {
@@ -328,6 +328,30 @@ test('daily report labels cash movements separately from wallet credit and perfo
   });
 });
 
+test('cash shift closes use verified staff and reject unauthorized or incomplete records', async () => {
+  const payload = {
+    action: 'cash_shift_close', day: '2026-01-13',
+    shift_id: '97b30417-a83c-4825-97da-16132977b4b3', shift_name: 'กะเย็น', uid: 'untrusted',
+    opening_cash: '1000', cash_received: '800', cash_paid: '150', transfer_received: '420',
+    transfer_paid: '50', bank_withdrawal: '100', bank_deposit: '300', counted_cash: '1369.50', note: '',
+    expenses: [{ channel: 'cash', amount: '80.50', description: 'อุปกรณ์', evidence: 'ใบเสร็จ 001' }],
+  };
+  const { handler, queries } = setup();
+  assert.equal((await handler(request(payload))).status, 200);
+  const [, row, options] = queries.find(query => query.table === 'cash_shift_closes').calls[0];
+  assert.equal(row.shop_id, 'SHOP_001');
+  assert.equal(row.closed_by, 'verified-user');
+  assert.equal(row.cash_expenses, 80.5);
+  assert.equal(options.ignoreDuplicates, true);
+  assert.equal((await setup().handler(request({ ...payload, expenses: [{ ...payload.expenses[0], evidence: '' }] }))).status, 400);
+  assert.equal((await setup().handler(request({ ...payload, opening_cash: '1.005' }))).status, 400);
+  for (const config of [{ role: 'Operator' }, { role: 'Customer' }, { absent: true }]) {
+    const denied = setup(config);
+    assert.equal((await denied.handler(request(payload))).status, 403);
+    assert(denied.queries.every(query => query.table !== 'cash_shift_closes'));
+  }
+});
+
 test('daily report sends to the owner until a group is configured', async () => {
   const owner = 'U' + 'a'.repeat(32);
   const group = 'C' + 'b'.repeat(32);
@@ -337,10 +361,14 @@ test('daily report sends to the owner until a group is configured', async () => 
   const db = {
     from(table) {
       const row = { users:{ role:'Admin', status:'Active' }, shops:{ status:'active' }, shop_oa_runtime:settings }[table];
-      const query = { select:()=>query, eq:()=>query, maybeSingle:async()=>({ data:row }) };
+      const query = { select:()=>query, eq:()=>query, order:()=>query, limit:async()=>({ data:[] }), maybeSingle:async()=>({ data:row }) };
       return query;
     },
     async rpc(name,args) {
+      if (name === 'wallet_daily_reconciliation') {
+        assert.deepEqual(args, { p_shop:'SHOP_001', p_day:'2026-11-13', p_page:0 });
+        return { data: { opening:400, closing:500, increases:125, decreases:25 } };
+      }
       assert.equal(name,'daily_group_finance_report');
       assert.deepEqual(args,{ p_shop:'SHOP_001', p_day:'2026-11-13' });
       return { data:{ customer_wallet_liability:500, wallet_as_of:'2026-11-13T13:00:00Z' } };
@@ -348,7 +376,9 @@ test('daily report sends to the owner until a group is configured', async () => 
   };
   const handler = makeHandler({ env, createDb:()=>db, fetcher:async (url,options) => {
     if (url.includes('/verify')) return Response.json({ sub:owner, aud:'admin', exp:Date.now()/1000+60 });
-    sent.push(JSON.parse(options.body).to);
+    const body = JSON.parse(options.body);
+    assert.match(JSON.stringify(body.messages), /ยอดต้นวัน/);
+    sent.push(body.to);
     return new Response();
   } });
   const send = () => handler(request({ action:'table_send_cash_report',day:'2026-11-13',delivery_id:'97b30417-a83c-4825-97da-16132977b4b3' }));
