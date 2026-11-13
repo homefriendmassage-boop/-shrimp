@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
     const image = input.get("image");
     if (typeof shop !== "string" || !/^SHOP_[0-9]{3,}$/.test(shop)) return reply("SHOP_INVALID", 400);
     if (shopLogin && shop !== "SHOP_001") return reply("SHOP_LOGIN_NOT_ALLOWED", 403);
-    if (typeof amount !== "string" || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) {
+    if (typeof amount !== "string" || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || Number(amount) < 100) {
       return reply("AMOUNT_INVALID", 400);
     }
     if (!(image instanceof File) || !extensions.has(image.type) || !image.size || image.size > 4_194_304) {
@@ -157,6 +157,7 @@ Deno.serve(async (req) => {
     if (typeof actual !== "number" || !/^\d{1,9}(?:\.\d{1,2})?$/.test(String(actual)) || actual <= 0) {
       return reply("SLIP_NOT_VERIFIED", 422);
     }
+    if (actual < 100) return reply("WALLET_MINIMUM", 422);
     const amountMismatch = actual !== Number(amount);
     if (!amountMismatch && slip.isAmountMatched !== true) return reply("SLIP_NOT_VERIFIED", 422);
 

@@ -407,7 +407,7 @@
           <div class="form-group"><label>อัตราค่าน้ำทั่วไป (เช่น 0.05 คือ 5%)</label><input type="number" step="0.01" id="settingWaterMargin" class="form-control"></div>
           <div class="form-group"><label>เงื่อนไขค่าน้ำตอนถอน</label><select id="settingWithdrawalFee" class="form-control"><option value="deduct">หักค่าน้ำ</option><option value="none">ไม่หักค่าน้ำ</option></select></div>
           <div class="form-group"><label>เปอร์เซ็นต์ค่าคอมมิชชั่น</label><input type="number" step="0.001" id="settingCommRate" class="form-control"></div>
-          <div class="form-group"><label>ยอดแทงขั้นต่ำ (บาท)</label><input type="number" id="settingMinBet" class="form-control"></div>
+          <div class="form-group"><label>ยอดแทงขั้นต่ำ (บาท)</label><input type="number" id="settingMinBet" min="100" class="form-control"></div>
           <div class="form-group"><label>ยอดแทงสูงสุด (บาท)</label><input type="number" id="settingMaxBet" class="form-control"></div>
           <button class="btn btn-blue" id="btnSaveSetting" style="width: 100%;" onclick="saveSettings()"><i class="fa-solid fa-floppy-disk"></i> บันทึกการตั้งค่า</button>
         </div>
@@ -491,8 +491,13 @@
             <div style="font-size: 0.8rem; color: var(--text-muted);">ค่าน้ำหลังหักค่าแนะนำ</div><div id="repNetProfit" style="font-size: 1.1rem; font-weight: bold; color: var(--green-main);">฿0</div>
           </div>
           <div style="background:#0f111a;padding:10px;border-radius:8px;border:1px solid var(--card-border)">
-            <div style="font-size:.8rem;color:var(--text-muted)">ค่าแนะนำที่เข้า Wallet</div>
+            <div style="font-size:.8rem;color:var(--text-muted)">ค่าแนะนำที่เข้ากระเป๋าโบนัส</div>
             <div id="repReferralCommission" style="font-size:1.1rem;font-weight:bold;color:var(--red-main)">—</div>
+          </div>
+          <div style="background:#0f111a;padding:10px;border-radius:8px;border:1px solid var(--card-border)">
+            <div>ค่าบริการถอนโบนัส (รายได้ร้าน)</div><strong id="repBonusFee">—</strong>
+            <div>โอนจ่ายโบนัส</div><strong id="repBonusWithdrawn">—</strong>
+            <div>โบนัสค้างจ่ายปัจจุบัน</div><strong id="repBonusLiability">—</strong>
           </div>
         </div>
         
@@ -1222,7 +1227,7 @@
              reject.addEventListener('click', () => rejectPendingRequest(r.id, r.uid, r.type, r.amount));
              listDiv.appendChild(card);
          });
-         if (reqs.some(item => item.type === 'ถอนเงิน')) void loadWithdrawalDestinations(shop, listDiv, loadId);
+         if (reqs.some(item => ['ถอนเงิน','ถอนโบนัส'].includes(item.type))) void loadWithdrawalDestinations(shop, listDiv, loadId);
        } catch (e) { console.error("Exception in loadPendingRequests:", e); }
     }
 
@@ -1233,7 +1238,11 @@
       const deposit = request.type === 'ฝากเงิน';
       const needsReview = deposit && request.fee_option === 'slip_review';
       const action = deposit ? 'เติมเงิน' : request.type;
-      const note = request.type === 'ถอนค่าคอม' ? 'กดยืนยันหลังจากโอนค่าคอมให้สมาชิกแล้ว'
+      const bonusFee = Math.round(Number(request.amount) * 10) / 100;
+      const note = request.type === 'ถอนโบนัส'
+        ? [bankDisplay, 'โอนให้สมาชิก ฿' + Number(request.amount).toFixed(2), 'ค่าบริการ ฿' + bonusFee.toFixed(2),
+          'หักโบนัสรวม ฿' + (Number(request.amount) + bonusFee).toFixed(2)].filter(Boolean).join(' · ')
+        : request.type === 'ถอนค่าคอม' ? 'กดยืนยันหลังจากโอนค่าคอมให้สมาชิกแล้ว'
         : request.type === 'ถอนเงิน' ? [bankDisplay, 'ระบบจะหักยอด Wallet ตามจำนวนที่ยืนยัน'].filter(Boolean).join(' · ') : '';
       document.getElementById('walletDecisionTitle').textContent = 'ยืนยัน' + action;
       document.getElementById('walletDecisionMember').textContent = 'สมาชิก ' + formatMemberCode(currentShopId, request.member_id) + ' · ' + request.display_name;
@@ -1356,7 +1365,9 @@
     async function generateReport() {
       cachedReportData = {};
       if (currentUserRole === 'Operator') return; 
-      document.getElementById('repReferralCommission').textContent = '—';
+      for (const id of ['repReferralCommission','repBonusFee','repBonusWithdrawn','repBonusLiability']) {
+        document.getElementById(id).textContent = '—';
+      }
       const listDiv = document.getElementById('roundReportList');
       listDiv.innerHTML = '<div style="text-align:center; color: var(--text-muted); padding: 15px;">กำลังคำนวณรายงาน...</div>';
       
@@ -1432,6 +1443,9 @@
         const money = value => value.toLocaleString('th-TH', { maximumFractionDigits: 2 });
         document.getElementById('repReferralCommission').textContent = '฿' + money(commission)
           + ' · ' + referral.referral_recipients + ' ผู้แนะนำ';
+        document.getElementById('repBonusFee').textContent = '฿' + money(Number(referral.bonus_fee_revenue ?? 0));
+        document.getElementById('repBonusWithdrawn').textContent = '฿' + money(Number(referral.bonus_withdrawn ?? 0));
+        document.getElementById('repBonusLiability').textContent = '฿' + money(Number(referral.bonus_wallet_liability ?? 0));
         gNet -= commission;
         document.getElementById('repTotalDeposit').innerText = `฿${tDep.toLocaleString()}`; document.getElementById('repTotalWithdraw').innerText = `฿${tWd.toLocaleString()}`;
         document.getElementById('repGrossBet').innerText = `฿${gGross.toLocaleString()}`; document.getElementById('repPayout').innerText = `-฿${gPayout.toLocaleString()}`;
@@ -1882,6 +1896,7 @@
       
       if(!tId || !amountStr || isNaN(amount) || amount <= 0) return alert("กรุณากรอกข้อมูลให้ครบถ้วน"); 
       if (creditMode !== 'table') {
+        if (amount < 100) return alert('ฝากหรือถอนขั้นต่ำ 100 บาทต่อรายการ');
         tId = parseMemberCode(currentShopId, tId);
         if (!tId) return alert('รหัสสมาชิกไม่ถูกต้องหรือเป็นของร้านอื่น');
       }
@@ -2230,21 +2245,24 @@
         document.getElementById('settingWaterMargin').value = settings?.water_margin ?? 0.05;
         document.getElementById('settingRoundDuration').value = settings?.round_duration ?? 15;
         document.getElementById('settingCommRate').value = settings?.comm_rate ?? 0.01;
-        document.getElementById('settingMinBet').value = settings?.min_bet ?? 20;
+        document.getElementById('settingMinBet').value = settings?.min_bet ?? 100;
         document.getElementById('settingMaxBet').value = settings?.max_bet ?? 5000;
       } catch (error) {
         showAdminApiError(error.message);
       }
     }
     async function saveSettings() {
+      const minBet = Number(document.getElementById('settingMinBet').value);
+      const maxBet = Number(document.getElementById('settingMaxBet').value);
+      if (minBet < 100 || maxBet < minBet) return alert('ยอดเล่นขั้นต่ำต้องอย่างน้อย 100 บาท และยอดสูงสุดต้องไม่น้อยกว่ายอดขั้นต่ำ');
       try {
         const { data: saved } = await _supabase.from('system_settings').update({
           withdrawal_fee_mode: document.getElementById('settingWithdrawalFee').value,
           water_margin: parseFloat(document.getElementById('settingWaterMargin').value),
           round_duration: parseInt(document.getElementById('settingRoundDuration').value, 10),
           comm_rate: parseFloat(document.getElementById('settingCommRate').value),
-          min_bet: parseFloat(document.getElementById('settingMinBet').value),
-          max_bet: parseFloat(document.getElementById('settingMaxBet').value)
+          min_bet: minBet,
+          max_bet: maxBet
         }).eq('shop_id', currentShopId).select('id');
         if (!saved?.length) return alert('ยังไม่มีแถวตั้งค่าของร้านนี้ในฐานข้อมูล กรุณาเพิ่มแถวตั้งค่าร้านก่อนบันทึก');
         alert('บันทึกการตั้งค่าสำเร็จ');

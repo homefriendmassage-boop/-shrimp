@@ -33,14 +33,12 @@
 
     <div class="card">
       <div class="wallet-box">
-        <div style="color: #94a3b8; font-size: 0.9rem;">ยอด Wallet ปัจจุบัน</div>
+        <div style="color: #94a3b8; font-size: 0.9rem;">กระเป๋าโบนัส</div>
         <div id="promoterWallet" style="font-size: 2.5rem; font-weight: bold; color: #10b981; margin-top: 5px;">฿0.00</div>
         <div style="font-size: 0.8rem; color: #ec4899; margin-top: 8px;">ผู้แนะนำ: <span id="promoterName">กำลังโหลด...</span></div>
       </div>
-      <p>ค่าแนะนำจากบิลที่เข้าเงื่อนไขจะเข้า Wallet อัตโนมัติเมื่อตัดผลรอบ</p>
-      <a id="promoterWalletLink">เปิด Wallet ในหน้าผู้เล่น</a>
-      <p id="legacyCommission" hidden></p>
-      <button id="legacyWithdraw" hidden class="btn bg-pink" onclick="requestWithdraw()"><i class="fa-solid fa-money-bill-transfer"></i> แจ้งถอนค่าคอมมิชชั่น</button>
+      <p>ค่าแนะนำเข้ากระเป๋าโบนัสเมื่อตัดผล ถอนขั้นต่ำ 100 บาท ค่าบริการ 10%</p>
+      <a id="promoterWalletLink">เปิดหน้าผู้เล่นเพื่อถอนโบนัส</a>
     </div>
 
     <div class="card">
@@ -61,12 +59,10 @@
   </div>
 
   <script>
-    const _supabase = supabase.createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_ANON_KEY);
     const params = new URLSearchParams(location.search);
     const restored = new URL(params.get('liff.state') || '/', location.origin);
     const currentShopId = params.get('shop') ||
       (restored.origin === location.origin && restored.searchParams.get('shop')) || 'SHOP_000';
-    let currentUser = null;
 
     async function initPromoter() {
       try {
@@ -88,17 +84,10 @@
             return;
         }
 
-        currentUser = user;
         document.getElementById('promoterName').innerText = user.display_name;
         const money = amount => '฿' + Number(amount || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 });
-        document.getElementById('promoterWallet').textContent = money(user.credit_balance);
+        document.getElementById('promoterWallet').textContent = money(user.commission_balance);
         document.getElementById('promoterWalletLink').href = playerEntryUrl(currentShopId);
-        if (Number(user.commission_balance) > 0) {
-          const legacy = document.getElementById('legacyCommission');
-          legacy.textContent = 'ยอดค่าคอมเดิม ' + money(user.commission_balance);
-          legacy.hidden = false;
-          document.getElementById('legacyWithdraw').hidden = false;
-        }
 
         // สร้าง Link และ QR Code
         const refLink = playerEntryUrl(currentShopId, { ref: formatMemberCode(currentShopId, user.member_id) });
@@ -113,48 +102,6 @@
       copyText.select(); copyText.setSelectionRange(0, 99999);
       navigator.clipboard.writeText(copyText.value);
       alert("คัดลอกลิงก์เรียบร้อยแล้ว ส่งให้เพื่อนได้เลย!");
-    }
-
-    async function requestWithdraw() {
-      let amt = parseFloat(prompt(`คุณมีค่าคอมมิชชั่น ฿${currentUser.commission_balance}\nกรุณาระบุจำนวนเงินที่ต้องการถอน:`));
-      if (!amt || isNaN(amt) || amt <= 0) return;
-      if (amt > currentUser.commission_balance) return alert("ยอดเงินไม่พอ");
-
-      let typeCode = prompt("เลือกรูปแบบการรับเงิน:\nพิมพ์ 1 = โอนเข้าบัญชีธนาคาร (เงินสด)\nพิมพ์ 2 = เติมเป็นเครดิตเล่นเกม");
-      if(typeCode !== '1' && typeCode !== '2') return alert("ยกเลิกการทำรายการ");
-
-      try {
-          let newBal = currentUser.commission_balance - amt;
-          await _supabase.from('users').update({ commission_balance: newBal }).eq('shop_id', currentShopId).eq('uid', currentUser.uid);
-          
-          let wType = typeCode === '1' ? 'cash' : 'credit';
-          let rType = typeCode === '1' ? 'ถอนค่าคอม' : 'ฝากเงิน';
-          let mId = wType === 'cash' ? '-' : `(เปลี่ยนค่าคอมเป็นเครดิต)`;
-          
-          // แจ้ง GAS
-          fetch(APP_CONFIG.GAS_URL, {
-              method: 'POST',
-              body: JSON.stringify({
-                  action: 'requestAffiliateWithdraw',
-                  uid: currentUser.uid,
-                  memberId: currentUser.member_id,
-                  displayName: currentUser.display_name,
-                  amount: amt,
-                  withdrawType: wType,
-                  profilePic: currentUser.profile_pic
-              })
-          });
-
-          // บันทึกลงคิวให้แอดมิน
-          await _supabase.from('topup_requests').insert([{
-              uid: currentUser.uid, member_id: currentUser.member_id,
-              display_name: currentUser.display_name, type: rType,
-              amount: amt, method: mId, status: 'Pending'
-          }]);
-
-          alert("แจ้งทำรายการเรียบร้อยแล้ว รอแอดมินดำเนินการครับ");
-          window.location.reload();
-      } catch (e) { alert("เกิดข้อผิดพลาด"); }
     }
 
     initPromoter();

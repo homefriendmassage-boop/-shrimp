@@ -246,16 +246,16 @@ test('cash deposits and withdrawals enter the selected shop queue', async () => 
       ['ฝากเงิน', 'เงินสด', '-'],
       ['ถอนเงิน', 'โอนเงิน', 'ไม่หักค่าน้ำ'],
     ]) {
-      const response = await handler(request({ action: 'wallet_request', shop_id, type, method, amount: '10.50' }));
+      const response = await handler(request({ action: 'wallet_request', shop_id, type, method, amount: '100.50' }));
       assert.equal(response.status, 200);
       assert.deepEqual(await response.json(), { ok: true, status: 'Pending' });
       assert.deepEqual(insertions.pop(), {
         shop_id, uid, member_id: 'M0001', display_name: 'M0001', type, method,
-        amount: 10.5, fee_option, slip_url: '', status: 'Pending',
+        amount: 100.5, fee_option, slip_url: '', status: 'Pending',
       });
     }
   }
-  const payload = { action: 'wallet_request', type: 'ฝากเงิน', method: 'โอนเงิน', amount: '10.50' };
+  const payload = { action: 'wallet_request', type: 'ฝากเงิน', method: 'โอนเงิน', amount: '100.50' };
   const prefix = 'https://example.supabase.co/storage/v1/object/public/slips/slips/';
   const wrongShop = await handler(request({ ...payload, slip_url: prefix + 'SHOP_002_' + uid + '_1794469694900.png' }));
   assert.equal((await wrongShop.json()).code, 'WALLET_SLIP_INVALID');
@@ -347,7 +347,7 @@ test('daily report labels cash movements separately from wallet credit and perfo
     const rows = new Map(message.contents.body.contents.flatMap(item => item.contents ?? []).filter(item => item.layout === 'horizontal')
       .map(item => item.contents.map(cell => cell.text)));
     assert.equal(rows.get('ค่าน้ำสุทธิก่อนค่าคอมและค่าใช้จ่าย'), '+฿110');
-    assert.equal(rows.get('ค่าแนะนำที่เข้า Wallet'), '−฿15');
+    assert.equal(rows.get('ค่าแนะนำที่เข้าโบนัส'), '−฿15');
     assert.equal(rows.get('ค่าน้ำหลังหักค่าแนะนำ ก่อนค่าใช้จ่าย'), '+฿95');
     assert.equal(rows.get('เงินสดสุทธิจากโต๊ะ'), '+฿130');
     assert.equal(rows.get('เพิ่มเครดิตสมาชิก'), '+฿900');
