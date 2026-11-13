@@ -4,9 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Admin Panel - บ่อตกกุ้ง</title>
-  <script src="config.js?v=player-entry-1"></script>
+  <script src="config.js?v=cash-table-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=wallet-queue-1"></script>
+  <script src="admin-api-client.js?v=cash-table-1"></script>
+  <script src="accounting-day.js?v=1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -208,7 +210,7 @@
   <div id="qrModal" class="hidden no-print" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; display: flex; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box;">
     <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; padding: 20px; width: 100%; max-width: 350px; text-align: center; position: relative;">
       <h3 style="margin-top: 0; color: var(--blue-main); border-bottom: 1px solid var(--card-border); padding-bottom: 10px;">QR Code โต๊ะ <span id="qrTableNoDisplay"></span></h3>
-      <div style="background: white; padding: 15px; border-radius: 12px; display: inline-block; margin: 10px auto;"><img id="qrImage" src="" alt="QR Code" style="width: 200px; height: 200px;"></div>
+      <div style="background: white; padding: 15px; border-radius: 12px; display: inline-block; margin: 10px auto;"><div id="qrImage" role="img" aria-label="QR โต๊ะเงินสด"></div></div>
       <button onclick="closeQrModal()" class="btn btn-blue" style="width: 100%;">ปิดหน้าต่าง</button>
     </div>
   </div>
@@ -324,6 +326,14 @@
           <input type="text" id="txtNewTable" class="form-control" placeholder="ระบุเบอร์โต๊ะใหม่" style="flex: 2;">
           <button class="btn btn-green" id="btnAddTable" style="flex: 1;" onclick="addNewTable()"><i class="fa-solid fa-plus"></i> เพิ่มโต๊ะ</button>
         </div>
+        <p style="color:var(--text-muted)">เปิดวงเงินโต๊ะเพื่อให้ผู้เล่นจ่ายทีหลังได้ QR เปลี่ยนทุกวันเวลา 06:00 น.</p>
+        <form id="staffCashBetForm" class="hidden" style="margin-bottom:12px">
+          <p id="staffCashBetTitle"></p>
+          <label>ฝั่ง <select name="side" class="form-control"><option>คู่</option><option>คี่</option></select></label>
+          <label>ยอดลงโต๊ะ <input name="amount" type="number" min="0.01" step="0.01" class="form-control" required></label>
+          <button type="submit" class="btn btn-blue">บันทึกบิล</button>
+          <button type="button" class="btn btn-outline" onclick="this.form.classList.add('hidden')">ปิด</button>
+        </form>
         <div id="tableListContainer" style="max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 5px;"></div>
       </div>
 
@@ -437,7 +447,7 @@
       <div class="card">
         <div class="card-title" style="color: var(--green-main);"><i class="fa-solid fa-file-invoice"></i> สรุปยอดและพิมพ์รายงาน</div>
         <div class="form-group">
-            <label>เลือกวันที่ต้องการดูรายงาน:</label>
+            <label>วันที่บัญชี · 06:00 ถึงก่อน 06:00 ของวันถัดไป</label>
             <div style="display: flex; gap: 10px; align-items: center;">
               <input type="date" id="repDateSelector" class="form-control" style="flex: 2; color-scheme: dark; cursor: pointer;" onclick="if(this.showPicker) this.showPicker();">
               <button class="btn btn-blue" style="flex: 1;" onclick="generateReport()"><i class="fa-solid fa-search"></i> ค้นหา</button>
@@ -466,7 +476,7 @@
         </div>
         
         <div style="display: flex; gap: 10px; flex-direction: column;">
-           <button class="btn btn-outline" onclick="sendReportToLine()"><i class="fa-solid fa-paper-plane"></i> ส่งสรุปร้าน & รับจบ เข้า LINE</button>
+           <button class="btn btn-outline" id="sendCashReport" onclick="sendReportToLine()"><i class="fa-solid fa-paper-plane"></i> ส่งรายงานเงินสดเข้า LINE</button>
            <div style="display: flex; gap: 10px;">
              <button class="btn btn-blue" style="flex: 1; padding: 10px; font-size: 0.9rem;" onclick="printReport('A4')"><i class="fa-solid fa-print"></i> พิมพ์ A4</button>
              <button class="btn btn-green" style="flex: 1; padding: 10px; font-size: 0.9rem;" onclick="printReport('Slip')"><i class="fa-solid fa-receipt"></i> สลิป 80mm</button>
@@ -474,6 +484,11 @@
         </div>
       </div>
       
+      <section class="card">
+        <div class="card-title">รายงานเงินสดรายโต๊ะ</div>
+        <p style="color:var(--text-muted)">รับและจ่ายเงินสดนับตามเวลาที่บันทึกจริง</p>
+        <div id="cashTableReport" role="status"></div>
+      </section>
       <div class="card">
          <div class="card-title" style="color: var(--text-main); font-size: 1rem;"><i class="fa-solid fa-list"></i> ประวัติการออกรอบของวันนี้</div>
          <div id="roundReportList" style="max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 5px;"></div>
@@ -486,6 +501,7 @@
           <h2 style="margin-bottom: 5px;">รายงานสรุปยอดประจำวัน - บ่อตกกุ้ง</h2>
           <p style="margin-top: 0; color: #555;">วันที่: <span id="printDateA4"></span> | พิมพ์โดย: <span id="printAdminNameA4"></span></p>
       </div>
+      <div id="printCashTablesA4"></div>
       <h3>1. สรุปผลกำไร-ขาดทุน (P&L)</h3>
       <table class="report-table">
           <tr><th style="width: 70%;">รายการ</th><th class="text-right">จำนวนเงิน (บาท)</th></tr>
@@ -518,6 +534,7 @@
           <div style="font-size: 10px; text-align: left; margin-top: 5px;">วันที่: <span id="printDateSlip"></span></div>
           <div style="font-size: 10px; text-align: left;">แอดมิน: <span id="printAdminNameSlip"></span></div>
       </div>
+      <div id="printCashTablesSlip"></div>
       <div class="slip-section">
           <div class="slip-bold" style="margin-bottom: 5px;">-- สรุปกำไร/ขาดทุน --</div>
           <div class="slip-row"><span>ยอดแทง(Gross):</span> <span id="p_grossBetSlip">0</span></div>
@@ -595,12 +612,8 @@
           currentShopId = urlParams.get('shop');
       }
 
-      let d = new Date();
-      let year = d.getFullYear(); let month = String(d.getMonth() + 1).padStart(2, '0'); let day = String(d.getDate()).padStart(2, '0');
-      let localDateStr = `${year}-${month}-${day}`;
-      
       const dateInput = document.getElementById('repDateSelector');
-      dateInput.value = localDateStr;
+      dateInput.value = shopAccountingDay();
       dateInput.addEventListener('change', function() { generateReport(); });
       
       try {
@@ -1288,11 +1301,13 @@
       let selDate = document.getElementById('repDateSelector').value; 
       if(!selDate) return;
       
-      let parts = selDate.split('-'); let yy = parts[0].substring(2); let mm = parts[1]; let dd = parts[2];
-      let prefix = `R-${yy}${mm}${dd}-`; let startD = new Date(selDate); startD.setHours(0,0,0,0); let endD = new Date(selDate); endD.setHours(23,59,59,999);
-      
+      const [year, mm, dd] = selDate.split('-');
+      const yy = year.slice(-2);
+      const [startAt, endAt] = shopAccountingWindow(selDate);
+      void loadCashTableReport(selDate);
       try {
-        const { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).like('round_id', `${prefix}%`).order('round_id', { ascending: false });
+        const { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId)
+          .gte('created_at', startAt).lt('created_at', endAt).order('created_at', { ascending: false });
         let gGross = 0, gPayout = 0, gCancel = 0, gNet = 0; let cntEven = 0, cntOdd = 0, cntTotalRounds = rounds ? rounds.length : 0;
         
         listDiv.innerHTML = '';
@@ -1320,7 +1335,7 @@
           }
         } else { listDiv.innerHTML = '<div style="text-align:center; color: var(--text-muted); padding: 15px;">ยังไม่มีการออกรอบในวันที่เลือก</div>'; }
 
-        const { data: tx } = await _supabase.from('transactions').select('*').eq('shop_id', currentShopId).gte('created_at', startD.toISOString()).lte('created_at', endD.toISOString());
+        const { data: tx } = await _supabase.from('transactions').select('*').eq('shop_id', currentShopId).gte('created_at', startAt).lt('created_at', endAt);
         let tDep = 0, tWd = 0; let countDep = 0, countWd = 0;
         if(tx) {
             tx.forEach(t => {
@@ -1329,7 +1344,7 @@
             });
         }
 
-        const { data: allBLogs } = await _supabase.from('backer_logs').select('*').eq('shop_id', currentShopId).gte('created_at', startD.toISOString()).lte('created_at', endD.toISOString());
+        const { data: allBLogs } = await _supabase.from('backer_logs').select('*').eq('shop_id', currentShopId).gte('created_at', startAt).lt('created_at', endAt);
         let backerMap = {};
         if (allBLogs) {
             allBLogs.forEach(bl => {
@@ -1377,6 +1392,14 @@
         document.getElementById(`p_drawerNet${paperType}`).innerText = rd.drawerNet.toLocaleString();
         document.getElementById(`p_roundTotal${paperType}`).innerText = rd.roundTotal; document.getElementById(`p_roundEven${paperType}`).innerText = rd.roundEven; document.getElementById(`p_roundOdd${paperType}`).innerText = rd.roundOdd;
         
+        const cash = document.getElementById('printCashTables' + paperType);
+        cash.replaceChildren(...Array.from(document.getElementById('cashTableReport').children, row => row.cloneNode(true)));
+        if (cash.childElementCount) {
+          const title = document.createElement('strong');
+          title.textContent = 'เงินสดรายโต๊ะ';
+          cash.prepend(title);
+        }
+
         document.getElementById('mainAppContainer').style.display = 'none'; document.getElementById('printAreaA4').classList.remove('layout-a4'); document.getElementById('printAreaA4').style.display = 'none'; document.getElementById('printAreaSlip').classList.remove('layout-slip'); document.getElementById('printAreaSlip').style.display = 'none';
         document.getElementById(targetDivId).style.display = 'block';
         if(paperType === 'A4') document.getElementById(targetDivId).classList.add('layout-a4'); else document.getElementById(targetDivId).classList.add('layout-slip');
@@ -1384,11 +1407,23 @@
         setTimeout(() => { window.print(); document.getElementById('mainAppContainer').style.display = 'block'; document.getElementById(targetDivId).style.display = 'none'; }, 500);
     }
 
-    function sendReportToLine() {
-        if (!cachedReportData || Object.keys(cachedReportData).length === 0) return alert("กรุณารอโหลดข้อมูลก่อน หรือ ไม่มีข้อมูลในวันนี้ครับ");
-        if(!confirm(`ยืนยันการส่งรายงานสรุปยอด ร้านค้า และ คนรับจบ เข้ากลุ่ม LINE และแชทส่วนตัวคนรับจบ?`)) return;
-        notifyGAS('sendDailyReport', { reportData: cachedReportData, backerSummaries: cachedReportData.backerSummaries });
-        alert("ส่งรายงานเข้า LINE เรียบร้อยแล้ว!");
+    let cashReportDelivery = null;
+    async function sendReportToLine() {
+      const day = document.getElementById('repDateSelector').value;
+      const button = document.getElementById('sendCashReport');
+      if (!day || button.disabled || !confirm('ส่งรายงานเงินสดวันที่บัญชี ' + day + ' ไปยังผู้รับแจ้งเตือน LINE ของร้านใช่ไหม')) return;
+      const key = currentShopId + '/' + day;
+      if (cashReportDelivery?.key !== key) cashReportDelivery = { key, id: crypto.randomUUID() };
+      button.disabled = true;
+      try {
+        await _supabase.sendTableCashReport(day, cashReportDelivery.id);
+        cashReportDelivery = null;
+        alert('LINE รับรายงานเงินสดแล้ว');
+      } catch (error) {
+        alert(({ TABLE_REPORT_LINE_NOT_READY: 'กรุณาตั้งผู้รับแจ้งเตือน LINE และเปิดการแจ้งเตือนของร้าน',
+          TABLE_REPORT_TOO_LONG: 'รายงานยาวเกินข้อความ LINE กรุณาพิมพ์รายงานจากหน้านี้' })[error.message]
+          || 'ยังยืนยันผลการส่งรายงานไม่ได้ กรุณาตรวจ LINE ก่อนส่งซ้ำ');
+      } finally { button.disabled = false; }
     }
 
     // ==========================================
@@ -1687,10 +1722,12 @@
             if (bet.status === 'Win' || bet.status === 'Lose') { if (bet.status === 'Win') winCount++; continue; }
             if (bet.bet_type === res) {
               winCount++; let profit = bet.amount * (1 - margin); let payout = bet.amount + profit;
+              if (bet.cash_table) payout = Math.round((payout + Number.EPSILON) * 100) / 100;
               
               const { error: betUpdErr } = await _supabase.from('bets').update({ status: 'Win', payout: payout }).eq('shop_id', currentShopId).eq('bet_id', bet.bet_id);
               if (betUpdErr) throw new Error("อัปเดตบิลล้มเหลว: " + betUpdErr.message);
 
+              if (bet.cash_table) continue;
               if (bet.play_mode === 'table') {
                   const { data: tData } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', bet.table_no).single();
                   if(tData) await _supabase.from('tables').update({ credit: tData.credit + payout }).eq('shop_id', currentShopId).eq('table_no', bet.table_no);
@@ -1744,6 +1781,9 @@
         document.getElementById('txtAmount').value = "";
     }
     
+    let cashPaymentRetry = null;
+    let cashPaymentBusy = false;
+
     async function processCredit(type) {
       let tId = document.getElementById('txtTargetId').value.trim(); 
       let amountStr = document.getElementById('txtAmount').value;
@@ -1758,9 +1798,15 @@
       
       try {
         if(creditMode === 'table') {
-          const { data: t, error: tableError } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', String(tId)).single();
+          const { data: t, error: tableError } = await _supabase.from('tables').select('credit,cash_limit').eq('shop_id', currentShopId).eq('table_no', String(tId)).single();
           if(tableError || !t) throw new Error("ไม่พบเบอร์โต๊ะนี้ในระบบ กรุณาตรวจสอบให้แน่ใจว่าได้กด 'เพิ่มโต๊ะ' เบอร์นี้ในระบบแล้ว");
           
+          if (t.cash_limit != null) {
+            await recordCashAtTable(tId, type, amountStr);
+            document.getElementById('txtTargetId').value = '';
+            document.getElementById('txtAmount').value = '';
+            return;
+          }
           let newBal = type === 'deposit' ? t.credit + amount : t.credit - amount;
           if (newBal < 0) throw new Error("ยอดเงินในโต๊ะไม่พอให้ถอน");
           
@@ -1803,23 +1849,154 @@
         document.getElementById('txtTargetId').value = "";
         document.getElementById('txtAmount').value = ""; 
         loadTableList(); 
-      } catch(e) { alert("ข้อผิดพลาด: " + e.message); }
+      } catch(e) {
+        alert(e.message === 'CASH_TABLE_WAITING_RESULT' ? 'กรุณารอผลของโต๊ะก่อนบันทึกเงินสด' : 'ข้อผิดพลาด ' + e.message);
+      }
     }
-    
+
     async function cancelBet() {
       let bId = document.getElementById('txtBetId').value.trim(); if(!confirm("ยืนยันยกเลิกและคืนเครดิต?")) return;
       try {
          const { data: bet } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('bet_id', bId).single();
          if(!bet || bet.status !== 'Active') return alert("บิลไม่ถูกต้อง");
          await _supabase.from('bets').update({ status: 'Cancelled' }).eq('shop_id', currentShopId).eq('bet_id', bId);
-         if (bet.play_mode === 'table') { const { data: t } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', bet.table_no).single(); await _supabase.from('tables').update({ credit: t.credit + bet.amount }).eq('shop_id', currentShopId).eq('table_no', bet.table_no); } 
+         if (bet.cash_table) { /* Cash table adjustment is applied with the bill transition. */ }
+         else if (bet.play_mode === 'table') { const { data: t } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', bet.table_no).single(); await _supabase.from('tables').update({ credit: t.credit + bet.amount }).eq('shop_id', currentShopId).eq('table_no', bet.table_no); }
          else { const { data: u } = await _supabase.from('users').select('credit_balance').eq('shop_id', currentShopId).eq('uid', bet.uid).single(); await _supabase.from('users').update({ credit_balance: u.credit_balance + bet.amount }).eq('shop_id', currentShopId).eq('uid', bet.uid); }
          alert("ยกเลิกบิลสำเร็จ"); document.getElementById('txtBetId').value = ""; 
          if(document.getElementById('tabReport').classList.contains('active')) generateReport();
       } catch(e) { alert("ยกเลิกไม่สำเร็จ"); }
     }
 
-    async function loadTableList() { const l = document.getElementById('tableListContainer'); const { data: t } = await _supabase.from('tables').select('*').eq('shop_id', currentShopId).order('created_at', { ascending: true }); l.innerHTML = ''; if(!t || t.length === 0) { l.innerHTML = '<div style="text-align:center; color: var(--text-muted);">ยังไม่มีโต๊ะในระบบ</div>'; return; } t.forEach(tb => { let cd = document.createElement('div'); cd.style.cssText = "background: #0f111a; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;"; cd.innerHTML = `<div><div style="font-weight: 600; font-size: 1rem; color: white;">โต๊ะ ${tb.table_no}</div><div style="font-size: 0.8rem; color: var(--green-main);">เครดิต: ฿${tb.credit.toLocaleString()}</div></div><div style="display:flex; gap:5px;"><button class="btn btn-blue" style="padding: 6px 10px; font-size: 0.85rem;" onclick="showQrCode('${tb.table_no}')"><i class="fa-solid fa-qrcode"></i> QR</button><button class="btn btn-red" style="padding: 6px 10px; font-size: 0.85rem;" onclick="deleteTable('${tb.table_no}')"><i class="fa-solid fa-trash"></i></button></div>`; l.appendChild(cd); }); }
+    async function loadCashTableReport(day) {
+      const list = document.getElementById('cashTableReport');
+      list.textContent = 'กำลังโหลดรายงานเงินสด…';
+      try {
+        const { tables } = await _supabase.tableCashReport(day);
+        if (document.getElementById('repDateSelector').value !== day) return;
+        list.replaceChildren();
+        if (!tables.length) list.textContent = 'ไม่มีรายการโต๊ะเงินสดในวันที่เลือก';
+        for (const desk of tables) {
+          const row = document.createElement('p');
+          const money = amount => Number(amount).toLocaleString('th-TH');
+          row.textContent = 'โต๊ะ ' + desk.table_no + ' · ยอดลง ฿' + money(desk.played)
+            + ' · ยอดชนะ ฿' + money(desk.won) + ' · รับสด ฿' + money(desk.received)
+            + ' · จ่ายสด ฿' + money(desk.paid) + ' · เงินสดสุทธิ ฿' + money(desk.received - desk.paid)
+            + (desk.pending ? ' · รอผล ' + desk.pending + ' บิล' : '');
+          list.append(row);
+        }
+      } catch {
+        if (document.getElementById('repDateSelector').value === day) list.textContent = 'โหลดรายงานเงินสดไม่สำเร็จ';
+      }
+    }
+
+    async function recordCashAtTable(table, type, amount) {
+      if (cashPaymentBusy) return;
+      cashPaymentBusy = true;
+      const key = JSON.stringify([currentShopId, table, type, amount]);
+      if (cashPaymentRetry?.key !== key) cashPaymentRetry = { key, id: crypto.randomUUID() };
+      try {
+        const { balance } = await _supabase.recordTableCash(table, type, amount, cashPaymentRetry.id);
+        cashPaymentRetry = null;
+        alert('บันทึกเงินสดแล้ว · ยอดโต๊ะ ฿' + Number(balance).toLocaleString('th-TH'));
+      } finally { cashPaymentBusy = false; }
+      await loadTableList();
+    }
+
+    async function setCashTableLimit(table, limit) {
+      const value = prompt('วงเงินค้างชำระของโต๊ะ (บาท) · ใส่ 0 เพื่อปิดโหมดเงินสด', limit ?? '');
+      if (value === null) return;
+      if (!/^\d{1,9}(?:\.\d{1,2})?$/.test(value.trim())) return alert('กรุณากรอกวงเงินให้ถูกต้อง');
+      try {
+        await _supabase.from('tables').update({ cash_limit: Number(value) || null })
+          .eq('shop_id', currentShopId).eq('table_no', table);
+        await loadTableList();
+      } catch (error) {
+        alert(error.message === 'CASH_TABLE_OPEN_BALANCE'
+          ? 'กรุณาเคลียร์ยอดและรอบที่ค้างก่อนปิดโหมดเงินสด' : 'บันทึกวงเงินไม่สำเร็จ');
+      }
+    }
+
+    let staffCashBetRetry = null;
+    document.getElementById('staffCashBetForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector('[type="submit"]');
+      if (button.disabled) return;
+      button.disabled = true;
+      try {
+        const { data: rounds } = await _supabase.from('rounds').select('round_id,status')
+          .eq('shop_id', currentShopId).order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1);
+        if (rounds?.[0]?.status !== 'Open') throw new Error('ROUND_CLOSED');
+        const details = {
+          table_no: form.dataset.table, round_id: rounds[0].round_id,
+          bet_type: form.elements.side.value, amount: form.elements.amount.value,
+        };
+        const key = JSON.stringify([currentShopId, details]);
+        if (staffCashBetRetry?.key !== key) staffCashBetRetry = { key, id: crypto.randomUUID() };
+        await _supabase.placeTableCashBet({ ...details, bet_id: staffCashBetRetry.id });
+        staffCashBetRetry = null;
+        form.elements.amount.value = '';
+        form.classList.add('hidden');
+        await loadTableList();
+        fetchAdminDashboard();
+      } catch (error) {
+        alert(({ ROUND_CLOSED: 'รอบนี้ปิดรับแล้ว', BET_LIMIT: 'ยอดเกินช่วงขั้นต่ำหรือสูงสุดของร้าน',
+          TABLE_CREDIT_LIMIT: 'ยอดค้างเกินวงเงินของโต๊ะ' })[error.message] || 'ยังยืนยันผลการบันทึกบิลไม่ได้');
+      } finally { button.disabled = false; }
+    });
+
+    async function loadTableList() {
+      const list = document.getElementById('tableListContainer');
+      const { data: desks } = await _supabase.from('tables').select('*').eq('shop_id', currentShopId).order('created_at', { ascending: true });
+      list.replaceChildren();
+      if (!desks?.length) list.textContent = 'ยังไม่มีโต๊ะในระบบ';
+      for (const desk of desks ?? []) {
+        const row = document.createElement('div');
+        row.style.cssText = 'background:#0f111a;padding:12px;border:1px solid var(--card-border);border-radius:8px';
+        const label = document.createElement('p');
+        const balance = Number(desk.credit);
+        label.textContent = 'โต๊ะ ' + desk.table_no + ' · ' + (balance < 0 ? 'ค้างชำระ' : 'ยอดโต๊ะ')
+          + ' ฿' + Math.abs(balance).toLocaleString('th-TH')
+          + (desk.cash_limit == null ? '' : ' · วงเงิน ฿' + Number(desk.cash_limit).toLocaleString('th-TH'));
+        row.append(label);
+        const addButton = (label, style, action) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'btn ' + style;
+          button.textContent = label;
+          button.style.margin = '3px';
+          button.onclick = async () => {
+            button.disabled = true;
+            try { await action(); }
+            catch (error) {
+              alert(error.message === 'CASH_TABLE_WAITING_RESULT' ? 'กรุณารอผลของโต๊ะก่อนบันทึกเงินสด' :
+                error.message === 'CASH_AMOUNT_EXCEEDS_BALANCE' ? 'เงินสดที่กรอกเกินยอดที่ต้องชำระ' :
+                error.message === 'CASH_TABLE_OPEN_BALANCE' ? 'กรุณาเคลียร์ยอดและรอบค้างก่อนลบโต๊ะ' : 'ทำรายการไม่สำเร็จ กรุณาตรวจยอดก่อนลองใหม่');
+            } finally { button.disabled = false; }
+          };
+          row.append(button);
+        };
+        addButton('QR', 'btn-blue', () => showQrCode(desk.table_no, desk.cash_limit != null));
+        addButton('วงเงินสด', 'btn-outline', () => setCashTableLimit(desk.table_no, desk.cash_limit));
+        if (desk.cash_limit != null) addButton('ลงยอดให้โต๊ะ', 'btn-blue', () => {
+          const form = document.getElementById('staffCashBetForm');
+          form.dataset.table = desk.table_no;
+          document.getElementById('staffCashBetTitle').textContent = 'ลงยอดเงินสดให้โต๊ะ ' + desk.table_no;
+          form.classList.remove('hidden');
+          form.elements.amount.focus();
+        });
+        if (desk.cash_limit != null && balance !== 0) {
+          addButton(balance < 0 ? 'รับเงินสด' : 'จ่ายเงินสด', 'btn-green', async () => {
+            const amount = prompt(balance < 0 ? 'จำนวนเงินสดที่รับจริง' : 'จำนวนเงินสดที่จ่ายจริง', Math.abs(balance).toFixed(2));
+            if (amount === null || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0) return;
+            await recordCashAtTable(desk.table_no, balance < 0 ? 'deposit' : 'withdraw', amount.trim());
+          });
+        }
+        addButton('ลบโต๊ะ', 'btn-red', () => deleteTable(desk.table_no));
+        list.append(row);
+      }
+    }
     async function addNewTable() {
       const input = document.getElementById('txtNewTable');
       const tableNo = input.value.trim();
@@ -1842,16 +2019,19 @@
           ? 'หมายเลขโต๊ะนี้มีอยู่แล้ว' : 'เพิ่มหรือโหลดโต๊ะไม่สำเร็จ [' + error.message + ']');
       } finally { button.disabled = false; }
     }
-    async function deleteTable(tNo) { if(confirm(`ยืนยันลบโต๊ะ ${tNo}?`)){ await _supabase.from('tables').delete().eq('shop_id', currentShopId).eq('table_no', tNo); loadTableList(); } }
+    async function deleteTable(tNo) { if(confirm(`ยืนยันลบโต๊ะ ${tNo}?`)){ await _supabase.from('tables').delete().eq('shop_id', currentShopId).eq('table_no', tNo); await loadTableList(); } }
     
-    function showQrCode(tNo) { 
-        document.getElementById('qrTableNoDisplay').innerText = tNo; 
-        const playerUrl = playerEntryUrl(currentShopId, { table: tNo, d: new Date().toISOString().split('T')[0] });
-        const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' + encodeURIComponent(playerUrl);
-        document.getElementById('qrImage').src = qrUrl; 
-        document.getElementById('qrModal').classList.remove('hidden'); 
+    async function showQrCode(table, cashEnabled) {
+        if (!cashEnabled) return alert('กรุณาเปิดวงเงินสดให้โต๊ะก่อนสร้าง QR');
+        const { day, token } = await _supabase.tableQr(table);
+        const playerUrl = playerEntryUrl(currentShopId, { table, d: day, table_token: token });
+        document.getElementById('qrTableNoDisplay').textContent = table;
+        const image = document.getElementById('qrImage');
+        image.replaceChildren();
+        new QRCode(image, { text: playerUrl, width: 200, height: 200 });
+        document.getElementById('qrModal').classList.remove('hidden');
     }
-    
+
     function closeQrModal() { document.getElementById('qrModal').classList.add('hidden'); }
     
     async function loadSettings() {

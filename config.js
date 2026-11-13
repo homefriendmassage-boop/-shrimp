@@ -8,7 +8,7 @@ const APP_CONFIG = {
 function playerEntryUrl(shopId, context = {}) {
   const url = new URL('https://liff.line.me/' + APP_CONFIG.LIFF_ID_PLAYER);
   url.searchParams.set('shop', shopId);
-  for (const key of ['table', 'd', 'ref']) {
+  for (const key of ['table', 'd', 'table_token', 'ref']) {
     const value = context[key];
     if (value != null && value !== '') url.searchParams.set(key, value);
   }

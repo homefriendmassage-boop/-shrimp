@@ -40,13 +40,20 @@ function createAdminApiClient(config, getShopId) {
         return pending.then(resolve, reject);
       }
     };
-    for (const op of ['eq', 'neq', 'gte', 'lte', 'like', 'in']) {
+    for (const op of ['eq', 'neq', 'gte', 'lte', 'lt', 'like', 'in']) {
       query[op] = (column, value) => { request.filters.push({ op, column, value }); return query; };
     }
     return query;
   }
   return {
     from,
+    placeTableCashBet: details => call({ action: 'table_cash_bet', ...details }),
+    tableQr: table => call({ action: 'table_qr', table_no: table }),
+    recordTableCash: (table, type, amount, id) => call({
+      action: 'table_cash_payment', table_no: table, type, amount, entry_id: id,
+    }),
+    sendTableCashReport: (day, id) => call({ action: 'table_send_cash_report', day, delivery_id: id }),
+    tableCashReport: day => call({ action: 'table_cash_report', day }),
     finalizeBalancedRound: (roundId, weight) => call({ action: 'round_finalize_balanced', round_id: roundId, weight }),
     approveWalletDeposit: requestId => call({ action: 'wallet_approve_deposit', request_id: String(requestId) }),
     approveWalletWithdrawal: requestId => call({ action: 'wallet_approve_withdrawal', request_id: String(requestId) }),

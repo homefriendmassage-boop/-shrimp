@@ -53,6 +53,20 @@ async function recordWebhook(req, shop) {
   for (const event of events) {
     const uid = event.source?.userId;
     const time = Number(event.timestamp);
+    const capture = event.type === 'message' && event.message?.type === 'text' &&
+      /^รับไอดี ([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/i.exec(event.message.text?.trim() ?? '');
+    if (capture) {
+      const group = event.source?.groupId;
+      const isGroup = event.source?.type === 'group' && /^C[0-9a-f]{32}$/.test(group ?? '');
+      const recipient = isGroup ? group : event.source?.type === 'user' && validUid(uid) ? uid : null;
+      if (recipient) {
+        const saved = await db.from('shop_notice_capture').update({ recipient_id: recipient })
+          .eq('shop_id', shop).eq('code', capture[1]).eq('kind', isGroup ? 'group' : 'owner')
+          .gt('expires_at', new Date().toISOString()).is('recipient_id', null);
+        if (saved.error) return fail('NOTICE_CAPTURE_FAILED', 500);
+      }
+      continue;
+    }
     if (event.type !== 'message' || event.source?.type !== 'user' || !validUid(uid) ||
         !Number.isFinite(time) || time <= 0 || time > Date.now() + 60000) continue;
     const code = event.message?.type === 'text' && /^ผูกแจ้งเตือน ([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/i.exec(event.message.text?.trim() ?? '');

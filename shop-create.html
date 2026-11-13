@@ -129,11 +129,22 @@
     </dialog>
     <dialog id="notice-dialog" aria-labelledby="notice-title">
       <form id="notice-form">
-        <h2 id="notice-title">ผู้รับแจ้งเตือนสมัครสมาชิก</h2>
+        <h2 id="notice-title">ผู้รับแจ้งเตือน LINE</h2>
         <label>LINE User ID ของผู้รับ
-          <input name="recipient_uid" pattern="U[0-9a-f]{32}" placeholder="ขึ้นต้นด้วย U" required>
+          <input name="recipient_uid" pattern="U[0-9a-f]{32}" placeholder="ขึ้นต้นด้วย U">
         </label>
-        <small>ใช้ UID จาก Provider ของ LINE OA ร้านนี้ และให้ผู้รับเพิ่ม OA เป็นเพื่อนก่อน</small>
+        <button class="secondary" type="button" data-capture="owner">ดึง User ID เจ้าของร้าน</button>
+        <label>LINE Group ID ของร้าน
+          <input name="group_id" pattern="C[0-9a-f]{32}" placeholder="ขึ้นต้นด้วย C">
+        </label>
+        <button class="secondary" type="button" data-capture="group">ดึง Group ID</button>
+        <small>ให้เจ้าของร้านเพิ่ม OA เป็นเพื่อน ส่วนกลุ่มให้เปิด Allow bot to join group chats แล้วเชิญ OA ของร้านเข้ากลุ่ม</small>
+        <section id="notice-capture" hidden>
+          <p id="notice-capture-help"></p>
+          <label>ข้อความสำหรับส่งใน LINE <input id="notice-capture-code" readonly></label>
+          <button id="notice-copy" class="secondary" type="button">คัดลอกข้อความ</button>
+          <button id="notice-read" class="secondary" type="button">ดึง ID หลังส่งข้อความ</button>
+        </section>
         <p id="notice-status" role="status"></p>
         <button id="notice-save" type="submit">ตรวจและบันทึกผู้รับ</button>
         <button id="notice-close" type="button" class="secondary">ปิด</button>
@@ -219,6 +230,8 @@
       INVITE_USED: 'คำเชิญนี้ถูกใช้แล้ว กรุณาขอลิงก์ใหม่',
       SHOP_OR_OA_NOT_READY: 'ร้านนี้ยังไม่พร้อมเปิด กรุณาตรวจการตั้งค่า LINE OA',
       NOTICE_RECIPIENT_INVALID: 'กรุณากรอก LINE User ID ที่ขึ้นต้นด้วย U ตามด้วยอักขระ 32 ตัว',
+      NOTICE_GROUP_NOT_FOUND: 'OA ร้านนี้ยังเข้าถึงกลุ่มนี้ไม่ได้ กรุณาเชิญ OA เข้ากลุ่มก่อน',
+      NOTICE_CAPTURE_EXPIRED: 'รหัสดึง ID หมดอายุ กรุณาสร้างใหม่',
       NOTICE_RECIPIENT_NOT_FOUND: 'OA ร้านนี้มองไม่เห็นบัญชีผู้รับ กรุณาตรวจ Provider และเพิ่ม OA เป็นเพื่อน',
       SHOP_OA_NOT_READY: 'กรุณาเชื่อม LINE OA ของร้านก่อน',
       OA_DETAILS_INVALID: 'ตรวจสอบ Token และ Channel secret ของ Messaging API อีกครั้ง',
@@ -340,15 +353,63 @@
     const noticeSave = byId('notice-save');
     const noticeClose = byId('notice-close');
     let noticeShopId = '';
+    let noticeCapture = null;
 
     function openNoticeSettings(shop) {
       noticeShopId = shop.shop_id;
-      byId('notice-title').textContent = 'ผู้รับแจ้งเตือนสมัครสมาชิก · ' + shop.shop_name;
+      byId('notice-title').textContent = 'ผู้รับแจ้งเตือน LINE · ' + shop.shop_name;
       noticeForm.elements.recipient_uid.value = shop.membership_notice_recipient_uid || '';
+      noticeForm.elements.group_id.value = shop.admin_group_id || '';
+      noticeCapture = null;
+      byId('notice-capture').hidden = true;
       byId('notice-status').textContent = '';
       noticeSave.disabled = false;
       noticeDialog.showModal();
     }
+
+    for (const button of noticeForm.querySelectorAll('[data-capture]')) {
+      button.addEventListener('click', async () => {
+        const shop = noticeShopId;
+        const kind = button.dataset.capture;
+        button.disabled = true;
+        try {
+          const { code } = await request('platform_capture_notice', { target_shop_id: shop, kind });
+          if (noticeShopId !== shop || !noticeDialog.open) return;
+          noticeCapture = { code, kind, shop };
+          byId('notice-capture').hidden = false;
+          byId('notice-capture-code').value = 'รับไอดี ' + code;
+          byId('notice-capture-help').textContent = kind === 'owner'
+            ? 'ให้เจ้าของร้านส่งข้อความนี้ในแชตส่วนตัวกับ OA ของร้าน ภายใน 10 นาที'
+            : 'ส่งข้อความนี้ในกลุ่ม LINE ที่มี OA ของร้าน ภายใน 10 นาที';
+          byId('notice-status').textContent = '';
+        } catch (error) {
+          byId('notice-status').textContent = errors[error.message] || 'สร้างรหัสดึง ID ไม่สำเร็จ';
+        } finally { button.disabled = false; }
+      });
+    }
+    byId('notice-copy').addEventListener('click', async () => {
+      const input = byId('notice-capture-code');
+      try {
+        await navigator.clipboard.writeText(input.value);
+        byId('notice-status').textContent = 'คัดลอกข้อความแล้ว';
+      } catch { input.focus(); input.select(); }
+    });
+    byId('notice-read').addEventListener('click', async () => {
+      const capture = noticeCapture;
+      if (!capture) return;
+      const button = byId('notice-read');
+      button.disabled = true;
+      try {
+        const { recipient_id } = await request('platform_capture_notice', {
+          target_shop_id: capture.shop, kind: capture.kind, code: capture.code,
+        });
+        if (capture !== noticeCapture || !noticeDialog.open) return;
+        if (recipient_id) noticeForm.elements[capture.kind === 'owner' ? 'recipient_uid' : 'group_id'].value = recipient_id;
+        byId('notice-status').textContent = recipient_id ? 'ดึง ID แล้ว กดตรวจและบันทึกผู้รับ' : 'ยังไม่พบข้อความ กรุณาตรวจว่าได้ส่งไปที่ OA หรือกลุ่มของร้านแล้ว';
+      } catch (error) {
+        byId('notice-status').textContent = errors[error.message] || 'ดึง ID ไม่สำเร็จ';
+      } finally { button.disabled = false; }
+    });
 
     noticeClose.addEventListener('click', () => noticeDialog.close());
     noticeDialog.addEventListener('cancel', event => {
@@ -364,6 +425,7 @@
         await request('platform_save_notice_recipient', {
           target_shop_id: noticeShopId,
           recipient_uid: noticeForm.elements.recipient_uid.value,
+          group_id: noticeForm.elements.group_id.value,
         });
         feedback.textContent = 'บันทึกผู้รับแจ้งเตือนแล้ว';
         await loadPortal().catch(() => {});
@@ -461,7 +523,7 @@
           notice.type = 'button';
           notice.className = 'secondary';
           notice.style.marginTop = '8px';
-          notice.textContent = 'ตั้งผู้รับแจ้งเตือนสมัครสมาชิก';
+          notice.textContent = 'ตั้งผู้รับแจ้งเตือน LINE';
           notice.addEventListener('click', () => openNoticeSettings(shop));
           row.append(notice);
           addControl(row, shop, 'line_notifications_enabled', !shop.line_notifications_enabled,
