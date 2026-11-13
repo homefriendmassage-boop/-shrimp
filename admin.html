@@ -6,7 +6,7 @@
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=cash-table-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=mc-board-3"></script>
+  <script src="admin-api-client.js?v=shop-rbac-1"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -251,12 +251,13 @@
     <div id="accessDeniedView" class="hidden no-print" style="text-align: center; padding: 60px 20px; background: var(--card-bg); border-radius: 16px; border: 1px solid var(--card-border);">
       <i class="fa-solid fa-triangle-exclamation" style="font-size: 4rem; color: var(--red-main); margin-bottom: 20px;"></i>
       <h2 style="margin: 0; color: var(--text-main);">ไม่มีสิทธิ์เข้าถึง</h2>
-      <p style="color: var(--text-muted); margin-top: 10px;">หน้านี้สงวนไว้สำหรับพนักงานเท่านั้น</p>
+      <p style="color: var(--text-muted); margin-top: 10px;">คุณไม่มีสิทธิ์เข้าถึงหน้านี้ กรุณาติดต่อเจ้าของร้าน</p>
     </div>
 
     <div class="admin-shortcuts no-print">
       <a id="shopPortalLink" href="shop-create.html" class="btn btn-outline hidden">จัดการร้าน</a>
-      <a id="switchToPlayer" class="btn btn-outline hidden">ไปหน้า Player</a>
+      <a id="switchToPlayer" class="btn btn-outline hidden">เปิดหน้าผู้เล่น</a>
+      <a id="referralLink" class="btn btn-outline hidden">แนะนำลูกค้า</a>
     </div>
     <a id="saasAdminLink" href="admin.html?saas=1" class="btn btn-outline hidden no-print" style="display:block;text-align:center;margin-bottom:15px">แอดมิน SaaS · เปิด–ปิดร้าน</a>
     <div id="adminApiError" class="card hidden no-print" role="alert" style="color:var(--yellow-main)"></div>
@@ -320,13 +321,13 @@
         </div>
         <div class="btn-group">
           <button class="btn btn-green" onclick="processCredit('deposit')"><i class="fa-solid fa-arrow-up"></i> เติมเงิน (ฝาก)</button>
-          <button class="btn btn-red" onclick="processCredit('withdraw')"><i class="fa-solid fa-arrow-down"></i> ถอนเงิน (คืน)</button>
+          <button id="manualWithdraw" class="btn btn-red" onclick="processCredit('withdraw')"><i class="fa-solid fa-arrow-down"></i> ถอนเงิน (คืน)</button>
         </div>
       </div>
       
       <div class="card" id="cardTableManage">
         <div class="card-title" style="color: var(--blue-main);"><i class="fa-solid fa-qrcode"></i> จัดการโต๊ะ & สแกนเข้าเล่น</div>
-        <div class="form-group" style="display: flex; gap: 10px; margin-bottom: 20px;">
+        <div class="form-group" id="tableCreateControls" style="display: flex; gap: 10px; margin-bottom: 20px;">
           <input type="text" id="txtNewTable" class="form-control" placeholder="ระบุเบอร์โต๊ะใหม่" style="flex: 2;">
           <button class="btn btn-green" id="btnAddTable" style="flex: 1;" onclick="addNewTable()"><i class="fa-solid fa-plus"></i> เพิ่มโต๊ะ</button>
         </div>
@@ -339,7 +340,7 @@
           <button type="button" class="btn btn-outline" onclick="this.form.classList.add('hidden')">ปิด</button>
         </form>
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0">
-          <button type="button" class="btn btn-outline" onclick="createTableRange(this)">สร้างโต๊ะชุด</button>
+          <button id="tableBulkCreate" type="button" class="btn btn-outline" onclick="createTableRange(this)">สร้างโต๊ะชุด</button>
           <a class="btn btn-outline" id="cashBoardLink" target="_blank" rel="noopener">จอทีวีและ MC</a>
           <button class="btn btn-outline hidden" id="boardPasswordSettings" type="button">ตั้งรหัสผ่านจอ MC</button>
           <label>แสดงโต๊ะ <select class="form-control" id="tableFilter">
@@ -366,6 +367,13 @@
           <button class="btn btn-blue" style="flex: 1;" onclick="searchUser()"><i class="fa-solid fa-search"></i> ค้นหา</button>
         </div>
         
+        <details id="roleDirectory">
+          <summary>รายชื่อและประวัติการเปลี่ยนสิทธิ์</summary>
+          <label>แสดง <select id="roleListType" class="form-control"><option value="directory">รายชื่อ</option><option value="history">ประวัติ</option></select></label>
+          <button class="btn btn-outline" type="button" id="rolePagePrevious">ก่อนหน้า</button>
+          <button class="btn btn-outline" type="button" id="rolePageNext">ถัดไป</button>
+          <div id="roleListResults" aria-live="polite"></div>
+        </details>
         <div id="userInfoContainer" class="user-info-box">
           <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px; border-bottom: 1px dashed var(--card-border); padding-bottom: 10px;">
              <img id="uManagePic" src="https://via.placeholder.com/150" style="width: 50px; height: 50px; border-radius: 50%; object-fit: cover;">
@@ -382,7 +390,8 @@
           <div style="display: flex; gap: 10px;">
              <select id="selChangeRole" class="form-control" style="flex: 2; padding: 8px;" onchange="checkRoleChange()">
                <option value="Customer">Customer (ผู้เล่นทั่วไป)</option>
-               <option value="Promoter">Promoter (ผู้แนะนำ/ห้ามเล่น)</option>
+               <option value="Promoter">Promoter (ผู้แนะนำ)</option>
+               <option value="Cashier">Cashier (แคชเชียร์)</option>
                <option value="Operator">Operator (พนักงาน)</option>
                <option value="Admin">Admin (แอดมินบ่อ)</option>
                <option value="Backer">Backer (เพิ่มเข้าทีมรับจบ)</option>
@@ -666,15 +675,18 @@
           const profile = await liff.getProfile();
           currentOpId = profile.userId; 
           currentAdminName = profile.displayName;
-          await checkAdminAccess(currentOpId);
-          if (document.getElementById('adminTabs').style.display === 'flex' &&
+          if (!await checkAdminAccess(currentOpId)) return;
+          if (currentUserRole === 'Operator' && ['pending','report'].includes(urlParams.get('tab'))) {
+            switchAdminTab(urlParams.get('tab'));
+          }
+          if (currentUserRole !== 'Operator' && document.getElementById('adminTabs').style.display === 'flex' &&
               (new URLSearchParams(window.location.search).get('tab') || urlParams.get('tab')) === 'pending') {
             switchAdminTab('pending');
           }
-          await loadGeneralMembershipRequests();
+          if (currentUserRole !== 'Operator') await loadGeneralMembershipRequests();
 
           let hashData = window.location.hash; 
-          if (['Admin', 'Superadmin', 'Operator'].includes(currentUserRole) && urlParams.get('tab') !== 'pending' && new URLSearchParams(window.location.search).get('tab') !== 'pending' && hashData && hashData.length > 1) {
+          if (isShopAdmin() && urlParams.get('tab') !== 'pending' && new URLSearchParams(window.location.search).get('tab') !== 'pending' && hashData && hashData.length > 1) {
              let payloadData = hashData.substring(1); 
              let dataParts = payloadData.split('_'); 
              if (dataParts.length === 3) {
@@ -689,81 +701,93 @@
              }
           }
         } else { liff.login({ redirectUri: window.location.href }); }
-      } catch (e) { alert("LIFF Error: " + e.message); }
-      startAdminTimer();
+      } catch (e) { showAdminApiError(e.message); }
+      if (currentUserRole !== 'Operator') startAdminTimer();
     }
 
+    const escapeAdminText = value => String(value ?? '').replace(/[&<>"']/g,
+      char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+    const isShopAdmin = () => ['Admin','Superadmin'].includes(currentUserRole);
+
     async function checkAdminAccess(uid) {
-      const shopPortalLink = document.getElementById('shopPortalLink');
-      const saasAdminLink = document.getElementById('saasAdminLink');
-      saasAdminLink.classList.add('hidden');
-      const portalHref = 'shop-create.html?shop=' + encodeURIComponent(currentShopId);
-      shopPortalLink.href = portalHref;
-      shopPortalLink.classList.add('hidden');
       try {
         const access = await _supabase.access();
         const user = access.staff;
-        if (!user || user.uid !== uid) throw new Error('LINE_AUTH_INVALID');
-        if (user) currentUserRole = user.role;
-        
-        if (!user || user.status !== 'Active' || !['Admin', 'Superadmin', 'Operator'].includes(currentUserRole)) {
-          document.getElementById('adminTabs').style.display = 'none';
-          document.getElementById('adminContentView').classList.add('hidden');
-          document.getElementById('reportContentView').classList.add('hidden');
-          document.getElementById('pendingContentView').classList.add('hidden');
-          document.getElementById('accessDeniedView').classList.remove('hidden');
-        } else {
-          document.getElementById('accessDeniedView').classList.add('hidden');
-          document.getElementById('adminTabs').style.display = 'flex';
-          if (access.can_create_shop === true) {
-            shopPortalLink.classList.remove('hidden');
-            saasAdminLink.classList.remove('hidden');
-          }
-          
-          let roleBadge = "พนักงาน (Operator)";
-          if (['Superadmin', 'Admin'].includes(currentUserRole)) {
-            roleBadge = "แอดมินบ่อ · " + formatMemberCode(currentShopId, 'M0000');
-            const playerLink = document.getElementById('switchToPlayer');
-            playerLink.href = playerEntryUrl(currentShopId);
-            playerLink.classList.remove('hidden');
-            shopPortalLink.classList.remove('hidden');
-          }
-          document.getElementById('opProfile').innerHTML = `<i class="fa-solid fa-user-tie"></i> ${roleBadge}`;
-          
-          if (currentUserRole === 'Operator') {
-             document.getElementById('tabReport').style.display = 'none';
-             document.getElementById('cardUserManage').classList.add('hidden');
-             document.getElementById('cardSettings').classList.add('hidden');
-          } else {
-             loadSettings();
-             void loadShopPaymentSettings();
-             generateReport(); 
-          }
-          
-          switchAdminTab('control'); 
-          fetchAdminDashboard(); 
-          setInterval(fetchAdminDashboard, 3000); 
-          loadTableList();
-          document.getElementById('boardPasswordSettings').classList.toggle('hidden', !['Admin', 'Superadmin'].includes(currentUserRole));
-          document.getElementById('cashBoardLink').href = 'board.html?shop=' + encodeURIComponent(currentShopId);
-          setInterval(() => {
-            if (!document.hidden && document.getElementById('cardTableManage').getClientRects().length) {
-              loadTableList().catch(() => {});
-            }
-          }, 6000);
-          loadPendingRequests();
-          setInterval(loadPendingRequests, 4000); 
+        if (!user || user.uid !== uid || user.status !== 'Active') throw new Error('ADMIN_REQUIRED');
+        currentUserRole = user.role;
+        const params = '?shop=' + encodeURIComponent(currentShopId);
+        if (currentUserRole === 'Promoter') {
+          location.replace('promoter.html' + params);
+          return false;
         }
+        const operator = currentUserRole === 'Operator';
+        const cashier = currentUserRole === 'Cashier';
+        if (!(isShopAdmin() || operator || cashier)) throw new Error('ADMIN_REQUIRED');
+        const visible = (id, value) => document.getElementById(id).classList.toggle('hidden', !value);
+        const link = (id, href, value) => {
+          document.getElementById(id).href = href;
+          visible(id, value);
+        };
+        document.getElementById('accessDeniedView').classList.add('hidden');
+        document.getElementById('adminTabs').style.display = 'flex';
+        link('shopPortalLink', 'shop-create.html' + params, isShopAdmin());
+        link('referralLink', 'promoter.html' + params, !operator);
+        link('switchToPlayer', playerEntryUrl(currentShopId), !cashier);
+        visible('saasAdminLink', access.can_create_shop === true);
+        document.getElementById('opProfile').textContent = isShopAdmin()
+          ? 'แอดมินบ่อ · ' + formatMemberCode(currentShopId, 'M0000')
+          : cashier ? 'แคชเชียร์ (Cashier)' : 'พนักงาน (Operator)';
+        if (operator) document.getElementById('tabControl').textContent = 'จัดการโต๊ะ';
+        for (const id of ['tabPending','tabReport','cardRoundControl','cardLiveBets','cardCreditManage','tableCreateControls','tableBulkCreate','cashBoardLink']) visible(id, !operator);
+        for (const id of ['cardUserManage','cardSettings','cardCancelBet','creditModePrivate','manualWithdraw','boardPasswordSettings']) visible(id, isShopAdmin());
+        if (cashier) setCreditMode('table');
+        if (isShopAdmin()) {
+          void loadSettings();
+          void loadShopPaymentSettings();
+        }
+        document.getElementById('cashBoardLink').href = 'board.html' + params;
+        switchAdminTab('control');
+        const updateRound = operator ? fetchOperatorTables : fetchAdminDashboard;
+        void updateRound();
+        setInterval(updateRound, 3000);
+        void loadTableList().catch(() => {});
+        setInterval(() => {
+          if (!document.hidden && document.getElementById('cardTableManage').getClientRects().length) {
+            loadTableList().catch(() => {});
+          }
+        }, 6000);
+        if (!operator) {
+          void loadPendingRequests();
+          setInterval(loadPendingRequests, 4000);
+        }
+        const revalidate = async () => {
+          try {
+            const { staff } = await _supabase.access();
+            if (staff.role !== currentUserRole || staff.status !== 'Active') location.reload();
+          } catch (error) {
+            if (['ADMIN_REQUIRED','SHOP_NOT_AVAILABLE'].includes(error.message)) location.reload();
+          }
+        };
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) void revalidate(); });
+        setInterval(() => { if (!document.hidden) void revalidate(); }, 30000);
+        return true;
       } catch (error) {
-        shopPortalLink.classList.add('hidden');
-        saasAdminLink.classList.add('hidden');
         currentUserRole = 'Customer';
         document.getElementById('adminTabs').style.display = 'none';
-        for (const id of ['adminContentView', 'reportContentView', 'pendingContentView']) document.getElementById(id).classList.add('hidden');
+        document.getElementById('opProfile').textContent = 'ตรวจสอบการเข้าถึง';
         document.getElementById('accessDeniedView').classList.remove('hidden');
-        document.getElementById('opProfile').textContent = 'ยังไม่ผ่านการตรวจสิทธิ์ Admin';
-        showAdminApiError(error.message);
+        if (!['ADMIN_REQUIRED','SHOP_NOT_AVAILABLE'].includes(error.message)) showAdminApiError(error.message);
+        return false;
       }
+    }
+
+    async function fetchOperatorTables() {
+      try {
+        const { round, bets } = await _supabase.tableOverview();
+        isRoundOpen = round?.status === 'Open' && Number(round.end_time_ms) > Date.now();
+        tableRound = round ? { id: round.round_id, status: round.status, bets } : null;
+        renderTableGrid();
+      } catch (error) { showAdminApiError(error.message); }
     }
 
     function showAdminApiError(code) {
@@ -784,8 +808,7 @@
       box.classList.remove('hidden');
     }
 
-    // สิทธิ์อนุมัติสมาชิกทั่วไป (แยกจาก users.role ของระบบเดิม)
-    // ไม่ใช้การแก้สิทธิ์ในเบราว์เซอร์; Edge Function ตรวจ LINE และ membership_admins
+    // Edge Function verifies the LINE caller and shop role before membership review.
     const GENERAL_MEMBERSHIP_API='https://hduyehkjiguwndnigtva.supabase.co/functions/v1/member-approval';
     let memberReviewBusy=false;
     async function generalMembershipCall(payload){
@@ -884,6 +907,7 @@
     }
 
     function switchAdminTab(tab) {
+        if (!['Admin','Superadmin','Cashier','Operator'].includes(currentUserRole)) return;
         document.getElementById('tabControl').classList.remove('active');
         document.getElementById('tabPending').classList.remove('active');
         document.getElementById('tabReport').classList.remove('active');
@@ -891,6 +915,10 @@
         document.getElementById('adminContentView').classList.add('hidden');
         document.getElementById('pendingContentView').classList.add('hidden');
         document.getElementById('reportContentView').classList.add('hidden');
+
+        const denied = currentUserRole === 'Operator' && tab !== 'control';
+        document.getElementById('accessDeniedView').classList.toggle('hidden', !denied);
+        if (denied) return;
 
         if (tab === 'control') {
             document.getElementById('tabControl').classList.add('active');
@@ -1061,25 +1089,62 @@
         } catch (e) { alert("เกิดข้อผิดพลาดในการค้นหา"); } 
     }
     
-    async function updateUserStatus(ns) { if(!selectedUserIdForManage) return; await _supabase.from('users').update({ status: ns }).eq('shop_id', currentShopId).eq('uid', selectedUserIdForManage); alert(`อัปเดตสถานะสำเร็จ`); document.getElementById('userInfoContainer').style.display = 'none'; document.getElementById('txtSearchUser').value = ''; }
-    
-    async function updateUserRole() { 
-        if(!selectedUserIdForManage) return; 
-        let nr = document.getElementById('selChangeRole').value; 
-        if (nr === 'Admin' && document.getElementById('txtSearchUser').value.trim() !== selectedUserIdForManage) {
-            return alert('กรุณาค้นหาด้วย LINE User ID ของสมาชิกก่อนตั้งเป็นแอดมิน');
+    let rolePage = 0;
+    let roleListRequest = 0;
+    async function loadRoleList() {
+      const request = ++roleListRequest;
+      const out = document.getElementById('roleListResults');
+      const history = document.getElementById('roleListType').value === 'history';
+      try {
+        const { data } = history ? await _supabase.roleHistory(rolePage) : await _supabase.roleDirectory(rolePage);
+        if (request !== roleListRequest) return;
+        out.replaceChildren();
+        document.getElementById('rolePagePrevious').disabled = rolePage === 0;
+        document.getElementById('rolePageNext').disabled = data.length < 50;
+        for (const row of data) {
+          const item = document.createElement(history ? 'p' : 'button');
+          if (history) {
+            item.textContent = [new Date(row.created_at).toLocaleString('th-TH'), row.actor_uid, row.uid,
+              row.old_role + ' → ' + row.new_role, row.old_status + ' → ' + row.new_status].join(' · ');
+          } else {
+            item.className = 'btn btn-outline';
+            item.type = 'button';
+            item.textContent = [row.display_name, formatMemberCode(currentShopId,row.member_id), row.role, row.status].join(' · ');
+            item.onclick = () => {
+              document.getElementById('txtSearchUser').value = row.uid;
+              void searchUser();
+            };
+          }
+          out.append(item);
         }
-        let updateData = { role: nr };
-        if(nr === 'Backer') { updateData.backer_share = 0; updateData.backer_water_fee = 10; }
-        
-        const { error } = await _supabase.from('users').update(updateData).eq('shop_id', currentShopId).eq('uid', selectedUserIdForManage); 
-        if(error) return alert("อัปเดตสิทธิ์ล้มเหลว: " + error.message);
-        
-        if(nr === 'Backer') alert(`อัปเดตเป็นพาร์ทเนอร์รับจบเรียบร้อย!\n\nกรุณากดปุ่ม "จัดทีมคนรับจบ" ด้านบนเพื่อแบ่งสัดส่วน % ให้ถูกต้องครับ`); 
-        else if (nr === 'Promoter') alert(`อัปเดตสิทธิ์เป็น "ผู้แนะนำ (Promoter)" เรียบร้อยแล้ว\nบัญชีนี้จะไม่สามารถเข้าเล่นเกมได้ แต่แนะนำเพื่อนได้ตามปกติครับ`);
-        else alert(`อัปเดตสิทธิ์สำเร็จ`); 
-        
-        document.getElementById('userInfoContainer').style.display = 'none'; document.getElementById('txtSearchUser').value = ''; 
+        if (!data.length) out.textContent = 'ไม่มีรายการ';
+      } catch (error) { out.textContent = error.message; }
+    }
+    document.getElementById('roleDirectory').ontoggle = event => { if (event.target.open) void loadRoleList(); };
+    document.getElementById('roleListType').onchange = () => { rolePage = 0; void loadRoleList(); };
+    document.getElementById('rolePagePrevious').onclick = () => { if (rolePage > 0) rolePage--; void loadRoleList(); };
+    document.getElementById('rolePageNext').onclick = () => { rolePage++; void loadRoleList(); };
+
+    async function saveMemberAccess(changes) {
+      if (!selectedUserIdForManage) return;
+      try {
+        await _supabase.changeRole(selectedUserIdForManage, changes);
+        alert('บันทึกสิทธิ์สำเร็จ');
+        if (selectedUserIdForManage === currentOpId) { location.reload(); return; }
+        void searchUser();
+        if (document.getElementById('roleDirectory').open) void loadRoleList();
+      } catch (error) {
+        alert(({ LAST_SHOP_ADMIN: 'ร้านต้องมี Admin ที่เปิดใช้งานอย่างน้อยหนึ่งคน',
+          PROTECTED_ROLE: 'ไม่สามารถแก้สิทธิ์บัญชี Superadmin ผ่านหน้าร้านได้' })[error.message] || 'บันทึกสิทธิ์ไม่สำเร็จ: ' + error.message);
+      }
+    }
+    function updateUserStatus(status) { return saveMemberAccess({ status }); }
+    function updateUserRole() {
+      const role = document.getElementById('selChangeRole').value;
+      if (role === 'Admin' && document.getElementById('txtSearchUser').value.trim() !== selectedUserIdForManage) {
+        return alert('กรุณาค้นหาด้วย LINE User ID ของสมาชิกก่อนตั้งเป็นแอดมิน');
+      }
+      return saveMemberAccess({ role });
     }
 
     // ==========================================
@@ -1175,13 +1240,19 @@
 
          reqs.forEach(r => {
              let typeColor = (r.type === 'ฝากเงิน' || r.type === 'โอนค่าคอม') ? 'var(--green-main)' : 'var(--red-main)';
-             let slipBtn = r.slip_url ? `<button class="btn btn-outline" style="padding: 5px; font-size: 0.8rem; margin-top: 5px;" onclick="window.open('${r.slip_url}', '_blank')"><i class="fa-solid fa-image"></i> ดูสลิปหลักฐาน</button>` : '';
+             let slipBtn = '';
+             try {
+               const slip = new URL(r.slip_url);
+               if (slip.origin === new URL(APP_CONFIG.SUPABASE_URL).origin && slip.pathname.startsWith('/storage/')) {
+                 slipBtn = `<a class="btn btn-outline" href="${escapeAdminText(slip.href)}" target="_blank" rel="noopener">ดูสลิปหลักฐาน</a>`;
+               }
+             } catch { /* The request has no legacy slip URL. */ }
              let card = document.createElement('div');
              card.dataset.walletRequestId = String(r.id);
              card.style.cssText = "background: #0f111a; border: 1px solid var(--card-border); border-radius: 12px; padding: 15px; display: flex; flex-direction: column; gap: 8px;";
              
              card.innerHTML = `
-                <div style="display: flex; justify-content: space-between;"><div style="color: white; font-weight: bold;">${r.display_name} <span style="color: var(--text-muted); font-size: 0.8rem;">(${formatMemberCode(currentShopId, r.member_id)})</span></div><div style="color: ${typeColor}; font-weight: bold; font-size: 1.1rem;">${r.type} ฿${r.amount}</div></div>
+                <div style="display: flex; justify-content: space-between;"><div style="color: white; font-weight: bold;">${escapeAdminText(r.display_name)} <span style="color: var(--text-muted); font-size: 0.8rem;">(${escapeAdminText(formatMemberCode(currentShopId, r.member_id))})</span></div><div style="color: ${typeColor}; font-weight: bold; font-size: 1.1rem;">${escapeAdminText(r.type)} ฿${r.amount}</div></div>
                 <div style="font-size: 0.85rem; color: var(--text-muted);"><div>ช่องทาง: ${r.method}</div>${r.type === 'ถอนเงิน' ? '<div>เงื่อนไข: ' + (r.fee_option === 'ไม่หักค่าน้ำ' ? 'ไม่หักค่าน้ำ' : 'หักค่าน้ำ') + '</div>' : ''}<div>เวลา: ${new Date(r.created_at).toLocaleTimeString('th-TH')}</div></div>
                 ${slipBtn}
                 <div style="display: flex; gap: 10px; margin-top: 10px;">
@@ -1193,9 +1264,17 @@
              const reject = card.querySelector('[data-reject-wallet]');
              manage.textContent = r.fee_option === 'slip_review' ? 'ตรวจสลิป' : r.type === 'ฝากเงิน' ? 'เติมเงิน' : r.type;
              const submitting = walletDecision?.submitting && walletDecision.id === r.id;
+             const adminReview = r.fee_option === 'slip_review' || r.fee_option === 'commission_transfer' ||
+               r.type === 'ถอนค่าคอม' || (r.type === 'ฝากเงิน' && r.method !== 'เงินสด') || (r.type === 'ถอนเงิน' && !r.withdrawal_confirmation_id);
+             manage.hidden = reject.hidden = !isShopAdmin() && adminReview;
+             if (manage.hidden) {
+               const notice = document.createElement('span');
+               notice.textContent = 'รอ Admin ตรวจสอบ';
+               card.append(notice);
+             }
              manage.disabled = reject.disabled = Boolean(submitting);
              manage.addEventListener('click', () => approveQueuedWalletRequest(r, card.dataset.bankDisplay));
-             reject.addEventListener('click', () => rejectPendingRequest(r.id, r.uid, r.type, r.amount));
+             reject.addEventListener('click', () => rejectPendingRequest(r.id, r.type));
              listDiv.appendChild(card);
          });
          if (reqs.some(item => item.type === 'ถอนเงิน')) void loadWithdrawalDestinations(shop, listDiv, loadId);
@@ -1304,23 +1383,16 @@
       }
     }
 
-    async function rejectPendingRequest(id, uid, type, amount) {
+    async function rejectPendingRequest(id, type) {
         const reason = prompt("ระบุเหตุผลที่ปฏิเสธ (ไม่เกิน 300 ตัวอักษร):", type === 'ฝากเงิน' ? '' : 'ข้อมูลไม่ถูกต้อง')?.trim();
         if (reason === undefined) return;
-        if (type === 'ฝากเงิน' && (!reason || reason.length > 300)) {
+        if (!reason || reason.length > 300) {
             alert("กรุณาระบุเหตุผลที่ปฏิเสธ 1–300 ตัวอักษร");
             return;
         }
         try {
-            if (type === 'ถอนค่าคอม') {
-                const { data: u } = await _supabase.from('users').select('commission_balance').eq('shop_id', currentShopId).eq('uid', uid).single();
-                if(u) await _supabase.from('users').update({ commission_balance: u.commission_balance + amount }).eq('shop_id', currentShopId).eq('uid', uid);
-            }
-            const { data: rejected } = await _supabase.from('topup_requests')
-                .update({ status: 'Rejected', admin_name: currentAdminName }, { rejectionReason: reason })
-                .eq('shop_id', currentShopId).eq('id', id).select('id');
-
-            alert(rejected?.length ? "ปฏิเสธรายการแล้ว" : "รายการนี้ไม่ได้อยู่ในคิวรอดำเนินการแล้ว");
+            await _supabase.rejectWallet(id, reason);
+            alert('ปฏิเสธรายการแล้ว');
             await loadPendingRequests();
         } catch (e) { alert("ข้อผิดพลาด: " + e.message); }
     }
@@ -1706,100 +1778,15 @@
         if(lr[0].status === 'Open') throw new Error("กรุณารอหมดเวลา หรือ กด 'ปิดรับแทง' และยืนยันยอดส่วนต่างก่อนใส่น้ำหนักกุ้งครับ!");
         if(lr[0].resolver_type === null) throw new Error("ยังไม่ได้ยืนยันว่าใครรับความเสี่ยงส่วนต่าง!\nโปรดเลือกผู้รับจบก่อน");
 
-        const roundId = lr[0].round_id; const res = (w % 2 === 0) ? 'คู่' : 'คี่';
-        const resolverType = lr[0].resolver_type;
-        
-        const { data: [set] } = await _supabase.from('system_settings').select('water_margin, comm_rate').eq('shop_id', currentShopId).limit(1);
-        const margin = set ? set.water_margin : 0.05; const commRate = set ? set.comm_rate : 0.01;
-
-        const { data: bets, error: betsError } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('round_id', roundId).neq('status', 'Cancelled');
-        if (betsError) throw new Error("ดึงข้อมูลบิลไม่ได้: " + betsError.message);
-
-        let totalEven = 0, totalOdd = 0;
-        if (bets && bets.length > 0) {
-            bets.forEach(b => { if (b.bet_type === 'คู่') totalEven += b.amount; if (b.bet_type === 'คี่') totalOdd += b.amount; });
-        }
-        
-        let gapAmount = Math.abs(totalEven - totalOdd); let gapSide = totalEven > totalOdd ? 'คี่' : (totalOdd > totalEven ? 'คู่' : 'none');
-        if (resolverType === 'none' && gapAmount === 0) {
-          const finalized = await _supabase.finalizeBalancedRound(roundId, w);
-          notifyRoundEvent(roundId, 'result');
-          alert(finalized.recovered ? 'บันทึกผลรอบที่ค้างแล้ว เครดิตของบิลเดิมไม่ได้ถูกจ่ายซ้ำ' : 'ตัดผลสำเร็จ! ผลคือ ' + res);
-          document.getElementById('txtShrimpWeight').value = '';
-          return;
-        }
-        if (bets.some(bet => bet.status === 'Win' || bet.status === 'Lose')) {
-          throw new Error('รอบนี้มีบิลที่ตัดผลไปแล้วบางส่วน กรุณาตรวจยอดก่อนทำรายการต่อ');
-        }
-        let backerNotifies = [];
-        
-        // ถ้าแอดมินเลือก 'backer' ระบบจะคิดเงินคนรับจบ
-        if (resolverType === 'backer' && gapAmount > 0 && gapSide !== 'none') {
-            const { data: backers } = await _supabase.from('users').select('*').eq('shop_id', currentShopId).eq('role', 'Backer');
-            if (backers && backers.length > 0) {
-                for (let backer of backers) {
-                    let share = backer.backer_share || 0; if (share <= 0) continue;
-                    let myGap = gapAmount * (share / 100); let pnl = 0; let feePaid = 0; let isWin = false;
-                    if (res === gapSide) {
-                        let feeRate = (backer.backer_water_fee !== undefined && backer.backer_water_fee !== null) ? backer.backer_water_fee : 10;
-                        feePaid = myGap * (feeRate / 100); pnl = myGap - feePaid; isWin = true;
-                    } else { pnl = -myGap; isWin = false; }
-                    
-                    let newWalletBal = (backer.backer_wallet || 0) + pnl;
-                    
-                    // ดักจับ Error ตอนอัปเดตกระเป๋า Backer
-                    const { error: updErr } = await _supabase.from('users').update({ backer_wallet: newWalletBal }).eq('shop_id', currentShopId).eq('uid', backer.uid);
-                    if(updErr) throw new Error(`ไม่สามารถอัปเดตเงินคนรับจบ (${backer.display_name}) ได้ โปรดตรวจสอบฐานข้อมูล: ` + updErr.message);
-
-                    await _supabase.from('backer_logs').insert([{ shop_id: currentShopId, round_id: roundId, uid: backer.uid, member_id: backer.member_id, share_percent: share, gap_amount: myGap, result_status: isWin ? 'Win' : 'Lose', pnl_amount: pnl, water_fee_deducted: feePaid, wallet_balance_after: newWalletBal }]);
-                    backerNotifies.push({ uid: backer.uid, pnl: pnl, walletBalance: newWalletBal });
-                }
-            }
-        }
-
-        let targetUids = new Set(); let winCount = 0;
-        if (bets && bets.length > 0) {
-          for (let bet of bets) {
-            if (bet.uid) targetUids.add(bet.uid); 
-            if (bet.status === 'Win' || bet.status === 'Lose') { if (bet.status === 'Win') winCount++; continue; }
-            if (bet.bet_type === res) {
-              winCount++; let profit = bet.amount * (1 - margin); let payout = bet.amount + profit;
-              if (bet.cash_table) payout = Math.round((payout + Number.EPSILON) * 100) / 100;
-              
-              const { error: betUpdErr } = await _supabase.from('bets').update({ status: 'Win', payout: payout }).eq('shop_id', currentShopId).eq('bet_id', bet.bet_id);
-              if (betUpdErr) throw new Error("อัปเดตบิลล้มเหลว: " + betUpdErr.message);
-
-              if (bet.cash_table) continue;
-              if (bet.play_mode === 'table') {
-                  const { data: tData } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', bet.table_no).single();
-                  if(tData) await _supabase.from('tables').update({ credit: tData.credit + payout }).eq('shop_id', currentShopId).eq('table_no', bet.table_no);
-              } else {
-                  const { data: uData } = await _supabase.from('users').select('credit_balance, referrer_uid').eq('shop_id', currentShopId).eq('uid', bet.uid).single();
-                  if(uData) {
-                      await _supabase.from('users').update({ credit_balance: uData.credit_balance + payout }).eq('shop_id', currentShopId).eq('uid', bet.uid);
-                      if (uData.referrer_uid && uData.referrer_uid !== '-') {
-                         let commAmount = bet.amount * commRate;
-                         const { data: refUser } = await _supabase.from('users').select('commission_balance, uid').eq('shop_id', currentShopId).eq('member_id', uData.referrer_uid).single();
-                         if(refUser) await _supabase.from('users').update({ commission_balance: (refUser.commission_balance || 0) + commAmount }).eq('shop_id', currentShopId).eq('uid', refUser.uid);
-                      }
-                  }
-              }
-            } else { await _supabase.from('bets').update({ status: 'Lose', payout: 0 }).eq('shop_id', currentShopId).eq('bet_id', bet.bet_id); }
-          }
-        }
-        
-        await _supabase.from('rounds').update({ status: 'Ended', weight: w, result: res }).eq('shop_id', currentShopId).eq('round_id', roundId);
+        const roundId = lr[0].round_id;
+        const finalized = await _supabase.finalizeBalancedRound(roundId, w);
         notifyRoundEvent(roundId, 'result');
-        let d = new Date(); let tzOffset = d.getTimezoneOffset() * 60000; let localISOTime = (new Date(d - tzOffset)).toISOString().slice(0, -1); let todayStr = localISOTime.split('T')[0];
-        
-        // ยกเลิกใช้ GAS
-        // if(targetUids.size > 0) notifyGAS('notifyUsersResult', { roundId: roundId, weight: w, result: res, winCount: winCount, targetUids: Array.from(targetUids) });
-        // if (backerNotifies.length > 0) { notifyGAS('notifyBackerRoundResult', { roundId: roundId, weight: w, result: res, backerUids: backerNotifies }); }
-        
-        alert(`ตัดผลสำเร็จ! ผลคือ: ${res} (ชนะ ${winCount} บิล)`); document.getElementById('txtShrimpWeight').value = '';
+        alert(finalized.recovered ? 'บันทึกผลรอบที่ค้างแล้ว' : 'ตัดผลสำเร็จ ผลคือ ' + (w % 2 === 0 ? 'คู่' : 'คี่'));
+        document.getElementById('txtShrimpWeight').value = '';
       } catch (e) {
         const messages = {
           ROUND_RESULT_MISMATCH: 'น้ำหนักที่กรอกให้ผลไม่ตรงกับบิลที่บันทึกไว้ กรุณาตรวจน้ำหนักจริง',
+          BACKER_INSUFFICIENT_BALANCE: 'ทุนทีมรับจบไม่พอ กรุณาตรวจสอบยอดก่อนตัดผล',
           ROUND_REVIEW_REQUIRED: 'ข้อมูลบิลในรอบนี้ต้องตรวจสอบก่อนบันทึกผล',
         };
         alert(messages[e.message] || 'เกิดข้อผิดพลาดในการตัดผล: ' + e.message);
@@ -1826,88 +1813,47 @@
     let cashPaymentRetry = null;
     let cashPaymentBusy = false;
 
+    let balanceAdjustment = null;
     async function processCredit(type) {
-      let tId = document.getElementById('txtTargetId').value.trim(); 
-      let amountStr = document.getElementById('txtAmount').value;
-      let amount = parseFloat(amountStr);
-      
-      if(!tId || !amountStr || isNaN(amount) || amount <= 0) return alert("กรุณากรอกข้อมูลให้ครบถ้วน"); 
-      if (creditMode !== 'table') {
-        tId = parseMemberCode(currentShopId, tId);
-        if (!tId) return alert('รหัสสมาชิกไม่ถูกต้องหรือเป็นของร้านอื่น');
-      }
-      if(!confirm(`ยืนยันการทำรายการ ${type === 'deposit' ? 'ฝาก' : 'ถอน'} ${amount} บาท ให้กับ ${creditMode === 'table' ? 'โต๊ะ ' + tId : 'รหัส ' + formatMemberCode(currentShopId, tId)}?`)) return;
-      
+      const rawTarget = document.getElementById('txtTargetId').value.trim();
+      const amount = document.getElementById('txtAmount').value;
+      const targetType = creditMode === 'table' ? 'table' : 'user';
+      const target = targetType === 'table' ? rawTarget : parseMemberCode(currentShopId,rawTarget);
+      if (!target || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) return alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+      if (!confirm('ยืนยันรายการ ฿' + amount + ' สำหรับ ' + target + '?')) return;
+      const key = JSON.stringify([currentShopId,targetType,target,type,amount]);
+      if (balanceAdjustment?.busy) return;
+      if (balanceAdjustment?.key !== key) balanceAdjustment = { key, id: crypto.randomUUID() };
+      balanceAdjustment.busy = true;
       try {
-        if(creditMode === 'table') {
-          const { data: t, error: tableError } = await _supabase.from('tables').select('credit,cash_limit').eq('shop_id', currentShopId).eq('table_no', String(tId)).single();
-          if(tableError || !t) throw new Error("ไม่พบเบอร์โต๊ะนี้ในระบบ กรุณาตรวจสอบให้แน่ใจว่าได้กด 'เพิ่มโต๊ะ' เบอร์นี้ในระบบแล้ว");
-          
-          if (t.cash_limit != null) {
-            await recordCashAtTable(tId, type, amountStr);
-            document.getElementById('txtTargetId').value = '';
-            document.getElementById('txtAmount').value = '';
-            return;
-          }
-          let newBal = type === 'deposit' ? t.credit + amount : t.credit - amount;
-          if (newBal < 0) throw new Error("ยอดเงินในโต๊ะไม่พอให้ถอน");
-          
-          const { error: updTableErr } = await _supabase.from('tables').update({ credit: newBal }).eq('shop_id', currentShopId).eq('table_no', String(tId));
-          if(updTableErr) throw new Error("อัปเดตเงินโต๊ะล้มเหลว: " + updTableErr.message);
-
-          await _supabase.from('transactions').insert([{ shop_id: currentShopId, target_id: 'โต๊ะ ' + tId, type: type, amount: amount, admin_name: currentAdminName, target_type: 'table' }]);
-          alert(`สำเร็จ!\nโต๊ะ: ${tId}\nเครดิตคงเหลือ: ฿${newBal.toLocaleString()}`);
-        } else {
-          const { data: u, error: userError } = await _supabase.from('users').select('uid, credit_balance, status, total_deposit, role, backer_wallet').eq('shop_id', currentShopId).eq('member_id', tId).single();
-          if(userError || !u) throw new Error("ไม่พบรหัสสมาชิกนี้ในร้าน");
-          if(u.status !== 'Active') throw new Error(`ไม่สามารถทำรายการได้! บัญชีลูกค้ารหัส ${tId} ถูกระงับ`);
-          
-          if (u.role === 'Backer') {
-              let newBackerBal = type === 'deposit' ? (u.backer_wallet || 0) + amount : (u.backer_wallet || 0) - amount;
-              if (newBackerBal < 0) throw new Error("ยอดกระเป๋าเงินคนรับจบไม่พอให้ถอน");
-              
-              const { error: updErr } = await _supabase.from('users').update({ backer_wallet: newBackerBal }).eq('shop_id', currentShopId).eq('uid', u.uid);
-              if (updErr) throw new Error("อัปเดตยอดเงินคนรับจบไม่สำเร็จ กรุณาเช็คฐานข้อมูล: " + updErr.message);
-
-              // ยกเลิกการใช้ GAS ส่งข้อความ
-              // notifyGAS('adminTopupComplete', { adminName: currentAdminName, type: type, targetUid: u.uid, targetMemberId: tId, amount: amount, newBalance: newBackerBal });
-          } else {
-              let newBal = type === 'deposit' ? u.credit_balance + amount : u.credit_balance - amount;
-              if (newBal < 0) throw new Error("ยอดเครดิตลูกค้าไม่พอให้ถอน");
-              let updateData = { credit_balance: newBal };
-              if (type === 'deposit') updateData.total_deposit = (u.total_deposit || 0) + amount; 
-              
-              const { error: updErr } = await _supabase.from('users').update(updateData).eq('shop_id', currentShopId).eq('uid', u.uid);
-              if (updErr) throw new Error("อัปเดตเครดิตลูกค้าไม่สำเร็จ: " + updErr.message);
-
-              // ยกเลิกการใช้ GAS ส่งข้อความ
-              // notifyGAS('adminTopupComplete', { adminName: currentAdminName, type: type, targetUid: u.uid, targetMemberId: tId, amount: amount, newBalance: newBal });
-          }
-          await _supabase.from('transactions').insert([{ shop_id: currentShopId, target_id: tId, type: type, amount: amount, admin_name: currentAdminName, target_type: 'user' }]);
-          
-          alert(`สำเร็จ! อัปเดตยอดเรียบร้อยแล้ว`);
+        const desk = targetType === 'table' ? tableDesks.find(row => row.table_no === target) : null;
+        if (desk?.cash_limit != null) await recordCashAtTable(target,type,amount);
+        else {
+          const { balance } = await _supabase.adjustBalance(targetType,target,type,amount,balanceAdjustment.id);
+          alert('บันทึกสำเร็จ ยอดคงเหลือ ฿' + Number(balance).toLocaleString('th-TH'));
         }
-        
-        document.getElementById('txtTargetId').value = "";
-        document.getElementById('txtAmount').value = ""; 
-        loadTableList(); 
-      } catch(e) {
-        alert(e.message === 'CASH_TABLE_WAITING_RESULT' ? 'กรุณารอผลของโต๊ะก่อนบันทึกเงินสด' : 'ข้อผิดพลาด ' + e.message);
-      }
+        balanceAdjustment = null;
+        document.getElementById('txtTargetId').value = '';
+        document.getElementById('txtAmount').value = '';
+        void loadTableList().catch(() => {});
+      } catch (error) {
+        alert('ทำรายการไม่สำเร็จ: ' + error.message);
+      } finally { if (balanceAdjustment) balanceAdjustment.busy = false; }
     }
 
     async function cancelBet() {
-      let bId = document.getElementById('txtBetId').value.trim(); if(!confirm("ยืนยันยกเลิกและคืนเครดิต?")) return;
+      const field = document.getElementById('txtBetId');
+      const id = field.value.trim();
+      if (!id) return alert('กรุณาระบุรหัสบิล');
+      const reason = prompt('ระบุเหตุผลที่ยกเลิกบิล (1–300 ตัวอักษร)')?.trim();
+      if (!reason || reason.length > 300) return;
       try {
-         const { data: bet } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('bet_id', bId).single();
-         if(!bet || bet.status !== 'Active') return alert("บิลไม่ถูกต้อง");
-         await _supabase.from('bets').update({ status: 'Cancelled' }).eq('shop_id', currentShopId).eq('bet_id', bId);
-         if (bet.cash_table) { /* Cash table adjustment is applied with the bill transition. */ }
-         else if (bet.play_mode === 'table') { const { data: t } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', bet.table_no).single(); await _supabase.from('tables').update({ credit: t.credit + bet.amount }).eq('shop_id', currentShopId).eq('table_no', bet.table_no); }
-         else { const { data: u } = await _supabase.from('users').select('credit_balance').eq('shop_id', currentShopId).eq('uid', bet.uid).single(); await _supabase.from('users').update({ credit_balance: u.credit_balance + bet.amount }).eq('shop_id', currentShopId).eq('uid', bet.uid); }
-         alert("ยกเลิกบิลสำเร็จ"); document.getElementById('txtBetId').value = ""; 
-         if(document.getElementById('tabReport').classList.contains('active')) generateReport();
-      } catch(e) { alert("ยกเลิกไม่สำเร็จ"); }
+        await _supabase.cancelBill(id, reason);
+        field.value = '';
+        alert('ยกเลิกบิลสำเร็จ');
+        void fetchAdminDashboard();
+        if (document.getElementById('tabReport').classList.contains('active')) void generateReport();
+      } catch (error) { alert('ยกเลิกไม่สำเร็จ: ' + error.message); }
     }
 
     async function loadCashTableReport(day) {
@@ -2073,7 +2019,7 @@
         await _supabase.from('tables').update(values).eq('shop_id', currentShopId).eq('table_no', desk.table_no);
         await loadTableList();
       };
-      actions.append(button('แก้ชื่อ', async () => {
+      if (currentUserRole !== 'Operator') actions.append(button('แก้ชื่อ', async () => {
         const name = prompt('ชื่อโต๊ะ (เว้นว่างเพื่อใช้หมายเลขโต๊ะ)', desk.table_name || '');
         if (name !== null) {
           if (name.trim().length > 40) return alert('ชื่อโต๊ะต้องไม่เกิน 40 ตัวอักษร');
@@ -2082,7 +2028,7 @@
       }), button(desk.is_hidden ? 'แสดงโต๊ะ' : 'ซ่อนโต๊ะ', () =>
         update(desk.is_hidden ? { is_hidden: false } : { is_hidden: true, is_open: false })));
       if (!desk.is_hidden) {
-        actions.append(button(desk.is_open ? 'ปิดรับยอด' : 'เปิดรับยอด', () => update({ is_open: !desk.is_open })),
+        if (currentUserRole !== 'Operator') actions.append(button(desk.is_open ? 'ปิดรับยอด' : 'เปิดรับยอด', () => update({ is_open: !desk.is_open })),
           button('วงเงินสด', () => setCashTableLimit(desk.table_no, desk.cash_limit)));
         if (desk.is_open && desk.cash_limit != null) {
           actions.append(button('QR', () => showQrCode(desk.table_no, true, deskName(desk))));
@@ -2095,7 +2041,16 @@
           }, 'btn-blue'));
         }
       }
-      if (desk.cash_limit != null && balance !== 0 && !pending.has(desk.table_no)) {
+      if (currentUserRole !== 'Operator' && balance === 0 && !pending.has(desk.table_no)) {
+        actions.append(button('ลบโต๊ะ', async () => {
+          if (!confirm('ยืนยันลบ ' + deskName(desk) + '?')) return;
+          const { data } = await _supabase.from('tables').delete().eq('table_no', desk.table_no).select('table_no');
+          if (!data?.length) throw new Error('TABLE_DELETE_FAILED');
+          selectedTable = null;
+          await loadTableList();
+        }, 'btn-red'));
+      }
+      if (desk.cash_limit != null && (currentUserRole === 'Operator' ? balance < 0 : balance !== 0) && !pending.has(desk.table_no)) {
         actions.append(button(balance < 0 ? 'รับเงินสด' : 'จ่ายเงินสด', async () => {
           const amount = prompt(balance < 0 ? 'จำนวนเงินสดที่รับจริง' : 'จำนวนเงินสดที่จ่ายจริง', Math.abs(balance).toFixed(2));
           if (amount === null || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0) return;

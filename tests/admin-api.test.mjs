@@ -43,7 +43,7 @@ test('writes must have a target and use permitted fields and amounts', () => {
   assert.throws(() => validateQuery({ ...q, values: { credit_balance: -1 } }, 'Admin', 'SHOP_001'));
   assert.throws(() => validateQuery({ ...q, values: { display_name: 'not writable' } }, 'Admin', 'SHOP_001'));
   assert.throws(() => validateQuery({ ...q, values: [{ role: 'Admin' }] }, 'Admin', 'SHOP_001'));
-  assert.equal(validateQuery({ ...q, values: { credit_balance: 100 } }, 'Operator', 'SHOP_001').operation, 'update');
+  for (const role of ['Admin','Cashier','Operator']) assert.throws(() => validateQuery({ ...q, values: { credit_balance: 100 } }, role, 'SHOP_001'));
 });
 
 function setup({ role = 'Admin', active = true, absent = false, aud = 'channel', exp = Date.now() / 1000 + 60, linked = true, shopStatus = 'active', brokenDb = false } = {}) {
@@ -110,10 +110,10 @@ test('query always receives server shop predicate even when omitted by caller', 
   assert.equal(response.status, 200);
   assert(queries[2].calls.some(c => c[0] === 'eq' && c[1] === 'shop_id' && c[2] === 'SHOP_001'));
 });
-test('cross-shop linked insert is rejected before mutation', async () => {
+test('legacy ledger inserts are rejected before mutation', async () => {
   const { handler, queries } = setup({ linked: false });
   const response = await handler(request({ action: 'query', table: 'backer_logs', operation: 'insert', values: { uid: 'foreign', round_id: 'r' } }));
-  assert.equal(response.status, 400);
+  assert.equal(response.status, 403);
   assert(!queries.some(q => q.calls.some(c => c[0] === 'insert')));
 });
 test('untrusted origins and database failures fail closed', async () => {
@@ -279,4 +279,63 @@ test('a shop invitation is issued only with the active shop owned by the verifie
   assert.deepEqual(writes, [{
     created_by: 'verified-user', referrer_shop_id: 'SHOP_001', referral_tier: 'standard',
   }]);
+});
+
+test('Operator can read tables and cannot create, rename, or see management reports', async () => {
+  const { handler } = setup({ role: 'Operator' });
+  const table = { action: 'query', table: 'tables' };
+  assert.equal((await handler(request(table))).status, 200);
+  for (const denied of [
+    { ...table, operation: 'insert', values: { table_no: '1', credit: 0 } },
+    { ...table, operation: 'update', filters: [{ op: 'eq', column: 'table_no', value: '1' }], values: { table_name: 'New' } },
+    { ...table, operation: 'delete', filters: [{ op: 'eq', column: 'table_no', value: '1' }] },
+    { action: 'table_bulk_create' }, { action: 'membership_summary' }, { action: 'table_cash_report' },
+    { action: 'query', table: 'topup_requests' }, { action: 'role_history' },
+    { action: 'wallet_approve_deposit', request_id: '1' },
+  ]) assert.equal((await handler(request(denied))).status, 403);
+});
+
+test('Cashier cannot cancel, change settings, edit roles or adjust a user wallet', async () => {
+  const { handler } = setup({ role: 'Cashier' });
+  for (const denied of [
+    { action: 'cancel_bill' }, { action: 'role_history' }, { action: 'role_change', status: 'Active' },
+    { action: 'query', table: 'system_settings', operation: 'update', values: { min_bet: 1 } },
+    { action: 'adjust_balance', target_type: 'user', target: 'M0002', type: 'deposit', amount: '1',
+      request_id: '6c881d39-62b6-4f69-9430-14619d175d53' },
+  ]) assert.equal((await handler(request(denied))).status, 403);
+});
+
+test('one LINE account gets only its current shop role across staff, Player and referral routes', async () => {
+  const uid = 'U' + 'a'.repeat(32);
+  const roles = new Map([['SHOP_001','Cashier'],['SHOP_002','Promoter'],['SHOP_003','Customer'],
+    ['SHOP_004','Operator'],['SHOP_005','Admin']]);
+  const env = name => ({ LINE_CHANNEL_ID_ADMIN: 'admin', LINE_CHANNEL_ID_PLAYER: 'player',
+    SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'server-only' })[name];
+  const fetcher = async (_, options) => Response.json({ sub: uid, aud: options.body.get('client_id'), exp: Date.now()/1000+60 });
+  const createDb = () => ({ from(table) {
+    const predicates = {};
+    const query = {
+      select: () => query, eq: (key,value) => { predicates[key] = value; return query; },
+      maybeSingle: async () => {
+        const shop = predicates.shop_id;
+        if (table === 'shops') return { data: { status: 'active' } };
+        if (table === 'membership_applications') return { data: { state: 'Approved', member_id: 'M0001' } };
+        if (table !== 'users') return { data: null };
+        assert.equal(predicates.uid,uid);
+        return { data: roles.has(shop) ? { uid, role: roles.get(shop), status: 'Active', member_id: 'M0001' } : null };
+      },
+    };
+    return query;
+  } });
+  const handler = makeHandler({ env, createDb, fetcher });
+  for (const [shop_id, role] of roles) {
+    const call = action => handler(request({ action, shop_id, uid: 'fake', role: 'Superadmin' }));
+    assert.equal((await call('access')).status, role === 'Customer' ? 403 : 200, role);
+    assert.equal((await call('player_profile')).status, role === 'Cashier' ? 403 : 200, role);
+    assert.equal((await call('referral_profile')).status, ['Cashier','Promoter','Admin'].includes(role) ? 200 : 403, role);
+  }
+  assert.equal((await handler(request({ action: 'referral_profile', shop_id: 'SHOP_999' }))).status, 403);
+  roles.set('SHOP_002','Cashier');
+  assert.equal((await handler(request({ action: 'player_profile', shop_id: 'SHOP_002' }))).status, 403);
+  assert.equal((await handler(request({ action: 'player_state', shop_id: 'SHOP_002' }))).status, 403);
 });

@@ -42,12 +42,12 @@ Deno.serve(async (request) => {
     if (!mapping.data) return fail("ACCOUNT_NOT_LINKED", 404);
     const uid = mapping.data.member_uid;
     const [member, application] = await Promise.all([
-      db.from("users").select("status,member_id").eq("shop_id", SHOP).eq("uid", uid).maybeSingle(),
+      db.from("users").select("status,role,member_id").eq("shop_id", SHOP).eq("uid", uid).maybeSingle(),
       db.from("membership_applications").select("state,member_id").eq("shop_id", SHOP).eq("line_uid", uid).maybeSingle(),
     ]);
     if (member.error || application.error) return fail("LOOKUP_FAILED", 503);
     const code = /^M([0-9]{4,})$/.exec(member.data?.member_id ?? "");
-    if (!code || member.data?.status !== "Active" || application.data?.state !== "Approved" ||
+    if (!code || member.data?.status !== "Active" || !["Admin","Superadmin","Operator","Promoter","Customer","Backer"].includes(member.data.role) || application.data?.state !== "Approved" ||
         application.data.member_id !== member.data.member_id) return fail("MEMBER_NOT_ACTIVE", 403);
     return reply({ ok: true, member_code: "M001-" + code[1] });
   } catch {

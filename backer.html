@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Backer Dashboard - บัญชีคนรับจบ</title>
   <script src="config.js?v=member-code-1"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="admin-api-client.js?v=shop-rbac-1"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
@@ -56,45 +56,6 @@
 <body>
 
   <!-- Modal แจ้งฝาก/ถอน สำหรับ Backer -->
-  <div id="topupModal" class="hidden" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 1000; display: flex; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box;">
-    <div style="background: var(--card-bg); border: 1px solid var(--purple-main); border-radius: 16px; padding: 25px; width: 100%; max-width: 400px; position: relative; max-height: 90vh; overflow-y: auto;">
-      <h3 style="margin-top: 0; color: var(--purple-main); border-bottom: 1px dashed var(--card-border); padding-bottom: 10px;">
-        <i class="fa-solid fa-money-bill-transfer"></i> จัดการทุนรับจบ (ฝาก/ถอน)
-      </h3>
-      
-      <div class="form-group">
-        <label>ประเภทรายการ</label>
-        <select id="selTransactionType" class="form-control" onchange="toggleOptions()">
-          <option value="ฝากเงิน">ฝากเงิน (เพิ่มทุนค้ำประกัน)</option>
-          <option value="ถอนเงิน">ถอนเงิน (ถอนทุน/กำไร)</option>
-        </select>
-      </div>
-
-      <div class="form-group">
-        <label>จำนวนเงิน (บาท)</label>
-        <input type="number" id="txtTopupAmount" class="form-control" placeholder="ระบุจำนวนเงิน" style="font-size: 1.2rem; font-weight: bold;">
-      </div>
-
-      <div class="form-group" id="paymentMethodSection">
-        <label>วิธีรับ/จ่ายเงิน</label>
-        <select id="selTopupMethod" class="form-control" onchange="toggleOptions()">
-          <option value="โอนเงิน">โอนเงินเข้าบัญชี</option>
-          <option value="เงินสด">เงินสด (รับ/จ่าย ที่ร้าน)</option>
-        </select>
-      </div>
-
-      <div class="form-group" id="slipUploadSection">
-        <label>แนบสลิปโอนเงิน (บังคับ)</label>
-        <input type="file" id="fileSlip" accept="image/*" class="form-control" style="font-size: 0.85rem; padding: 10px;">
-      </div>
-
-      <div style="display: flex; gap: 10px; margin-top: 25px;">
-        <button onclick="closeTopupModal()" class="btn btn-outline" style="flex: 1; padding: 12px;">ยกเลิก</button>
-        <button id="btnSubmitTopup" onclick="submitTopupRequest()" class="btn btn-purple" style="flex: 1.5; padding: 12px;">ส่งแจ้งแอดมิน</button>
-      </div>
-    </div>
-  </div>
-
   <div class="container" id="mainContainer">
     <div class="header">
       <div class="header-title"><i class="fa-solid fa-handshake-angle"></i> พาร์ทเนอร์รับจบ</div>
@@ -144,7 +105,7 @@
   </div>
 
   <script>
-    const _supabase = supabase.createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_ANON_KEY);
+    const api = createAdminApiClient(APP_CONFIG, () => currentShopId);
     const params = new URLSearchParams(location.search);
     const restored = new URL(params.get('liff.state') || '/', location.origin);
     const currentShopId = params.get('shop') ||
@@ -156,22 +117,8 @@
         await liff.init({ liffId: APP_CONFIG.LIFF_ID_PLAYER }); 
         if (!liff.isLoggedIn()) { liff.login(); return; }
         
-        const profile = await liff.getProfile();
-        
-        const { data: user } = await _supabase.from('users').select('*').eq('shop_id', currentShopId).eq('uid', profile.userId).single();
-        if (!user || user.role !== 'Backer') {
-           document.body.innerHTML = `<div style="text-align:center; padding:50px; color:red; font-family:'Kanit';">
-             <i class="fa-solid fa-triangle-exclamation" style="font-size: 4rem; margin-bottom: 20px;"></i>
-             <h3>ไม่มีสิทธิ์เข้าถึง</h3>
-             <p style="color: white;">บัญชีของคุณไม่ใช่สถานะพาร์ทเนอร์รับจบ (Backer)</p>
-             <button onclick="window.location.href='index.html?shop=' + encodeURIComponent(currentShopId)" class="btn btn-blue" style="margin-top:20px;">กลับหน้าหลัก</button>
-           </div>`;
-           return;
-        }
-
+        const { profile: user, logs } = await api.backerProfile();
         currentUser = user;
-        currentUser.profile_pic = profile.pictureUrl || 'https://via.placeholder.com/150';
-        
         document.getElementById('backerPic').src = currentUser.profile_pic;
         document.getElementById('backerName').innerText = user.display_name;
         document.getElementById('backerMemberId').innerText = formatMemberCode(currentShopId, user.member_id);
@@ -179,14 +126,16 @@
         document.getElementById('backerSharePct').innerText = user.backer_share || 0;
         document.getElementById('backerFeePct').innerText = user.backer_water_fee !== null ? user.backer_water_fee : 10;
 
-        loadBackerLogs(user.uid);
-      } catch (e) { alert("Error: " + e.message); }
+        loadBackerLogs(logs);
+      } catch (error) {
+        document.body.textContent = error.message === 'ACCESS_DENIED'
+          ? 'คุณไม่มีสิทธิ์เข้าถึงหน้านี้ กรุณาติดต่อเจ้าของร้าน' : 'โหลดข้อมูลผู้รับจบไม่สำเร็จ กรุณาเปิดใหม่';
+      }
     }
 
-    async function loadBackerLogs(uid) {
+    function loadBackerLogs(logs) {
       const container = document.getElementById('backerLogsContainer');
       try {
-        const { data: logs } = await _supabase.from('backer_logs').select('*').eq('shop_id', currentShopId).eq('uid', uid).order('created_at', { ascending: false }).limit(20);
         container.innerHTML = '';
         
         if (!logs || logs.length === 0) {
@@ -221,88 +170,7 @@
     // ระบบแจ้งฝาก/ถอน สำหรับ Backer
     // =====================================
     function openTopupModal() {
-      document.getElementById('topupModal').classList.remove('hidden');
-      toggleOptions();
-    }
-    
-    function closeTopupModal() { 
-      document.getElementById('topupModal').classList.add('hidden'); 
-      document.getElementById('txtTopupAmount').value = ''; 
-      document.getElementById('fileSlip').value = '';
-      document.getElementById('btnSubmitTopup').disabled = false; 
-      document.getElementById('btnSubmitTopup').innerHTML = 'ส่งแจ้งแอดมิน';
-    }
-
-    function toggleOptions() {
-      const type = document.getElementById('selTransactionType').value; 
-      const method = document.getElementById('selTopupMethod').value;
-      
-      if (type === 'ถอนเงิน') { 
-          document.getElementById('paymentMethodSection').style.display = 'none'; 
-          document.getElementById('slipUploadSection').style.display = 'none';
-      } else { 
-          document.getElementById('paymentMethodSection').style.display = 'block'; 
-          if (method === 'โอนเงิน') document.getElementById('slipUploadSection').style.display = 'block';
-          else document.getElementById('slipUploadSection').style.display = 'none';
-      }
-    }
-
-    function compressImageAndGetBase64(file) {
-      return new Promise((resolve) => {
-        const reader = new FileReader(); reader.readAsDataURL(file);
-        reader.onload = function (event) {
-          const img = new Image(); img.src = event.target.result;
-          img.onload = function () {
-            const canvas = document.createElement('canvas'); const MAX_WIDTH = 800; 
-            let scaleSize = Math.min(MAX_WIDTH / img.width, 1);
-            canvas.width = img.width * scaleSize; canvas.height = img.height * scaleSize;
-            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-            resolve(canvas.toDataURL('image/jpeg', 0.6).split(',')[1]); 
-          }
-        };
-      });
-    }
-
-    async function submitTopupRequest() {
-      const type = document.getElementById('selTransactionType').value;
-      const amount = parseFloat(document.getElementById('txtTopupAmount').value);
-      const method = type === 'ถอนเงิน' ? 'โอนเงิน' : document.getElementById('selTopupMethod').value;
-      const btnSubmit = document.getElementById('btnSubmitTopup');
-      
-      if (!amount || isNaN(amount) || amount <= 0) { alert("ระบุจำนวนเงินให้ถูกต้อง"); return; }
-      if (type === 'ถอนเงิน' && amount > (currentUser.backer_wallet || 0)) { alert("ยอดทุนรับจบไม่เพียงพอให้ถอนครับ"); return; }
-
-      let slipBase64 = "", slipMime = "";
-      if (type === 'ฝากเงิน' && method === 'โอนเงิน') {
-         const fileInput = document.getElementById('fileSlip');
-         if (fileInput.files.length === 0) { alert("กรุณาแนบรูปสลิปโอนเงินด้วยครับ"); return; }
-         slipMime = 'image/jpeg';
-         btnSubmit.disabled = true; btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> บีบอัดสลิป...';
-         slipBase64 = await compressImageAndGetBase64(fileInput.files[0]);
-      }
-
-      btnSubmit.disabled = true; btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังส่งข้อมูล...';
-      
-      const payload = { 
-        action: 'requestTopup', uid: currentUser.uid, memberId: currentUser.member_id, 
-        displayName: currentUser.display_name + " (รับจบ)", profilePic: currentUser.profile_pic,
-        type: type, amount: amount, method: method, feeOption: '-', slipBase64: slipBase64, slipMimeType: slipMime
-      };
-
-      try {
-        const response = await fetch(APP_CONFIG.GAS_URL, { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'text/plain;charset=utf-8' } });
-        const res = await response.json();
-        
-        if(res.status === 'success') { 
-           await _supabase.from('topup_requests').insert([{
-              uid: currentUser.uid, member_id: currentUser.member_id, display_name: currentUser.display_name + " (รับจบ)",
-              type: type, amount: amount, method: method, fee_option: '-', slip_url: res.fileUrl || '', status: 'Pending'
-           }]);
-
-           alert(`ส่งแจ้ง ${type} ทุนรับจบสำเร็จ!\nระบบได้ส่งแจ้งเตือนไปที่แอดมินแล้วครับ`); 
-           closeTopupModal(); 
-        } else { alert("ข้อผิดพลาด: " + res.message); btnSubmit.disabled = false; btnSubmit.innerHTML = 'ส่งแจ้งแอดมิน'; }
-      } catch (error) { alert('การเชื่อมต่อขัดข้อง กรุณาลองใหม่อีกครั้ง'); btnSubmit.disabled = false; btnSubmit.innerHTML = 'ส่งแจ้งแอดมิน'; }
+      location.href = playerEntryUrl(currentShopId, { wallet: '1' });
     }
 
     initBacker();
