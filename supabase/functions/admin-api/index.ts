@@ -643,7 +643,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, snapshot: result.data });
       }
       if (playerRequest) {
-        const shop = await db.from('shops').select('status,live_enabled').eq('shop_id', shopId).maybeSingle();
+        const shop = await db.from('shops').select('status,live_enabled,shop_name').eq('shop_id', shopId).maybeSingle();
         if (shop.error) fail('DATABASE_ERROR', 500);
         if (String(shop.data?.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
 
@@ -660,7 +660,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             .eq('shop_id', shopId).eq('uid', claims.sub).eq('role', 'Promoter').eq('status', 'Active').maybeSingle();
           if (promoter.error) fail('DATABASE_ERROR', 500);
           if (!promoter.data) fail('PLAYER_ACCESS_REQUIRED', 403);
-          return reply({ ok: true, promoter: promoter.data });
+          return reply({ ok: true, promoter: promoter.data, shop_name: shop.data.shop_name });
         }
 
         const profile = await db.from('users').select(input.action === 'wallet_request' ? 'uid,role,status,member_id,credit_balance,commission_balance,display_name' : 'uid,role,status,member_id,credit_balance,commission_balance')
