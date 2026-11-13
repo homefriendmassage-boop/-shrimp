@@ -4,17 +4,17 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const fields = {
   users: 'uid shop_id member_id display_name profile_pic role status credit_balance total_deposit commission_balance referrer_uid backer_share backer_water_fee backer_wallet created_at',
-  tables: 'id shop_id table_no credit created_at cash_limit',
+  tables: 'id shop_id table_no credit created_at cash_limit table_name is_open is_hidden',
   rounds: 'round_id shop_id status weight result created_at end_time_ms resolver_type',
   bets: 'bet_id shop_id round_id uid table_no bet_type amount status play_mode payout created_at cash_table',
   backer_logs: 'id shop_id round_id uid member_id share_percent gap_amount result_status pnl_amount water_fee_deducted wallet_balance_after created_at',
-  transactions: 'id shop_id target_id type amount admin_name target_type created_at',
+  transactions: 'id shop_id target_id type amount admin_name target_type created_at cash_table_no',
   topup_requests: 'id shop_id uid member_id display_name type amount method fee_option slip_url status admin_name created_at',
   system_settings: 'id shop_id water_margin min_bet max_bet round_duration comm_rate withdrawal_fee_mode created_at'
 };
 const writes = {
   users: { update: 'role status credit_balance total_deposit commission_balance backer_share backer_water_fee backer_wallet' },
-  tables: { insert: 'shop_id table_no credit', update: 'credit cash_limit', delete: '' },
+  tables: { insert: 'shop_id table_no credit', update: 'credit cash_limit table_name is_open is_hidden' },
   rounds: { insert: 'shop_id round_id status end_time_ms resolver_type', update: 'status end_time_ms resolver_type weight result' },
   bets: { update: 'status payout' },
   backer_logs: { insert: 'shop_id round_id uid member_id share_percent gap_amount result_status pnl_amount water_fee_deducted wallet_balance_after' },
@@ -103,6 +103,9 @@ export function validateQuery(input, role, shopId) {
           if (['credit_balance', 'total_deposit', 'commission_balance', 'backer_wallet', 'credit', 'payout', 'amount'].includes(key) && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) fail('AMOUNT_INVALID');
           if (key === 'cash_limit' && value !== null &&
               (typeof value !== 'number' || value < 0.01 || value > 999999999)) fail('AMOUNT_INVALID');
+          if (key === 'table_name' && value !== null &&
+              (typeof value !== 'string' || !value.trim() || value.length > 40)) fail('TABLE_NAME_INVALID');
+          if (['is_open', 'is_hidden'].includes(key) && typeof value !== 'boolean') fail('TABLE_INVALID');
           if (key === 'role' && !['Customer', 'Promoter', 'Backer', 'Operator', 'Admin'].includes(String(value))) fail('ROLE_INVALID');
           if (table === 'users' && key === 'status' && !['Active', 'Inactive'].includes(String(value))) fail('STATUS_INVALID');
         }
@@ -268,8 +271,15 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
+      if (input.action === 'public_cash_board') {
+        if (!/^SHOP_[0-9]{3,24}$/.test(shopId)) fail('SHOP_INVALID');
+        const result = await database().rpc('read_public_cash_board', { p_shop: shopId });
+        if (result.error) fail('BOARD_UNAVAILABLE', 500);
+        if (!result.data) fail('SHOP_NOT_AVAILABLE', 404);
+        return reply({ ok: true, board: result.data });
+      }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_qr', 'table_cash_payment', 'table_cash_report', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
@@ -520,9 +530,24 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (input.action === 'player_state') {
         const table = input.table_no;
         if (table != null && (typeof table !== 'string' || table.length > 40)) fail('TABLE_INVALID');
+        const validTable = table && input.table_day === tableDay() &&
+          input.table_token === await tableQrSignature(shopId, table, input.table_day);
         const result = await db.rpc('read_player_live_state', {
-          p_shop: shopId, p_uid: claims.sub, p_table: table || null, p_results: input.include_results === true
+          p_shop: shopId, p_uid: claims.sub, p_table: validTable ? table : null, p_results: input.include_results === true
         });
+        if (result.data && validTable) {
+          const [desk, total] = await Promise.all([
+            db.from('tables').select('table_name,is_open,is_hidden,cash_limit')
+              .eq('shop_id', shopId).eq('table_no', table).maybeSingle(),
+            result.data.round?.round_id
+              ? db.rpc('cash_table_round_total', { p_shop: shopId, p_table: table, p_round: result.data.round.round_id })
+              : { data: 0 },
+          ]);
+          if (desk.error || total.error) fail('PLAYER_STATE_UNAVAILABLE', 500);
+          result.data.table_round_total = total.data;
+          result.data.table_name = desk.data?.table_name ?? null;
+          result.data.table_open = Boolean(desk.data?.is_open && !desk.data?.is_hidden && desk.data?.cash_limit);
+        }
         if (result.error) fail('PLAYER_STATE_UNAVAILABLE', 500);
         if (!result.data) fail('PLAYER_ACCESS_REQUIRED', 403);
         return reply({ ok: true, snapshot: result.data });
@@ -694,12 +719,23 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (result.data?.code !== 'PLACED') fail(result.data?.code || 'BET_UNAVAILABLE', 409);
         return reply({ ok: true, bet_id: result.data.bet_id });
       }
+      if (input.action === 'table_bulk_create') {
+        if (!Number.isInteger(input.count) || input.count < 1 || input.count > 100 ||
+            typeof input.cash_limit !== 'string' || !/^\d{1,9}(?:\.\d{1,2})?$/.test(input.cash_limit) ||
+            Number(input.cash_limit) <= 0 || Number(input.cash_limit) > 999999999) fail('TABLE_RANGE_INVALID');
+        const result = await db.rpc('create_cash_table_range', {
+          p_shop: shopId, p_count: input.count, p_limit: input.cash_limit,
+        });
+        if (result.error) fail('TABLE_CREATE_FAILED', 500);
+        return reply({ ok: true, added: result.data });
+      }
       if (['table_qr', 'table_cash_payment'].includes(input.action)) {
         const table = input.table_no;
         if (typeof table !== 'string' || !/^\d{1,8}$/.test(table)) fail('TABLE_INVALID');
         if (input.action === 'table_qr') {
-          const desk = await db.from('tables').select('cash_limit').eq('shop_id', shopId).eq('table_no', table).maybeSingle();
+          const desk = await db.from('tables').select('cash_limit,is_open,is_hidden').eq('shop_id', shopId).eq('table_no', table).maybeSingle();
           if (desk.error) fail('DATABASE_ERROR', 500);
+          if (desk.data && (!desk.data.is_open || desk.data.is_hidden)) fail('TABLE_CLOSED', 409);
           if (!desk.data?.cash_limit) fail('CASH_TABLE_REQUIRED', 409);
           const day = tableDay();
           return reply({ ok: true, day, token: await tableQrSignature(shopId, table, day) });
