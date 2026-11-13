@@ -308,3 +308,19 @@ test('round IDs are distinct across shops and keep the accounting-day sequence',
   assert.equal(context.nextShopRoundId('SHOP_001', ids[1], Date.parse('2026-11-14T05:59:00+07:00')), 'R-261113-001-2');
   assert.equal(context.nextShopRoundId('SHOP_001', ids[1], Date.parse('2026-11-14T06:00:00+07:00')), 'R-261114-001-1');
 });
+
+test('daily report labels cash movements separately from wallet credit and performance', () => {
+  return import('data:text/javascript;base64,' + Buffer.from(source).toString('base64')).then(({ dailyFinanceFlex }) => {
+    const message = dailyFinanceFlex('2026-11-13', 'บ่อทดสอบ', {
+      settled_stake:500, payout:380, pnl:10, cancelled:50, cash_stake:300, cash_in:210, cash_out:80,
+      credit_in:900, credit_out:300, table_credit_in:40, table_credit_out:20, rounds:3, ended:2, even:1, odd:1, pending:4,
+    });
+    assert.equal(message.type, 'flex');
+    assert.match(message.altText, /บ่อทดสอบ/);
+    const rows = new Map(message.contents.body.contents.filter(item => item.layout === 'horizontal')
+      .map(item => item.contents.map(cell => cell.text)));
+    assert.equal(rows.get('ส่วนต่างก่อนค่าคอมและค่าใช้จ่าย'), '110 บาท');
+    assert.equal(rows.get('เงินสดสุทธิจากโต๊ะ'), '130 บาท');
+    assert.equal(rows.get('เพิ่มเครดิตบัญชีสมาชิก'), '900 บาท');
+  });
+});

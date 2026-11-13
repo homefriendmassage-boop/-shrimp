@@ -195,6 +195,49 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
   } catch { console.error('wallet LINE notification unavailable'); }
 }
 
+export function dailyFinanceFlex(day, shopName, data) {
+  const money = amount => Number(amount).toLocaleString('th-TH', { maximumFractionDigits: 2 }) + ' บาท';
+  const text = (value, extra = {}) => ({ type: 'text', text: String(value), wrap: true, color: '#E8EEF8', size: 'sm', ...extra });
+  const row = (label, value) => ({ type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
+    text(label, { flex: 3, color: '#BAC6D9' }), text(value, { flex: 2, align: 'end' }),
+  ] });
+  const section = (title, rows) => [
+    { type: 'separator', margin: 'lg', color: '#364053' },
+    text(title, { weight: 'bold', color: '#83B5FF', margin: 'md' }),
+    ...rows,
+  ];
+  const title = 'รายงานสรุปยอดประจำวัน · ' + shopName;
+  return { type: 'flex', altText: (title + ' · ' + day).slice(0, 300), contents: {
+    type: 'bubble', size: 'mega',
+    header: { type: 'box', layout: 'vertical', backgroundColor: '#20283A', spacing: 'sm', contents: [
+      text(title, { size: 'lg', weight: 'bold' }),
+      text(day + ' · 06:00 ถึงก่อน 06:00 วันถัดไป'),
+    ] },
+    body: { type: 'box', layout: 'vertical', backgroundColor: '#131925', spacing: 'sm', contents: [
+      text('ผลรอบที่ตัดผลแล้ว', { weight: 'bold', color: '#83B5FF' }),
+      row('ยอดเล่นที่ตัดผล', money(data.settled_stake)),
+      row('เครดิตจ่ายผู้ชนะ', money(data.payout)),
+      row('ผลสุทธิผู้รับจบ', money(data.pnl)),
+      row('ส่วนต่างก่อนค่าคอมและค่าใช้จ่าย', money(Number(data.settled_stake) - Number(data.payout) - Number(data.pnl))),
+      row('ยอดบิลยกเลิก', money(data.cancelled)),
+      ...section('เงินสดที่บันทึกบนโต๊ะ', [
+        row('ยอดเล่นโต๊ะเงินสดที่ตัดผล', money(data.cash_stake)),
+        row('รับเงินสดจากโต๊ะ', money(data.cash_in)), row('จ่ายเงินสดให้โต๊ะ', money(data.cash_out)),
+        row('เงินสดสุทธิจากโต๊ะ', money(Number(data.cash_in) - Number(data.cash_out))),
+      ]),
+      ...section('Wallet และเครดิต', [
+        row('เพิ่มเครดิตบัญชีสมาชิก', money(data.credit_in)), row('ลดเครดิตบัญชีสมาชิก', money(data.credit_out)),
+        row('เพิ่มเครดิตโต๊ะเดิม', money(data.table_credit_in)), row('ลดเครดิตโต๊ะเดิม', money(data.table_credit_out)),
+        text('ยอดเครดิตมีหลายช่องทาง ใช้แยกจากยอดเงินสดและรายได้', { color: '#BAC6D9', size: 'xs' }),
+      ]),
+      ...section('สถิติการเล่น', [
+        row('เปิดรอบ / ตัดผล', data.rounds + ' / ' + data.ended),
+        row('ออกคู่ / ออกคี่', data.even + ' / ' + data.odd), row('บิลรอตัดผล', data.pending + ' บิล'),
+      ]),
+    ] },
+  } };
+}
+
 export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
   const entryAccounts = new Map();
   function database() {
@@ -680,27 +723,28 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (['table_cash_report', 'table_send_cash_report'].includes(input.action)) {
         if (staff.data.role === 'Operator') fail('ADMIN_REQUIRED', 403);
         if (typeof input.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.day)) fail('TABLE_DATE_INVALID');
-        const result = await db.rpc('cash_table_daily_report', { p_shop: shopId, p_day: input.day });
-        if (result.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
-        if (input.action === 'table_cash_report') return reply({ ok: true, tables: result.data });
-        const runtime = await db.from('shop_oa_runtime').select('line_oa_token,admin_group_id,membership_notice_recipient_uid,line_notifications_enabled')
+        const date = new Date(input.day + 'T00:00:00Z');
+        if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== input.day) fail('TABLE_DATE_INVALID');
+        if (input.action === 'table_cash_report') {
+          const result = await db.rpc('cash_table_daily_report', { p_shop: shopId, p_day: input.day });
+          if (result.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
+          return reply({ ok: true, tables: result.data });
+        }
+        const runtime = await db.from('shop_oa_runtime').select('shop_name,line_oa_token,admin_group_id,line_notifications_enabled')
           .eq('shop_id', shopId).maybeSingle();
         if (runtime.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
         const settings = runtime.data;
-        const recipient = settings?.admin_group_id || settings?.membership_notice_recipient_uid;
+        const recipient = settings?.admin_group_id;
         if (!settings?.line_oa_token || settings.line_notifications_enabled === false ||
-            !/^[CU][0-9a-f]{32}$/.test(recipient || '')) fail('TABLE_REPORT_LINE_NOT_READY', 409);
-        const amount = value => Number(value).toLocaleString('th-TH', { maximumFractionDigits: 2 });
-        const lines = (result.data ?? []).map(row => 'โต๊ะ ' + row.table_no + ' · ลง ฿' + amount(row.played) +
-          ' · ชนะ ฿' + amount(row.won) + ' · รับสด ฿' + amount(row.received) + ' · จ่ายสด ฿' + amount(row.paid));
-        const report = ['รายงานเงินสด ' + shopId, 'วันที่บัญชี ' + input.day + ' · 06:00 ถึงก่อน 06:00 วันถัดไป',
-          ...(lines.length ? lines : ['ไม่มีรายการเงินสด'])].join('\n');
-        if (report.length > 5000) fail('TABLE_REPORT_TOO_LONG', 409);
+            !/^C[0-9a-f]{32}$/i.test(recipient || '')) fail('TABLE_REPORT_LINE_NOT_READY', 409);
+        const result = await db.rpc('daily_group_finance_report', { p_shop: shopId, p_day: input.day });
+        if (result.error || !result.data) fail('TABLE_REPORT_UNAVAILABLE', 500);
+        const report = dailyFinanceFlex(input.day, settings.shop_name || shopId, result.data);
         if (typeof input.delivery_id !== 'string' || !shopInviteIdPattern.test(input.delivery_id)) fail('TABLE_REPORT_UNAVAILABLE', 400);
         const sent = await fetcher('https://api.line.me/v2/bot/message/push', {
           method: 'POST', headers: { Authorization: 'Bearer ' + settings.line_oa_token,
             'Content-Type': 'application/json', 'X-Line-Retry-Key': input.delivery_id },
-          body: JSON.stringify({ to: recipient, messages: [{ type: 'text', text: report }] }),
+          body: JSON.stringify({ to: recipient, messages: [report] }),
           signal: AbortSignal.timeout(8000),
         });
         if (!sent.ok && !(sent.status === 409 && sent.headers.has('x-line-accepted-request-id'))) fail('TABLE_REPORT_LINE_FAILED', 502);
