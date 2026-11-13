@@ -141,7 +141,7 @@
     body { padding:clamp(10px,2.4vw,32px); box-sizing:border-box; align-items:flex-start; }
     .dashboard-container { max-width:1600px; box-sizing:border-box; padding:clamp(14px,2.4vw,32px); }
     .top-bar { gap:12px; margin-bottom:22px; padding-bottom:14px; }
-    .board-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.12fr); gap:clamp(16px,2.4vw,32px); align-items:start; }
+    .board-layout { display:grid; grid-template-columns:minmax(0,.82fr) minmax(0,1.4fr); gap:clamp(16px,2.4vw,32px); align-items:start; }
     .header-info { gap:12px; margin-bottom:18px; }
     .round-id { font-size:clamp(1.2rem,2.2vw,1.8rem); }
     .cards-grid { gap:12px; }
@@ -154,24 +154,30 @@
     .board-tables { padding:12px 0 0; color:var(--text-muted); overflow-wrap:anywhere; }
     .board-tables span { color:var(--text-main); }
     .history-panel { min-width:0; border:1px solid var(--card-border); background:#171925; border-radius:16px; overflow:hidden; }
-    .history-heading { padding:16px 18px 10px; }
-    .history-heading h2 { margin:0; font-size:1.25rem; }
-    .history-heading p { margin:3px 0 0; color:var(--text-muted); font-size:.9rem; }
-    .daily-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:0; padding:0 18px 12px; }
-    .daily-summary div { background:#222637; border-radius:10px; padding:8px 10px; }
-    .daily-summary dt { color:var(--text-muted); font-size:.88rem; }
-    .daily-summary dd { margin:0; font-size:1.35rem; font-weight:600; font-variant-numeric:tabular-nums; }
-    .day-total { margin:0; padding:0 18px 12px; color:var(--text-muted); }
-    .day-total strong { color:var(--green-main); margin-inline-start:6px; }
-    .history-scroll { max-height:clamp(240px,51vh,690px); overflow:auto; scrollbar-gutter:stable; }
+    .history-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:16px 14px 12px; }
+    .history-heading h2 { margin:0; font-size:clamp(1rem,1.6vw,1.25rem); }
+    .history-heading time { margin-inline-start:auto; color:#cbd5e1; font-size:.9rem; white-space:nowrap; }
+    .daily-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)) minmax(0,1.55fr); gap:6px; margin:0; padding:0 12px 12px; }
+    .daily-summary div { min-width:0; background:#222637; border-radius:9px; padding:7px clamp(4px,1vw,10px); text-align:center; }
+    .daily-summary .summary-even { background:#1e3a70; }
+    .daily-summary .summary-odd { background:#672832; }
+    .daily-summary dt { color:#d2dbea; font-size:clamp(.69rem,1.1vw,.9rem); }
+    .daily-summary dd { margin:0; font-size:clamp(.85rem,1.7vw,1.35rem); font-weight:600; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+    #dayTotal { color:#55dfa8; }
+    .history-scroll { max-height:clamp(240px,58vh,780px); overflow:auto; scrollbar-gutter:stable; }
     .history-scroll:focus-visible { outline:2px solid var(--blue-main); outline-offset:-2px; }
-    .round-table { width:100%; border-collapse:separate; border-spacing:0; white-space:nowrap; font-variant-numeric:tabular-nums; }
-    .round-table th, .round-table td { padding:8px clamp(7px,1vw,14px); text-align:right; border-bottom:1px solid var(--card-border); }
+    .round-columns { display:grid; grid-template-columns:repeat(3,minmax(164px,1fr)); gap:1px; background:var(--card-border); align-items:start; }
+    .round-table { width:100%; border-collapse:separate; border-spacing:0; background:#171925; white-space:nowrap; font-variant-numeric:tabular-nums; font-size:clamp(.75rem,1.1vw,.98rem); }
+    .round-table th, .round-table td { padding:6px clamp(4px,.6vw,9px); text-align:right; border-bottom:1px solid var(--card-border); }
     .round-table th { position:sticky; top:0; background:#252b3c; z-index:1; font-weight:500; color:#e1e8f3; }
     .round-table th:first-child, .round-table td:first-child { text-align:left; }
     .round-table th:last-child, .round-table td:last-child { text-align:center; }
     .round-table tbody tr:nth-child(even) { background:#1d2030; }
-    .round-table .empty { text-align:center; color:var(--text-muted); padding:24px 12px; }
+    .history-message { margin:0; text-align:center; color:var(--text-muted); padding:18px 12px; }
+    .history-pagination { display:flex; justify-content:center; align-items:center; gap:10px; padding:8px; border-top:1px solid var(--card-border); }
+    .history-pagination[hidden] { display:none; }
+    .history-pagination button { background:#252e42; border:1px solid #465472; color:white; padding:5px 10px; border-radius:8px; font:inherit; }
+    .history-pagination button:disabled { opacity:.45; }
     .result-chip { display:inline-block; min-width:2.4em; text-align:center; padding:2px 7px; border-radius:6px; }
     .result-even { color:#9ac6ff; background:#24395f; }
     .result-odd { color:#ffb0b0; background:#502c3a; }
@@ -245,20 +251,29 @@
       <aside class="history-panel" aria-labelledby="historyHeading">
         <div class="history-heading">
           <h2 id="historyHeading">สรุปและผลแต่ละรอบ</h2>
-          <p><time id="boardDay">—</time> · ตัดวันบัญชี 06:00 น.</p>
+          <time id="boardDay">—</time>
         </div>
         <dl class="daily-summary">
           <div><dt>จบรอบ</dt><dd id="dayRounds">—</dd></div>
-          <div><dt>ผลคู่</dt><dd id="dayEven">—</dd></div>
-          <div><dt>ผลคี่</dt><dd id="dayOdd">—</dd></div>
+          <div class="summary-even"><dt>ผลรวมคู่</dt><dd id="dayEven">—</dd></div>
+          <div class="summary-odd"><dt>ผลรวมคี่</dt><dd id="dayOdd">—</dd></div>
+          <div><dt>ยอดรวมรอบที่จบ</dt><dd id="dayTotal">—</dd></div>
         </dl>
-        <p class="day-total">ยอดรวมรอบที่จบ <strong id="dayTotal">—</strong></p>
-        <div class="history-scroll" tabindex="0" role="region" aria-label="ตารางผลแต่ละรอบ">
-          <table class="round-table" aria-label="ผลรอบล่าสุดแสดงก่อน">
-            <thead><tr><th scope="col">รอบ</th><th scope="col">คู่</th><th scope="col">คี่</th><th scope="col">รวม</th><th scope="col">กรัม</th><th scope="col">ผล</th></tr></thead>
-            <tbody id="boardHistory"><tr><td class="empty" colspan="6">กำลังโหลดผลรอบ</td></tr></tbody>
-          </table>
+        <p class="history-message" id="boardHistoryMessage">กำลังโหลดผลรอบ</p>
+        <div class="history-scroll" id="boardHistoryScroll" tabindex="0" role="region" aria-label="ตารางผลแต่ละรอบ">
+          <div class="round-columns" id="boardHistory"></div>
         </div>
+        <template id="roundTableTemplate">
+          <table class="round-table">
+            <thead><tr><th scope="col">รอบ</th><th scope="col">กรัม</th><th scope="col">ผล</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </template>
+        <nav class="history-pagination" id="boardHistoryPages" aria-label="หน้าผลรอบ" hidden>
+          <button type="button" id="previousHistoryPage">ก่อนหน้า</button>
+          <span id="historyPageRange"></span>
+          <button type="button" id="nextHistoryPage">ถัดไป</button>
+        </nav>
       </aside>
     </div>
     <div class="board-tools">
@@ -272,35 +287,60 @@
     const set = (id, text) => { document.getElementById(id).textContent = text; };
     const money = value => '฿' + Number(value).toLocaleString('th-TH');
     let currentRound;
+    const roundsPerColumn = 50;
+    const columnCount = 3;
+    const roundsPerPage = roundsPerColumn * columnCount;
+    let historyPage = 0;
+    let historyDay;
+    let latestHistory = [];
     let previousHistory;
     const dateFormat = new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeZone: 'Asia/Bangkok' });
 
     function renderHistory(history, emptyText = 'ยังไม่มีรอบที่จบในวันบัญชีนี้') {
-      const key = JSON.stringify([history, emptyText]);
+      latestHistory = history;
+      const lastPage = Math.max(0, Math.ceil(history.length / roundsPerPage) - 1);
+      historyPage = Math.min(historyPage, lastPage);
+      const start = historyPage * roundsPerPage;
+      const page = history.slice(start, start + roundsPerPage);
+      const key = JSON.stringify([start, page.map(({ round_id, weight, result }) => [round_id, weight, result]), emptyText]);
+      const message = document.getElementById('boardHistoryMessage');
+      const scroll = document.getElementById('boardHistoryScroll');
+      message.hidden = history.length > 0;
+      message.textContent = emptyText;
+      scroll.hidden = !history.length;
+      document.getElementById('boardHistoryPages').hidden = lastPage === 0;
+      document.getElementById('previousHistoryPage').disabled = historyPage === 0;
+      document.getElementById('nextHistoryPage').disabled = historyPage === lastPage;
+      set('historyPageRange', history.length ? (start + 1) + '–' + (start + page.length) + ' / ' + history.length : '');
       if (key === previousHistory) return;
       previousHistory = key;
-      const body = document.getElementById('boardHistory');
-      if (!history.length) {
-        const row = document.createElement('tr');
-        const cell = row.insertCell();
-        cell.colSpan = 6;
-        cell.className = 'empty';
-        cell.textContent = emptyText;
-        body.replaceChildren(row);
-        return;
+
+      const columns = document.createDocumentFragment();
+      const template = document.getElementById('roundTableTemplate');
+      for (let index = 0; index < columnCount && page.length; index++) {
+        const offset = index * roundsPerColumn;
+        const table = template.content.firstElementChild.cloneNode(true);
+        table.setAttribute('aria-label', 'ผลรอบลำดับ ' + (start + offset + 1) + ' ถึง ' + (start + offset + roundsPerColumn));
+        for (const round of page.slice(offset, offset + roundsPerColumn)) {
+          const row = table.tBodies[0].insertRow();
+          row.insertCell().textContent = round.round_id;
+          row.insertCell().textContent = round.weight ?? '—';
+          const result = document.createElement('span');
+          result.className = 'result-chip ' + (round.result === 'คู่' ? 'result-even' : round.result === 'คี่' ? 'result-odd' : '');
+          result.textContent = round.result || '—';
+          row.insertCell().append(result);
+        }
+        columns.append(table);
       }
-      const fragment = document.createDocumentFragment();
-      for (const round of history) {
-        const row = document.createElement('tr');
-        for (const value of [round.round_id, money(round.even), money(round.odd),
-          money(Number(round.even) + Number(round.odd)), round.weight ?? '—']) row.insertCell().textContent = value;
-        const result = document.createElement('span');
-        result.className = 'result-chip ' + (round.result === 'คู่' ? 'result-even' : round.result === 'คี่' ? 'result-odd' : '');
-        result.textContent = round.result || '—';
-        row.insertCell().append(result);
-        fragment.append(row);
-      }
-      body.replaceChildren(fragment);
+      document.getElementById('boardHistory').replaceChildren(columns);
+    }
+
+    for (const [id, step] of [['previousHistoryPage', -1], ['nextHistoryPage', 1]]) {
+      document.getElementById(id).addEventListener('click', () => {
+        historyPage += step;
+        document.getElementById('boardHistoryScroll').scrollTop = 0;
+        renderHistory(latestHistory);
+      });
     }
 
     function updateBoardTimer() {
@@ -356,6 +396,11 @@
         set('dayEven', board.daily.even);
         set('dayOdd', board.daily.odd);
         set('dayTotal', board.daily.total == null ? '—' : money(board.daily.total));
+        if (historyDay !== board.accounting_day) {
+          historyDay = board.accounting_day;
+          historyPage = 0;
+          document.getElementById('boardHistoryScroll').scrollTop = 0;
+        }
         renderHistory(board.history ?? []);
         set('boardConnection', 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' }));
       } catch {
