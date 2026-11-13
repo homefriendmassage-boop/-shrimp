@@ -493,7 +493,7 @@
         </div>
         
         <div style="display: flex; gap: 10px; flex-direction: column;">
-           <button class="btn btn-outline" id="sendCashReport" onclick="sendReportToLine()"><i class="fa-solid fa-paper-plane"></i> ส่ง Flex รายงานประจำวันเข้ากลุ่ม LINE</button>
+           <button class="btn btn-outline" id="sendCashReport" onclick="sendReportToLine()"><i class="fa-solid fa-paper-plane"></i> ส่ง Flex รายงานประจำวันทาง LINE</button>
            <div style="display: flex; gap: 10px;">
              <button class="btn btn-blue" style="flex: 1; padding: 10px; font-size: 0.9rem;" onclick="printReport('A4')"><i class="fa-solid fa-print"></i> พิมพ์ A4</button>
              <button class="btn btn-green" style="flex: 1; padding: 10px; font-size: 0.9rem;" onclick="printReport('Slip')"><i class="fa-solid fa-receipt"></i> สลิป 80mm</button>
@@ -1469,17 +1469,17 @@
     async function sendReportToLine() {
       const day = document.getElementById('repDateSelector').value;
       const button = document.getElementById('sendCashReport');
-      if (!day || button.disabled || !confirm('ส่งรายงานประจำวันที่บัญชี ' + day + ' เข้ากลุ่ม LINE ของร้านใช่ไหม')) return;
+      if (!day || button.disabled || !confirm('ส่งรายงานประจำวันที่บัญชี ' + day + ' ทาง LINE ของร้านใช่ไหม')) return;
       const key = currentShopId + '/' + day;
       if (cashReportDelivery?.key !== key) cashReportDelivery = { key, id: crypto.randomUUID() };
       button.disabled = true;
       try {
-        await _supabase.sendTableCashReport(day, cashReportDelivery.id);
+        const { recipient_type: recipientType } = await _supabase.sendTableCashReport(day, cashReportDelivery.id);
         cashReportDelivery = null;
-        alert('LINE รับคำขอส่ง Flex เข้ากลุ่มแล้ว');
+        alert(recipientType === 'group' ? 'LINE รับคำขอส่ง Flex เข้ากลุ่มแล้ว' : 'LINE รับคำขอส่ง Flex ให้เจ้าของร้านแล้ว');
       } catch (error) {
-        alert(({ TABLE_REPORT_LINE_NOT_READY: 'กรุณาตั้ง Group ID และเปิดการแจ้งเตือน LINE ของร้าน',
-          TABLE_REPORT_LINE_FAILED: 'LINE ไม่รับรายงาน กรุณาตรวจว่า LINE OA ของร้านยังอยู่ในกลุ่ม' })[error.message]
+        alert(({ TABLE_REPORT_LINE_NOT_READY: 'กรุณาตั้ง Group ID หรือ UID เจ้าของร้าน และเปิดการแจ้งเตือน LINE',
+          TABLE_REPORT_LINE_FAILED: 'LINE ไม่รับรายงาน กรุณาตรวจการตั้งค่าผู้รับ LINE ของร้าน' })[error.message]
           || 'ยังยืนยันผลการส่งรายงานไม่ได้ กรุณาตรวจ LINE ก่อนส่งซ้ำ');
       } finally { button.disabled = false; }
     }

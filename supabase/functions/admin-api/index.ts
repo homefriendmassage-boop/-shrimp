@@ -226,6 +226,10 @@ export function dailyFinanceFlex(day, shopName, data) {
         row('เงินสดสุทธิจากโต๊ะ', money(Number(data.cash_in) - Number(data.cash_out))),
       ]),
       ...section('Wallet และเครดิต', [
+        row('เครดิตรับฝากลูกค้าคงเหลือ (หนี้สินร้าน)', money(data.customer_wallet_liability)),
+        text('ยอด ณ ' + new Date(data.wallet_as_of).toLocaleString('th-TH', {
+          timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short',
+        }) + ' น.', { color: '#BAC6D9', size: 'xs' }),
         row('เพิ่มเครดิตบัญชีสมาชิก', money(data.credit_in)), row('ลดเครดิตบัญชีสมาชิก', money(data.credit_out)),
         row('เพิ่มเครดิตโต๊ะเดิม', money(data.table_credit_in)), row('ลดเครดิตโต๊ะเดิม', money(data.table_credit_out)),
         text('ยอดเครดิตมีหลายช่องทาง ใช้แยกจากยอดเงินสดและรายได้', { color: '#BAC6D9', size: 'xs' }),
@@ -730,13 +734,18 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           if (result.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
           return reply({ ok: true, tables: result.data });
         }
-        const runtime = await db.from('shop_oa_runtime').select('shop_name,line_oa_token,admin_group_id,line_notifications_enabled')
+        const runtime = await db.from('shop_oa_runtime').select('shop_name,line_oa_token,admin_group_id,membership_notice_recipient_uid,line_notifications_enabled')
           .eq('shop_id', shopId).maybeSingle();
         if (runtime.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
         const settings = runtime.data;
-        const recipient = settings?.admin_group_id;
-        if (!settings?.line_oa_token || settings.line_notifications_enabled === false ||
-            !/^C[0-9a-f]{32}$/i.test(recipient || '')) fail('TABLE_REPORT_LINE_NOT_READY', 409);
+        const groupId = settings?.admin_group_id?.trim() || '';
+        const ownerId = settings?.membership_notice_recipient_uid?.trim() || '';
+        const recipient = groupId || ownerId;
+        const recipientType = groupId ? 'group' : 'owner';
+        const validRecipient = groupId ? /^C[0-9a-f]{32}$/i.test(groupId) : /^U[0-9a-f]{32}$/i.test(ownerId);
+        if (!settings?.line_oa_token || settings.line_notifications_enabled === false || !validRecipient) {
+          fail('TABLE_REPORT_LINE_NOT_READY', 409);
+        }
         const result = await db.rpc('daily_group_finance_report', { p_shop: shopId, p_day: input.day });
         if (result.error || !result.data) fail('TABLE_REPORT_UNAVAILABLE', 500);
         const report = dailyFinanceFlex(input.day, settings.shop_name || shopId, result.data);
@@ -748,7 +757,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           signal: AbortSignal.timeout(8000),
         });
         if (!sent.ok && !(sent.status === 409 && sent.headers.has('x-line-accepted-request-id'))) fail('TABLE_REPORT_LINE_FAILED', 502);
-        return reply({ ok: true });
+        return reply({ ok: true, recipient_type: recipientType });
       }
       if (input.action === 'table_cash_bet') {
         if (typeof input.table_no !== 'string' || !/^\d{1,8}$/.test(input.table_no) ||

@@ -313,6 +313,7 @@ test('daily report labels cash movements separately from wallet credit and perfo
   return import('data:text/javascript;base64,' + Buffer.from(source).toString('base64')).then(({ dailyFinanceFlex }) => {
     const message = dailyFinanceFlex('2026-11-13', 'บ่อทดสอบ', {
       settled_stake:500, payout:380, pnl:10, cancelled:50, cash_stake:300, cash_in:210, cash_out:80,
+      customer_wallet_liability:652.5, wallet_as_of:'2026-11-13T13:00:00Z',
       credit_in:900, credit_out:300, table_credit_in:40, table_credit_out:20, rounds:3, ended:2, even:1, odd:1, pending:4,
     });
     assert.equal(message.type, 'flex');
@@ -322,5 +323,38 @@ test('daily report labels cash movements separately from wallet credit and perfo
     assert.equal(rows.get('ส่วนต่างก่อนค่าคอมและค่าใช้จ่าย'), '110 บาท');
     assert.equal(rows.get('เงินสดสุทธิจากโต๊ะ'), '130 บาท');
     assert.equal(rows.get('เพิ่มเครดิตบัญชีสมาชิก'), '900 บาท');
+    assert.equal(rows.get('เครดิตรับฝากลูกค้าคงเหลือ (หนี้สินร้าน)'), '652.5 บาท');
   });
+});
+
+test('daily report sends to the owner until a group is configured', async () => {
+  const owner = 'U' + 'a'.repeat(32);
+  const group = 'C' + 'b'.repeat(32);
+  const settings = { shop_name:'บ่อทดสอบ', line_oa_token:'shop-token', membership_notice_recipient_uid:owner };
+  const sent = [];
+  const env = name => ({ LINE_CHANNEL_ID_ADMIN:'admin', SUPABASE_URL:'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY:'secret' })[name];
+  const db = {
+    from(table) {
+      const row = { users:{ role:'Admin', status:'Active' }, shops:{ status:'active' }, shop_oa_runtime:settings }[table];
+      const query = { select:()=>query, eq:()=>query, maybeSingle:async()=>({ data:row }) };
+      return query;
+    },
+    async rpc(name,args) {
+      assert.equal(name,'daily_group_finance_report');
+      assert.deepEqual(args,{ p_shop:'SHOP_001', p_day:'2026-11-13' });
+      return { data:{ customer_wallet_liability:500, wallet_as_of:'2026-11-13T13:00:00Z' } };
+    },
+  };
+  const handler = makeHandler({ env, createDb:()=>db, fetcher:async (url,options) => {
+    if (url.includes('/verify')) return Response.json({ sub:owner, aud:'admin', exp:Date.now()/1000+60 });
+    sent.push(JSON.parse(options.body).to);
+    return new Response();
+  } });
+  const send = () => handler(request({ action:'table_send_cash_report',day:'2026-11-13',delivery_id:'97b30417-a83c-4825-97da-16132977b4b3' }));
+  assert.equal((await (await send()).json()).recipient_type,'owner');
+  settings.admin_group_id = group;
+  assert.equal((await (await send()).json()).recipient_type,'group');
+  settings.admin_group_id = 'invalid';
+  assert.equal((await send()).status,409);
+  assert.deepEqual(sent,[owner,group]);
 });

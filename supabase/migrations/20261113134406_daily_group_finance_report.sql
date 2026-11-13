@@ -28,14 +28,20 @@ returns jsonb language sql stable set search_path = '' as $$
       coalesce(sum(t.amount) filter (where t.target_type='table' and t.cash_table_no is null and t.type='withdraw'),0) as table_credit_out
     from public.transactions t cross join bounds
     where t.shop_id=p_shop and t.created_at>=starts and t.created_at<ends
+  ), wallet as (
+    -- Include balances still owed on inactive accounts. Backer withdrawals use backer_wallet.
+    select coalesce(sum(u.credit_balance),0) as customer_wallet_liability,
+      statement_timestamp() as wallet_as_of
+    from public.users u
+    where u.shop_id=p_shop and u.role is distinct from 'Backer' and u.credit_balance>0
   ), stats as (
     select count(*) as rounds, count(*) filter (where status='Ended') as ended,
       count(*) filter (where status='Ended' and result='คู่') as even,
       count(*) filter (where status='Ended' and result='คี่') as odd
     from day_rounds
   )
-  select to_jsonb(play) || to_jsonb(backer) || to_jsonb(movements) || to_jsonb(stats)
-  from play cross join backer cross join movements cross join stats;
+  select to_jsonb(play) || to_jsonb(backer) || to_jsonb(movements) || to_jsonb(stats) || to_jsonb(wallet)
+  from play cross join backer cross join movements cross join stats cross join wallet;
 $$;
 
 revoke all on function public.daily_group_finance_report(text,date) from public,anon,authenticated;
