@@ -643,6 +643,14 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (shop.error) fail('DATABASE_ERROR', 500);
         if (String(shop.data?.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
 
+        if (input.action === 'player_profile' && typeof input.referral_member_id === 'string'
+            && /^M[0-9]{4,19}$/.test(input.referral_member_id)) {
+          const referral = await db.rpc('claim_daily_player_referral', {
+            p_shop: shopId, p_player: claims.sub, p_member: input.referral_member_id,
+          });
+          if (referral.error) fail('REFERRAL_UNAVAILABLE', 503);
+        }
+
         if (input.action === 'promoter_profile') {
           const promoter = await db.from('users').select('uid,member_id,display_name,credit_balance,commission_balance')
             .eq('shop_id', shopId).eq('uid', claims.sub).eq('role', 'Promoter').eq('status', 'Active').maybeSingle();

@@ -495,14 +495,6 @@
             cashTableQr = { table_no: userTableNo, table_day: qrDate, table_token: tableToken };
           }
         }
-        if (urlParams.has('ref')) {
-          const referrer = parseMemberCode(currentShopId, urlParams.get('ref'));
-          try {
-            if (referrer) sessionStorage.setItem('referrer_id:' + currentShopId, referrer);
-            else sessionStorage.removeItem('referrer_id:' + currentShopId);
-          } catch { /* Storage availability must not block access. */ }
-        }
-
         // The server verifies the LINE ID token. Profile data only decorates the UI.
         try {
           const claims = liff.getDecodedIDToken();
@@ -517,7 +509,7 @@
         entry.hidden = true;
         document.getElementById('player-main').hidden = false;
         void loadPlayerEntry();
-        await authenticateUser();
+        await authenticateUser(parseMemberCode(currentShopId, urlParams.get('ref')));
         if (currentUserStatus === 'Active' && readDepositDraft()) openTopupModal();
         startCountdownTimer();
       } catch {
@@ -561,12 +553,7 @@
       for (const id of ['bettingView', 'historyView', 'statsView']) document.getElementById(id).classList.add('hidden');
       document.getElementById('bottomNavMenu').style.display = 'none';
       const apply = document.getElementById('membershipApplyLink');
-      const applyParams = new URLSearchParams({ shop: currentShopId });
-      const ref = parseMemberCode(currentShopId, playerEntryParams().get('ref'));
-      let savedRef = ref;
-      try { savedRef ||= sessionStorage.getItem('referrer_id:' + currentShopId); } catch { /* Optional storage. */ }
-      if (savedRef) applyParams.set('ref', formatMemberCode(currentShopId, savedRef));
-      apply.href = 'staging/member-apply.html?' + applyParams;
+      apply.href = 'staging/member-apply.html?shop=' + encodeURIComponent(currentShopId);
       apply.classList.toggle('hidden', !canApply);
     }
 
@@ -614,9 +601,25 @@
     const ownerNoticeStatus = document.getElementById('retryOwnerNoticeResult');
     ownerNoticeButton.onclick = () => syncOwnerNotice(ownerNoticeButton, ownerNoticeStatus, 'retry_notice');
 
-    async function authenticateUser() {
+    async function authenticateUser(referralMemberId) {
       try {
-        const result = await readPlayerProfile();
+        const result = await readPlayerProfile('player_profile', referralMemberId
+          ? { referral_member_id: referralMemberId } : {});
+        if (referralMemberId) {
+          const clean = new URL(location.href);
+          clean.searchParams.delete('ref');
+          const liffState = clean.searchParams.get('liff.state');
+          if (liffState) {
+            try {
+              const restored = new URL(liffState, clean.origin);
+              if (restored.origin === clean.origin && restored.searchParams.has('ref')) {
+                restored.searchParams.delete('ref');
+                clean.searchParams.set('liff.state', restored.pathname + restored.search + restored.hash);
+              }
+            } catch { /* The direct referral parameter was already removed. */ }
+          }
+          history.replaceState(history.state, '', clean);
+        }
         if (result.shop_id) {
           currentShopId = result.shop_id;
           updatePlayerPageTitle();

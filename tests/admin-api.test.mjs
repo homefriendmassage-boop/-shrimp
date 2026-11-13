@@ -73,6 +73,31 @@ function request(payload, headers = {}) {
     body: JSON.stringify({ action: 'access', shop_id: 'SHOP_001', ...payload })
   });
 }
+test('referral is claimed with verified LINE identity and the current shop', async () => {
+  const claims = [];
+  const env = name => ({ LINE_CHANNEL_ID_PLAYER: 'player', SUPABASE_URL: 'https://example.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'server-only' })[name];
+  const handler = makeHandler({
+    env,
+    fetcher: async () => Response.json({ sub: 'verified-player', aud: 'player', exp: Date.now() / 1000 + 60 }),
+    createDb: () => ({
+      from(table) {
+        const chain = { select: () => chain, eq: () => chain, maybeSingle: async () => ({
+          data: table === 'shops' ? { status: 'active' } : null,
+        }) };
+        return chain;
+      },
+      rpc: async (name, args) => { claims.push({ name, args }); return { error: null }; },
+    }),
+  });
+  const payload = { action: 'player_profile', referral_member_id: 'M0001', uid: 'spoofed-player' };
+  assert.equal((await handler(request(payload))).status, 200);
+  assert.equal((await handler(request({ ...payload, referral_member_id: undefined }))).status, 200);
+  assert.deepEqual(claims, [{
+    name: 'claim_daily_player_referral', args: { p_shop: 'SHOP_001', p_player: 'verified-player', p_member: 'M0001' },
+  }]);
+});
+
 test('server uses verified LINE identity and returns active staff', async () => {
   const { handler, queries } = setup();
   const response = await handler(request({ uid: 'attacker', role: 'Superadmin' }));
