@@ -156,13 +156,14 @@
         <label style="display: block; color: var(--text-muted); font-size: 0.9rem; margin-bottom: 5px;">ประเภทรายการ</label>
         <select id="selTransactionType" style="width: 100%; box-sizing: border-box; background: #0f111a; border: 1px solid var(--card-border); color: white; padding: 12px; border-radius: 8px; font-family: 'Kanit'; font-size: 1rem; outline: none;" onchange="toggleOptions()">
           <option value="ฝากเงิน">ฝากเงิน (เติมเครดิต)</option>
-          <option value="ถอนเงิน">ถอนเงิน (คืนเครดิต)</option>
+          <option value="ถอนเงิน">ถอนเงินจาก Wallet</option>
+          <option value="ถอนโบนัส">ถอนจากกระเป๋าโบนัส</option>
         </select>
       </div>
 
       <div style="margin-bottom: 15px;">
         <label style="display: block; color: var(--text-muted); font-size: 0.9rem; margin-bottom: 5px;">จำนวนเงิน</label>
-        <input type="number" id="txtTopupAmount" inputmode="decimal" min="0.01" step="0.01" oninput="renderDepositPayment(true)" placeholder="ระบุจำนวนเงิน" style="width: 100%; box-sizing: border-box; background: #0f111a; border: 1px solid var(--card-border); color: white; padding: 12px; border-radius: 8px; font-family: 'Kanit'; font-size: 1.2rem; outline: none;">
+        <input type="number" id="txtTopupAmount" inputmode="decimal" min="100" step="0.01" oninput="renderDepositPayment(true); renderBonusWithdrawal()" placeholder="ระบุจำนวนเงิน" style="width: 100%; box-sizing: border-box; background: #0f111a; border: 1px solid var(--card-border); color: white; padding: 12px; border-radius: 8px; font-family: 'Kanit'; font-size: 1.2rem; outline: none;">
       </div>
 
       <div style="margin-bottom: 15px;" id="paymentMethodSection">
@@ -191,6 +192,7 @@
         <small id="slipPreviewStatus" role="status" style="color: var(--text-muted);"></small>
       </div>
 
+      <p id="bonusWithdrawalSummary" hidden role="status"></p>
       <div id="withdrawOptionsSection" style="display:none;color:var(--text-muted);margin-bottom:16px;">
         <label for="withdrawBank">ธนาคารรับเงิน</label>
         <select id="withdrawBank" style="display:block;width:100%;padding:10px;margin:4px 0 10px;font:inherit"><option value="">เลือกธนาคาร</option></select>
@@ -237,6 +239,7 @@
       <div class="header-box" style="text-align: right; display: flex; flex-direction: column; justify-content: center;">
         <div class="label" id="creditLabel">Wallet ส่วนตัว</div>
         <div class="value val-green" id="creditDisplay">฿0</div>
+        <small id="bonusWalletBalance" hidden></small>
         <small id="playerTableRound" hidden></small>
         <small id="playerSyncStatus" role="status" style="display:block;color:var(--text-muted)"></small>
         <button id="playerWalletAction" onclick="openTopupModal()" style="margin-top: 5px; background: var(--blue-main); border: none; color: white; border-radius: 6px; padding: 4px; font-size: 0.75rem; font-family: 'Kanit'; cursor: pointer;">
@@ -770,6 +773,7 @@
         document.getElementById('memberIdDisplay').textContent = formatMemberCode(currentShopId, memberId);
         document.getElementById('tableDisplay').textContent = currentDisplayName || 'บัญชีส่วนตัว';
         document.getElementById('creditDisplay').textContent = `฿${(user.credit_balance || 0).toLocaleString()}`;
+        displayBonusWallet(user.commission_balance);
         if (currentUserRole === 'Backer') document.getElementById('btnBackerMenu').style.display = 'block';
         if (currentUserRole === 'Promoter') document.getElementById('btnPromoterMenu').style.display = 'block';
         document.getElementById('bettingView').classList.remove('hidden');
@@ -1019,6 +1023,7 @@
         BET_NOT_FOUND: 'ไม่พบบิลส่วนตัวของคุณในร้านนี้',
         BET_INVALID: 'กรุณาตรวจสอบข้อมูลและยอดที่กรอก',
       };
+      if (error.message === 'BET_MINIMUM') return 'ยอดเล่นขั้นต่ำ 100 บาทต่อบิล';
       if (error.message === 'BET_LIMIT') return 'ยอดต้องอยู่ระหว่าง ฿' + error.details.min + ' ถึง ฿' + error.details.max;
       return messages[error.message] || 'ยังยืนยันผลรายการไม่ได้ กรุณาตรวจประวัติหรือลองอีกครั้ง';
     }
@@ -1034,8 +1039,8 @@
       const field = document.getElementById('txtAmount');
       const amount = field.value.trim();
       if (!selectedBetType) { alert('กรุณาเลือก คู่ หรือ คี่'); return; }
-      if (!/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) {
-        alert('กรุณากรอกยอดให้ถูกต้อง ทศนิยมไม่เกิน 2 ตำแหน่ง');
+      if (!/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || Number(amount) < 100) {
+        alert('ยอดเล่นขั้นต่ำ 100 บาทต่อบิล ทศนิยมไม่เกิน 2 ตำแหน่ง');
         return;
       }
       const details = {
@@ -1114,6 +1119,31 @@
     // =====================================
     let depositReceiver = null;
     let withdrawalRetry = null;
+    let bonusBalance = 0;
+    const moneyTHB = amount => Number(amount).toLocaleString('th-TH', {
+      style: 'currency', currency: 'THB',
+    });
+
+    function displayBonusWallet(balance) {
+      bonusBalance = Number(balance ?? 0);
+      const output = document.getElementById('bonusWalletBalance');
+      output.hidden = currentUserRole !== 'Promoter' && bonusBalance <= 0;
+      output.textContent = 'กระเป๋าโบนัส ' + moneyTHB(bonusBalance);
+    }
+
+    function renderBonusWithdrawal() {
+      const summary = document.getElementById('bonusWithdrawalSummary');
+      summary.hidden = document.getElementById('selTransactionType').value !== 'ถอนโบนัส';
+      if (summary.hidden) return;
+      const cents = Math.round(Number(document.getElementById('txtTopupAmount').value) * 100);
+      if (cents < 10000 || !Number.isFinite(cents)) {
+        summary.textContent = 'ถอนขั้นต่ำ ฿100 · ค่าบริการ 10% · โบนัสคงเหลือ ' + moneyTHB(bonusBalance);
+        return;
+      }
+      const fee = Math.round(cents / 10);
+      summary.textContent = 'รับ ' + moneyTHB(cents / 100) + ' · ค่าบริการ ' + moneyTHB(fee / 100)
+        + ' · หักโบนัสรวม ' + moneyTHB((cents + fee) / 100);
+    }
     const depositDraftKey = () => 'shop-deposit:' + currentShopId + ':' + currentLineUserId;
 
     function readDepositDraft() {
@@ -1134,7 +1164,7 @@
       const transfer = document.getElementById('selTransactionType').value === 'ฝากเงิน' &&
         document.getElementById('selTopupMethod').value === 'โอนเงิน';
       const amount = document.getElementById('txtTopupAmount').value;
-      const valid = /^\d{1,9}(\.\d{1,2})?$/.test(amount) && Number(amount) > 0;
+      const valid = /^\d{1,9}(\.\d{1,2})?$/.test(amount) && Number(amount) >= 100;
       const block = document.getElementById('depositPayment');
       const feedback = document.getElementById('depositPaymentStatus');
       block.hidden = !transfer || !depositReceiver || !valid;
@@ -1191,9 +1221,10 @@
       return ({
         LINE_OA_LINK_REQUIRED: 'กรุณาผูกบัญชี LINE OA ของร้านเพื่อรับข้อความยืนยันถอนเงิน',
         LINE_CONFIRM_UNAVAILABLE: 'ส่งข้อความยืนยันไม่สำเร็จ กรุณาลองใหม่',
+        WALLET_MINIMUM: 'ฝากหรือถอนขั้นต่ำ 100 บาทต่อรายการ',
         WITHDRAWAL_EXPIRED: 'ลิงก์ยืนยันหมดอายุ กรุณาส่งคำขอถอนใหม่',
         WITHDRAWAL_INVALID: 'ข้อมูลบัญชีรับเงินหรือลิงก์ยืนยันไม่ถูกต้อง',
-        WALLET_INSUFFICIENT_BALANCE: 'ยอด Wallet ไม่พอสำหรับรายการถอน',
+        WALLET_INSUFFICIENT_BALANCE: 'ยอดเงินในกระเป๋าที่เลือกไม่พอรวมค่าบริการ',
       })[error.message] || error.message;
     }
 
@@ -1224,6 +1255,7 @@
       status.textContent = 'กำลังโหลดรายการ…';
       try {
         const result = await readPlayerProfile('player_profile', { include_wallet_requests: true });
+        displayBonusWallet(result.bonus_balance);
         if (!Array.isArray(result.wallet_requests)) throw new Error('WALLET_REQUESTS_UNAVAILABLE');
         const labels = new Map([['Pending', 'รอตรวจ'], ['Approved', 'อนุมัติแล้ว'], ['Rejected', 'ปฏิเสธ']]);
         for (const request of result.wallet_requests) {
@@ -1278,12 +1310,14 @@
     
     function toggleOptions() {
       const type = document.getElementById('selTransactionType').value; const method = document.getElementById('selTopupMethod').value;
-      if (type === 'ถอนเงิน') { document.getElementById('withdrawOptionsSection').style.display = 'block'; document.getElementById('paymentMethodSection').style.display = 'none'; } 
+      const withdrawal = type !== 'ฝากเงิน';
+      if (withdrawal) { document.getElementById('withdrawOptionsSection').style.display = 'block'; document.getElementById('paymentMethodSection').style.display = 'none'; }
       else { document.getElementById('withdrawOptionsSection').style.display = 'none'; document.getElementById('paymentMethodSection').style.display = 'block'; }
       if (type === 'ฝากเงิน' && method === 'โอนเงิน') document.getElementById('slipUploadSection').style.display = 'block';
       else document.getElementById('slipUploadSection').style.display = 'none';
-      document.getElementById('btnSubmitTopup').textContent = type === 'ถอนเงิน' ? 'ส่งไปยืนยันใน LINE' : 'ส่งแจ้งแอดมิน';
+      document.getElementById('btnSubmitTopup').textContent = type !== 'ฝากเงิน' ? 'ส่งไปยืนยันใน LINE' : 'ส่งแจ้งแอดมิน';
       renderDepositPayment(true);
+      renderBonusWithdrawal();
     }
 
     // ฟังก์ชันอัปโหลดรูปสลิปขึ้น Supabase Storage (รองรับ Multitenant)
@@ -1353,13 +1387,13 @@
     async function submitTopupRequest() {
       const type = document.getElementById('selTransactionType').value;
       const amount = document.getElementById('txtTopupAmount').value;
-      const method = type === 'ถอนเงิน' ? 'โอนเงิน' : document.getElementById('selTopupMethod').value;
+      const method = type !== 'ฝากเงิน' ? 'โอนเงิน' : document.getElementById('selTopupMethod').value;
       const btnSubmit = document.getElementById('btnSubmitTopup');
       
       if (btnSubmit.disabled) return;
       const amountValue = Number(amount);
-      if (!Number.isFinite(amountValue) || amountValue <= 0) {
-        alert('ระบุจำนวนเงินให้ถูกต้อง');
+      if (!/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || amountValue < 100) {
+        alert('ฝากหรือถอนขั้นต่ำ 100 บาทต่อรายการ');
         return;
       }
 
@@ -1374,14 +1408,15 @@
       btnSubmit.textContent = slipFile ? 'กำลังอัปโหลดสลิป…' : 'กำลังส่งข้อมูล…';
 
       try {
-         if (type === 'ถอนเงิน') {
+         if (type !== 'ฝากเงิน') {
+           const wallet_kind = type === 'ถอนโบนัส' ? 'bonus' : 'cash';
            const bank_code = document.getElementById('withdrawBank').value;
            const bank_number = document.getElementById('withdrawBankNumber').value.replace(/[ -]/g, '');
            if (!bank_code || !/^\d{6,20}$/.test(bank_number)) throw new Error('WITHDRAWAL_INVALID');
-           const key = [currentShopId, amount, bank_code, bank_number].join(':');
+           const key = [currentShopId, wallet_kind, amount, bank_code, bank_number].join(':');
            if (withdrawalRetry?.key !== key) withdrawalRetry = { key, id: crypto.randomUUID() };
            await shopPaymentRequest(currentShopId, 'withdraw_start', {
-             amount, bank_code, bank_number, delivery_key: withdrawalRetry.id, shop_login: useShopLogin,
+             amount, wallet_kind, bank_code, bank_number, delivery_key: withdrawalRetry.id, shop_login: useShopLogin,
            });
            alert('ส่งข้อความแล้ว กรุณากดยืนยันในแชต LINE ของร้านเพื่อเข้าคิวถอนเงิน');
            closeTopupModal();
@@ -1403,7 +1438,7 @@
           console.error("Supabase Insert Error:", error);
           alert('ทำรายการไม่สำเร็จ: ' + walletPaymentError(error));
           btnSubmit.disabled = false; 
-          btnSubmit.textContent = type === 'ถอนเงิน' ? 'ส่งไปยืนยันใน LINE' : 'ส่งแจ้งแอดมิน';
+          btnSubmit.textContent = type !== 'ฝากเงิน' ? 'ส่งไปยืนยันใน LINE' : 'ส่งแจ้งแอดมิน';
       }
     }
 

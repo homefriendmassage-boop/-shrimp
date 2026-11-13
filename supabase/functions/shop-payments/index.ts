@@ -96,7 +96,7 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
         uid = mapped.data;
       }
       const [member, store] = await Promise.all([
-        db.from('users').select('role,status,member_id,credit_balance,backer_wallet').eq('shop_id', shop).eq('uid', uid).maybeSingle(),
+        db.from('users').select('role,status,member_id,credit_balance,commission_balance,backer_wallet').eq('shop_id', shop).eq('uid', uid).maybeSingle(),
         db.from('shops').select('status').eq('shop_id', shop).maybeSingle(),
       ]);
       if (member.error || store.error) return fail('PAYMENTS_UNAVAILABLE', 503);
@@ -179,10 +179,17 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
         return reply({ ok: true, code });
       }
       const amount = input.amount;
-      if (typeof amount !== 'string' || !/^\d{1,9}(\.\d{1,2})?$/.test(amount) || Number(amount) <= 0 ||
+      const walletKind = input.wallet_kind ?? 'cash';
+      if (typeof amount !== 'string' || !/^\d{1,9}(\.\d{1,2})?$/.test(amount) ||
+          !['cash','bonus'].includes(walletKind) ||
           typeof bank !== 'string' || !/^\d{3}$/.test(bank) || !/^\d{6,20}$/.test(number)) return fail('WITHDRAWAL_INVALID');
-      const balance = member.data.role === 'Backer' ? member.data.backer_wallet : member.data.credit_balance;
-      if (Number(amount) > Number(balance || 0)) return fail('WALLET_INSUFFICIENT_BALANCE', 409);
+      if (Number(amount) < 100) return fail('WALLET_MINIMUM');
+      const bonus = walletKind === 'bonus';
+      const amountCents = Math.round(Number(amount) * 100);
+      const feeCents = bonus ? Math.round(amountCents / 10) : 0;
+      const balance = bonus ? member.data.commission_balance
+        : member.data.role === 'Backer' ? member.data.backer_wallet : member.data.credit_balance;
+      if (amountCents + feeCents > Math.round(Number(balance || 0) * 100)) return fail('WALLET_INSUFFICIENT_BALANCE', 409);
       const [target, oa] = await Promise.all([
         db.rpc('resolve_shop_oa_recipient', { p_shop: shop, p_member: uid }),
         db.from('shop_oa_runtime').select('line_oa_token').eq('shop_id', shop).maybeSingle(),
@@ -191,13 +198,13 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
       const deliveryKey = input.delivery_key;
       if (typeof deliveryKey !== 'string' || !uuid.test(deliveryKey)) return fail('WITHDRAWAL_INVALID');
       const draft = await db.from('wallet_withdrawal_confirmations').upsert({
-        delivery_key: deliveryKey, shop_id: shop, uid, amount, bank_code: bank, bank_number: number,
+        delivery_key: deliveryKey, shop_id: shop, uid, amount, bank_code: bank, bank_number: number, wallet_kind: walletKind,
       }, { onConflict: 'shop_id,delivery_key', ignoreDuplicates: true });
       if (draft.error) return fail('PAYMENTS_UNAVAILABLE', 503);
-      const stored = await db.from('wallet_withdrawal_confirmations').select('id,amount,bank_code,bank_number,expires_at')
+      const stored = await db.from('wallet_withdrawal_confirmations').select('id,amount,bank_code,bank_number,expires_at,wallet_kind')
         .eq('delivery_key', deliveryKey).eq('shop_id', shop).eq('uid', uid).maybeSingle();
       if (stored.error || Number(stored.data?.amount) !== Number(amount) ||
-          stored.data?.bank_code !== bank || stored.data?.bank_number !== number ||
+          stored.data?.wallet_kind !== walletKind || stored.data?.bank_code !== bank || stored.data?.bank_number !== number ||
           !(Date.parse(stored.data.expires_at) > Date.now())) return fail('WITHDRAWAL_INVALID', 409);
       const link = new URL('https://liff.line.me/' + (env('MEMBERSHIP_LIFF_ID_PLAYER') || '2012454809-UFGeUGbW'));
       link.searchParams.set('shop', shop);
@@ -210,6 +217,8 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
             type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
               { type: 'text', text: 'ยืนยันคำขอถอนเงิน', weight: 'bold', size: 'lg' },
               { type: 'text', text: 'โปรดตรวจสอบยอดถอน ฿' + total + ' เข้าบัญชีเลขที่ ' + number, wrap: true },
+              ...(bonus ? [{ type: 'text', text: 'ค่าบริการ ฿' + (feeCents / 100).toFixed(2) +
+                ' · หักโบนัสรวม ฿' + ((amountCents + feeCents) / 100).toFixed(2), wrap: true }] : []),
               { type: 'text', text: 'กดยืนยันเพื่อส่งเข้าคิวรอโอนเงิน', wrap: true },
             ] }, footer: { type: 'box', layout: 'vertical', contents: [
               { type: 'button', style: 'primary', action: { type: 'uri', label: 'ยืนยันถอนเงิน', uri: link.href } },

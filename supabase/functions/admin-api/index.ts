@@ -221,6 +221,7 @@ export function dailyFinanceFlex(day, shopName, data, preparedBy) {
   });
   const margin = Number(data.settled_stake) - Number(data.payout) - Number(data.pnl);
   const referral = Number(data.referral_commission ?? 0);
+  const bonusFee = Number(data.bonus_fee_revenue ?? 0);
   const netCash = Number(data.cash_in) - Number(data.cash_out);
   const title = 'รายงานสรุปยอดประจำวัน';
   const sections = [
@@ -229,12 +230,14 @@ export function dailyFinanceFlex(day, shopName, data, preparedBy) {
       row('จ่ายผู้ชนะ', signedMoney(-Number(data.payout)), movementColor(-Number(data.payout))),
       row('ผลสุทธิผู้รับจบ', signedMoney(-Number(data.pnl)), movementColor(-Number(data.pnl))),
       row('ค่าน้ำสุทธิก่อนค่าคอมและค่าใช้จ่าย', signedMoney(margin), movementColor(margin)),
-      row('ค่าแนะนำที่เข้า Wallet', signedMoney(-referral), movementColor(-referral)),
+      row('ค่าแนะนำที่เข้าโบนัส', signedMoney(-referral), movementColor(-referral)),
       row('ค่าน้ำหลังหักค่าแนะนำ ก่อนค่าใช้จ่าย', signedMoney(margin - referral), movementColor(margin - referral), true),
     ]),
     section('การเงินบ่อ', [
       row('รับเงินสดจากโต๊ะ', signedMoney(Number(data.cash_in)), color.green),
       row('จ่ายเงินสดให้โต๊ะ', signedMoney(-Number(data.cash_out)), color.red),
+      row('ค่าบริการถอนโบนัส (รายได้ร้าน)', signedMoney(bonusFee), movementColor(bonusFee)),
+      row('โอนจ่ายโบนัส', money(data.bonus_withdrawn ?? 0)),
       row('เงินสดสุทธิจากโต๊ะ', signedMoney(netCash), movementColor(netCash), true),
       row('เพิ่มเครดิตสมาชิก', signedMoney(Number(data.credit_in)), color.green),
       row('ลดเครดิตสมาชิก', signedMoney(-Number(data.credit_out)), color.red),
@@ -242,6 +245,7 @@ export function dailyFinanceFlex(day, shopName, data, preparedBy) {
     ]),
     section('ยอดคงเหลือใน Wallet', [
       row('เครดิตลูกค้าคงเหลือ (หนี้สินร้าน)', money(data.customer_wallet_liability), color.amber, true),
+      row('โบนัสลูกค้าคงเหลือ (หนี้สินร้าน)', money(data.bonus_wallet_liability ?? 0), color.amber),
       text('ยอดปัจจุบัน ณ ' + snapshot + ' น.', { color: color.muted, size: 'xs' }),
     ]),
     section('สถิติยอดออนไลน์', [
@@ -659,7 +663,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           return reply({ ok: true, promoter: promoter.data });
         }
 
-        const profile = await db.from('users').select(input.action === 'wallet_request' ? 'uid,role,status,member_id,credit_balance,display_name' : 'uid,role,status,member_id,credit_balance')
+        const profile = await db.from('users').select(input.action === 'wallet_request' ? 'uid,role,status,member_id,credit_balance,commission_balance,display_name' : 'uid,role,status,member_id,credit_balance,commission_balance')
           .eq('uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (profile.error) fail('DATABASE_ERROR', 500);
         const staff = profile.data?.status === 'Active' && ['Admin', 'Superadmin'].includes(profile.data.role);
@@ -705,7 +709,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           const result = table === undefined
             ? await db.rpc('place_player_private_bet', params)
             : await db.rpc('place_player_cash_table_bet', { ...params, p_table: table, p_day: input.table_day, p_staff: false });
-          if (result.error) fail('BET_UNAVAILABLE', 500);
+          if (result.error?.message === 'BET_MINIMUM') return reply({ ok: false, code: 'BET_MINIMUM' }, 409);
+        if (result.error) fail('BET_UNAVAILABLE', 500);
           if (result.data?.code === 'BET_LIMIT') return reply({ ok: false, ...result.data }, 409);
           if (result.data?.code !== 'PLACED') fail(result.data?.code || 'BET_UNAVAILABLE', 409);
           return reply({ ok: true, bet_id: result.data.bet_id });
@@ -715,7 +720,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           const { type, method, amount, slip_url: slip } = input;
           if (!['ฝากเงิน', 'ถอนเงิน'].includes(type) ||
               !['เงินสด', 'โอนเงิน'].includes(method) || (type === 'ถอนเงิน' && method !== 'โอนเงิน') ||
-              typeof amount !== 'string' || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) {
+              typeof amount !== 'string' || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || Number(amount) < 100) {
             fail('WALLET_REQUEST_INVALID');
           }
           const transfer = type === 'ฝากเงิน' && method === 'โอนเงิน';
@@ -770,7 +775,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           }));
           const history = [...requests.data, ...automatic, ...commission]
             .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)).slice(0, 10);
-          return reply({ ok: true, wallet_requests: history });
+          return reply({ ok: true, wallet_requests: history, bonus_balance: profile.data.commission_balance });
         }
         return reply({ ok: true, staff, state: 'Approved', player: profile.data, live_enabled: shop.data.live_enabled === true });
       }
@@ -836,6 +841,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           p_shop: shopId, p_uid: claims.sub, p_round: input.round_id, p_id: input.bet_id, p_type: input.bet_type,
           p_amount: input.amount, p_table: input.table_no, p_day: tableDay(), p_staff: true,
         });
+        if (result.error?.message === 'BET_MINIMUM') return reply({ ok: false, code: 'BET_MINIMUM' }, 409);
         if (result.error) fail('BET_UNAVAILABLE', 500);
         if (result.data?.code !== 'PLACED') fail(result.data?.code || 'BET_UNAVAILABLE', 409);
         return reply({ ok: true, bet_id: result.data.bet_id });
@@ -932,7 +938,11 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (changingBet) query = query.eq('status', 'Active');
       const walletDecision = spec.table === 'topup_requests' && spec.operation === 'update' &&
         ['Approved', 'Rejected'].includes(input.values?.status);
-      if (walletDecision) query = query.eq('status', 'Pending').select(input.returning ? spec.columns : 'uid,type,amount,status');
+      if (walletDecision) {
+        query = query.eq('status', 'Pending');
+        if (input.values.status === 'Approved') query = query.neq('type', 'ถอนโบนัส');
+        query = query.select(input.returning ? spec.columns : 'uid,type,amount,status');
+      }
       else if (changingBet) query = query.select(spec.columns);
       else if (spec.operation !== 'select' && input.returning) query = query.select(spec.columns);
       for (const o of spec.orders) query = query.order(o.column, { ascending: o.ascending });
