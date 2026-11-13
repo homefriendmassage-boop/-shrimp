@@ -1164,7 +1164,9 @@
           const destination = accounts.get(row.dataset.walletRequestId);
           if (!destination) continue;
           const details = document.createElement('div');
-          row.dataset.bankDisplay = 'ธนาคาร' + paymentBankName(destination.bank_code) + ' · ' + destination.bank_number;
+          const method = destination.destination_kind === 'promptpay' ? 'พร้อมเพย์'
+            : 'ธนาคาร' + paymentBankName(destination.bank_code);
+          row.dataset.bankDisplay = [method, destination.bank_number, destination.recipient_name].filter(Boolean).join(' · ');
           details.textContent = 'โอนเข้า' + row.dataset.bankDisplay;
           row.append(details);
         }

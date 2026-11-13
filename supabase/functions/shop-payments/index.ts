@@ -34,7 +34,7 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
   }
 
   async function sendWithdrawalReceipt(db, shop, uid, id) {
-    const draft = await db.from('wallet_withdrawal_confirmations').select('amount,chat_receipt_sent_at')
+    const draft = await db.from('wallet_withdrawal_confirmations').select('amount,delivery_key,chat_receipt_sent_at')
       .eq('id', id).eq('shop_id', shop).eq('uid', uid).maybeSingle();
     if (draft.error || !draft.data) return 'RECEIPT_PENDING';
     if (draft.data.chat_receipt_sent_at) return 'ALREADY_QUEUED';
@@ -46,7 +46,7 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
     const amount = Number(draft.data.amount).toFixed(2);
     const sent = await fetcher('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + oa.data.line_oa_token, 'Content-Type': 'application/json', 'X-Line-Retry-Key': id },
+      headers: { Authorization: 'Bearer ' + oa.data.line_oa_token, 'Content-Type': 'application/json', 'X-Line-Retry-Key': draft.data.delivery_key },
       body: JSON.stringify({ to: target.data, messages: [{
         type: 'text', text: 'ยืนยันคำขอถอนเงิน ฿' + amount + ' แล้ว\nโปรดรอร้านโอนเงินเข้าบัญชีที่แจ้งไว้',
       }] }),
@@ -56,6 +56,51 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
     await db.from('wallet_withdrawal_confirmations').update({ chat_receipt_sent_at: new Date().toISOString() })
       .eq('id', id).eq('shop_id', shop).eq('uid', uid).is('chat_receipt_sent_at', null);
     return 'QUEUED';
+  }
+
+  async function sendBonusStaffNotice(db, shop, uid, id) {
+    const draft = await db.from('wallet_withdrawal_confirmations')
+      .select('amount,wallet_kind,request_id,staff_notice_key,staff_notice_sent_at')
+      .eq('id', id).eq('shop_id', shop).eq('uid', uid).maybeSingle();
+    if (draft.error || !draft.data) return false;
+    const item = draft.data;
+    if (item.wallet_kind !== 'bonus' || item.staff_notice_sent_at) return true;
+    if (!item.request_id) return false;
+    const settings = await db.from('shop_oa_runtime')
+      .select('line_oa_token,admin_group_id,membership_notice_recipient_uid,line_notifications_enabled,liff_id_admin')
+      .eq('shop_id', shop).maybeSingle();
+    if (settings.error || !settings.data?.line_oa_token || settings.data.line_notifications_enabled === false) return false;
+    const config = settings.data;
+    const target = /^C[0-9a-f]{32}$/i.test(config.admin_group_id || '')
+      ? config.admin_group_id : config.membership_notice_recipient_uid;
+    if (!target || !/^[CU][0-9a-f]{32}$/i.test(target)) return false;
+    const adminLiff = config.liff_id_admin || env('MEMBERSHIP_LIFF_ID_ADMIN') || '2012454809-41EMnP1K';
+    if (!/^\d+-[A-Za-z0-9]+$/.test(adminLiff)) return false;
+    const url = new URL('https://liff.line.me/' + adminLiff);
+    url.search = new URLSearchParams({ shop, tab: 'pending' }).toString();
+    const sent = await fetcher('https://api.line.me/v2/bot/message/push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + config.line_oa_token, 'Content-Type': 'application/json',
+        'X-Line-Retry-Key': item.staff_notice_key },
+      body: JSON.stringify({ to: target, messages: [{
+        type: 'flex', altText: 'คำขอถอนโบนัสผู้แนะนำ', contents: {
+          type: 'bubble',
+          body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+            { type: 'text', text: 'คำขอถอนโบนัสผู้แนะนำ', weight: 'bold', color: '#9D174D', wrap: true },
+            { type: 'text', text: 'ยอดโอน ฿' + Number(item.amount).toFixed(2), size: 'xl', weight: 'bold' },
+            { type: 'text', text: 'คำขอ #' + item.request_id + ' · ดูข้อมูลผู้รับในหน้าจัดการร้าน', wrap: true },
+          ] },
+          footer: { type: 'box', layout: 'vertical', contents: [{
+            type: 'button', style: 'primary', color: '#9D174D',
+            action: { type: 'uri', label: 'เปิดคิวถอนเงิน', uri: url.href },
+          }] },
+        },
+      }] }), signal: AbortSignal.timeout(5000),
+    });
+    if (!sent.ok && !(sent.status === 409 && sent.headers.has('x-line-accepted-request-id'))) return false;
+    await db.from('wallet_withdrawal_confirmations').update({ staff_notice_sent_at: new Date().toISOString() })
+      .eq('id', id).eq('shop_id', shop).eq('uid', uid);
+    return true;
   }
 
   return async request => {
@@ -126,7 +171,7 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
         if (profile.error) return fail('PAYMENTS_UNAVAILABLE', 503);
         return reply({ ok: true, receiver: profile.data });
       }
-      const bank = input.bank_code;
+      const bank = input.destination_kind === 'promptpay' && action === 'withdraw_start' ? '000' : input.bank_code;
       const number = digits(input.bank_number);
       if (action === 'save_settings') {
         const promptpay = digits(input.promptpay);
@@ -146,7 +191,7 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
         if (pending.error) return fail('PAYMENTS_UNAVAILABLE', 503);
         const ids = pending.data.map(item => item.withdrawal_confirmation_id);
         if (!ids.length) return reply({ ok: true, destinations: [] });
-        const found = await db.from('wallet_withdrawal_confirmations').select('request_id,bank_code,bank_number')
+        const found = await db.from('wallet_withdrawal_confirmations').select('request_id,bank_code,bank_number,recipient_name,destination_kind')
           .eq('shop_id', shop).in('id', ids);
         if (found.error) return fail('PAYMENTS_UNAVAILABLE', 503);
         return reply({ ok: true, destinations: found.data });
@@ -175,16 +220,26 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
         if (typeof input.confirmation_id !== 'string' || !uuid.test(input.confirmation_id)) return fail('WITHDRAWAL_INVALID');
         const result = await db.rpc('confirm_wallet_withdrawal', { p_shop: shop, p_uid: uid, p_id: input.confirmation_id });
         if (result.error || result.data !== 'QUEUED') return fail(result.data || 'PAYMENTS_UNAVAILABLE', 409);
-        const code = await sendWithdrawalReceipt(db, shop, uid, input.confirmation_id).catch(() => 'RECEIPT_PENDING');
-        return reply({ ok: true, code });
+        const [code, staffNotified] = await Promise.all([
+          sendWithdrawalReceipt(db, shop, uid, input.confirmation_id).catch(() => 'RECEIPT_PENDING'),
+          sendBonusStaffNotice(db, shop, uid, input.confirmation_id).catch(() => false),
+        ]);
+        return reply({ ok: true, code, staff_notified: staffNotified });
       }
       const amount = input.amount;
       const walletKind = input.wallet_kind ?? 'cash';
-      if (typeof amount !== 'string' || !/^\d{1,9}(\.\d{1,2})?$/.test(amount) ||
-          !['cash','bonus'].includes(walletKind) ||
-          typeof bank !== 'string' || !/^\d{3}$/.test(bank) || !/^\d{6,20}$/.test(number)) return fail('WITHDRAWAL_INVALID');
-      if (Number(amount) < 100) return fail('WALLET_MINIMUM');
       const bonus = walletKind === 'bonus';
+      const destination = input.destination_kind ?? 'bank';
+      const name = typeof input.recipient_name === 'string' ? input.recipient_name.trim() : null;
+      const validDestination = destination === 'promptpay'
+        ? bonus && /^(0\d{9}|\d{13}|\d{15})$/.test(number)
+        : destination === 'bank' && typeof bank === 'string' && bank !== '000'
+          && /^\d{3}$/.test(bank) && /^\d{6,20}$/.test(number);
+      if (typeof amount !== 'string' || !/^\d{1,9}(\.\d{1,2})?$/.test(amount) ||
+          !['cash','bonus'].includes(walletKind) || !validDestination ||
+          (name !== null && (!name || name.length > 120 || /[\r\n]/.test(name))) ||
+          (input.destination_kind != null && !name)) return fail('WITHDRAWAL_INVALID');
+      if (Number(amount) < 100) return fail('WALLET_MINIMUM');
       const amountCents = Math.round(Number(amount) * 100);
       const feeCents = bonus ? Math.round(amountCents / 10) : 0;
       const balance = bonus ? member.data.commission_balance
@@ -199,12 +254,14 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
       if (typeof deliveryKey !== 'string' || !uuid.test(deliveryKey)) return fail('WITHDRAWAL_INVALID');
       const draft = await db.from('wallet_withdrawal_confirmations').upsert({
         delivery_key: deliveryKey, shop_id: shop, uid, amount, bank_code: bank, bank_number: number, wallet_kind: walletKind,
+        recipient_name: name, destination_kind: destination,
       }, { onConflict: 'shop_id,delivery_key', ignoreDuplicates: true });
       if (draft.error) return fail('PAYMENTS_UNAVAILABLE', 503);
-      const stored = await db.from('wallet_withdrawal_confirmations').select('id,amount,bank_code,bank_number,expires_at,wallet_kind')
+      const stored = await db.from('wallet_withdrawal_confirmations').select('id,amount,bank_code,bank_number,expires_at,wallet_kind,recipient_name,destination_kind')
         .eq('delivery_key', deliveryKey).eq('shop_id', shop).eq('uid', uid).maybeSingle();
       if (stored.error || Number(stored.data?.amount) !== Number(amount) ||
-          stored.data?.wallet_kind !== walletKind || stored.data?.bank_code !== bank || stored.data?.bank_number !== number ||
+          stored.data?.wallet_kind !== walletKind || stored.data?.destination_kind !== destination ||
+          stored.data?.recipient_name !== name || stored.data?.bank_code !== bank || stored.data?.bank_number !== number ||
           !(Date.parse(stored.data.expires_at) > Date.now())) return fail('WITHDRAWAL_INVALID', 409);
       const link = new URL('https://liff.line.me/' + (env('MEMBERSHIP_LIFF_ID_PLAYER') || '2012454809-UFGeUGbW'));
       link.searchParams.set('shop', shop);
@@ -216,7 +273,8 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
           type: 'flex', altText: 'ยืนยันคำขอถอนเงิน', contents: {
             type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
               { type: 'text', text: 'ยืนยันคำขอถอนเงิน', weight: 'bold', size: 'lg' },
-              { type: 'text', text: 'โปรดตรวจสอบยอดถอน ฿' + total + ' เข้าบัญชีเลขที่ ' + number, wrap: true },
+              { type: 'text', text: 'ยอดรับ ฿' + total + ' · ' + (destination === 'promptpay' ? 'พร้อมเพย์' : 'บัญชี') + ' ลงท้าย ' + number.slice(-4), wrap: true },
+              ...(name ? [{ type: 'text', text: 'ผู้รับ ' + name, wrap: true }] : []),
               ...(bonus ? [{ type: 'text', text: 'ค่าบริการ ฿' + (feeCents / 100).toFixed(2) +
                 ' · หักโบนัสรวม ฿' + ((amountCents + feeCents) / 100).toFixed(2), wrap: true }] : []),
               { type: 'text', text: 'กดยืนยันเพื่อส่งเข้าคิวรอโอนเงิน', wrap: true },

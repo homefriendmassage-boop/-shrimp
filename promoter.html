@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>ระบบผู้แนะนำ (Promoter)</title>
   <script src="config.js?v=player-entry-1"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="payment-ui.js?v=1"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
@@ -17,6 +17,14 @@
     .btn:active { transform: scale(0.98); }
     .text-pink { color: #ec4899; }
     .bg-pink { background: #ec4899; }
+    .withdraw-form { display: grid; gap: 12px; margin-top: 14px; }
+    .withdraw-form[hidden], .withdraw-form [hidden] { display: none; }
+    .withdraw-form label { display: grid; gap: 4px; }
+    .withdraw-form input, .withdraw-form select, #refLinkInput { min-width: 0; width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid #475569; background: #0f111a; color: white; font: inherit; }
+    .ref-link-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
+    #shareReferralFlex { margin-top: 10px; background: #06c755; color: #062b17; }
+    .feedback { color: #cbd5e1; margin: 8px 0 0; }
+    .btn:disabled { opacity: .55; cursor: default; }
     .wallet-box { background: #0f111a; border: 1px solid #ec4899; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 15px; }
   </style>
 </head>
@@ -33,12 +41,22 @@
 
     <div class="card">
       <div class="wallet-box">
-        <div style="color: #94a3b8; font-size: 0.9rem;">กระเป๋าโบนัส</div>
+        <div style="color: #94a3b8; font-size: 0.9rem;">โบนัสผู้แนะนำ</div>
         <div id="promoterWallet" style="font-size: 2.5rem; font-weight: bold; color: #10b981; margin-top: 5px;">฿0.00</div>
         <div style="font-size: 0.8rem; color: #ec4899; margin-top: 8px;">ผู้แนะนำ: <span id="promoterName">กำลังโหลด...</span></div>
       </div>
       <p>ค่าแนะนำเข้ากระเป๋าโบนัสเมื่อตัดผล ถอนขั้นต่ำ 100 บาท ค่าบริการ 10%</p>
-      <a id="promoterWalletLink">เปิดหน้าผู้เล่นเพื่อถอนโบนัส</a>
+      <button id="withdrawBonusOpen" class="btn bg-pink" type="button" aria-expanded="false" aria-controls="withdrawBonusForm" disabled>ถอนเงิน</button>
+      <form id="withdrawBonusForm" class="withdraw-form" hidden>
+        <label>ยอดเงินที่ต้องการรับ (บาท)<input name="amount" type="number" min="100" step="0.01" inputmode="decimal" required></label>
+        <label>ชื่อผู้รับเงิน<input name="recipient_name" maxlength="120" autocomplete="off" required></label>
+        <label>ช่องทางรับเงิน<select name="destination_kind"><option value="bank">บัญชีธนาคาร</option><option value="promptpay">พร้อมเพย์</option></select></label>
+        <label id="withdrawBonusBankField">ธนาคาร<select name="bank_code" required><option value="">เลือกธนาคาร</option></select></label>
+        <label><span id="withdrawBonusNumberLabel">เลขบัญชีธนาคาร</span><input name="bank_number" inputmode="numeric" maxlength="24" autocomplete="off" required></label>
+        <output id="withdrawBonusTotal" aria-live="polite">ถอนขั้นต่ำ ฿100 · ค่าบริการ 10%</output>
+        <button class="btn bg-pink" type="submit">ส่ง Flex เพื่อยืนยันถอนเงิน</button>
+        <p id="withdrawBonusStatus" class="feedback" role="status"></p>
+      </form>
     </div>
 
     <div class="card">
@@ -51,10 +69,12 @@
           <img id="qrCodeImg" src="https://via.placeholder.com/200?text=Loading+QR..." alt="QR Code" style="width: 200px; height: 200px; margin: 0 auto;">
       </div>
       
-      <div style="display: flex; gap: 10px; margin-top: 15px;">
-        <input type="text" id="refLinkInput" readonly style="flex: 2; padding: 10px; border-radius: 8px; background: #0f111a; border: 1px solid #2a2d3d; color: white;">
-        <button class="btn" style="flex: 1; background: #3b82f6;" onclick="copyLink()"><i class="fa-regular fa-copy"></i> คัดลอก</button>
+      <div class="ref-link-row">
+        <input id="refLinkInput" aria-label="ลิงก์แนะนำของคุณ" type="url" readonly>
+        <button id="copyReferralLink" class="btn" style="background:#3b82f6" type="button" disabled>คัดลอก</button>
       </div>
+      <button id="shareReferralFlex" class="btn" type="button" disabled><i class="fa-solid fa-share-nodes"></i> ส่ง Flex ชวนเพื่อนใน LINE</button>
+      <p id="shareReferralStatus" class="feedback" role="status"></p>
     </div>
   </div>
 
@@ -63,6 +83,106 @@
     const restored = new URL(params.get('liff.state') || '/', location.origin);
     const currentShopId = params.get('shop') ||
       (restored.origin === location.origin && restored.searchParams.get('shop')) || 'SHOP_000';
+
+    const byId = id => document.getElementById(id);
+    const money = amount => Number(amount || 0).toLocaleString('th-TH', { style: 'currency', currency: 'THB' });
+    const form = byId('withdrawBonusForm');
+    const openWithdraw = byId('withdrawBonusOpen');
+    const share = byId('shareReferralFlex');
+    const copy = byId('copyReferralLink');
+    const referralLink = byId('refLinkInput');
+    let shopName = 'บ่อตกกุ้ง';
+    let withdrawal;
+    fillPaymentBanks(form.elements.bank_code);
+
+    function updateWithdrawalFields() {
+      const promptpay = form.elements.destination_kind.value === 'promptpay';
+      byId('withdrawBonusBankField').hidden = promptpay;
+      form.elements.bank_code.required = !promptpay;
+      byId('withdrawBonusNumberLabel').textContent = promptpay ? 'เลขพร้อมเพย์' : 'เลขบัญชีธนาคาร';
+      const cents = Math.round(Number(form.elements.amount.value) * 100);
+      const fee = Math.round(cents / 10);
+      byId('withdrawBonusTotal').textContent = cents >= 10000
+        ? 'รับ ' + money(cents / 100) + ' · ค่าบริการ ' + money(fee / 100) + ' · หักรวม ' + money((cents + fee) / 100)
+        : 'ถอนขั้นต่ำ ฿100 · ค่าบริการ 10%';
+    }
+
+    openWithdraw.onclick = () => {
+      form.hidden = !form.hidden;
+      openWithdraw.setAttribute('aria-expanded', String(!form.hidden));
+      if (!form.hidden) form.elements.amount.focus();
+    };
+    form.addEventListener('input', updateWithdrawalFields);
+    form.addEventListener('change', updateWithdrawalFields);
+    form.onsubmit = async event => {
+      event.preventDefault();
+      const submit = form.querySelector('[type="submit"]');
+      if (submit.disabled) return;
+      const status = byId('withdrawBonusStatus');
+      const details = Object.fromEntries(new FormData(form));
+      details.bank_number = details.bank_number.replace(/[ -]/g, '');
+      details.recipient_name = details.recipient_name.trim();
+      details.wallet_kind = 'bonus';
+      const key = JSON.stringify(details);
+      if (withdrawal?.key !== key) withdrawal = { key, id: crypto.randomUUID() };
+      submit.disabled = true;
+      status.textContent = 'กำลังส่ง Flex…';
+      try {
+        await shopPaymentRequest(currentShopId, 'withdraw_start', { ...details, delivery_key: withdrawal.id });
+        status.textContent = 'ส่ง Flex ไปที่แชตส่วนตัวแล้ว กดยืนยันในแชตเพื่อเข้าคิวถอนเงิน';
+        form.reset();
+        updateWithdrawalFields();
+      } catch (error) {
+        if (error.message === 'WITHDRAWAL_INVALID') withdrawal = undefined;
+        status.textContent = ({
+          WALLET_MINIMUM: 'ถอนขั้นต่ำ 100 บาท',
+          WALLET_INSUFFICIENT_BALANCE: 'โบนัสคงเหลือไม่พอรวมค่าบริการ',
+          WITHDRAWAL_INVALID: 'กรุณาตรวจชื่อผู้รับและเลขบัญชีหรือเลขพร้อมเพย์',
+          LINE_OA_LINK_REQUIRED: 'กรุณาผูกบัญชีกับ LINE OA ของร้านเพื่อรับ Flex',
+        })[error.message] || 'ส่งคำขอไม่สำเร็จ กรุณาลองอีกครั้ง';
+      } finally { submit.disabled = false; }
+    };
+
+    copy.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(referralLink.value);
+        byId('shareReferralStatus').textContent = 'คัดลอกลิงก์แล้ว';
+      } catch {
+        referralLink.focus();
+        referralLink.select();
+        byId('shareReferralStatus').textContent = 'แตะค้างที่ลิงก์เพื่อคัดลอก';
+      }
+    };
+
+    share.onclick = async () => {
+      const status = byId('shareReferralStatus');
+      if (!liff.isApiAvailable('shareTargetPicker')) {
+        status.textContent = 'ส่ง Flex ในหน้าต่างนี้ไม่ได้ คุณยังคัดลอกลิงก์ส่งให้เพื่อนได้';
+        return;
+      }
+      share.disabled = true;
+      status.textContent = '';
+      try {
+        const result = await liff.shareTargetPicker([{
+          type: 'flex', altText: ('ชวนเพื่อนมาที่ ' + shopName).slice(0, 300), contents: {
+            type: 'bubble',
+            header: { type: 'box', layout: 'vertical', backgroundColor: '#831843', paddingAll: '20px', contents: [
+              { type: 'text', text: 'ชวนเพื่อนมาที่ร้าน', size: 'sm', color: '#FCE7F3' },
+              { type: 'text', text: shopName, size: 'xl', weight: 'bold', color: '#FFFFFF', wrap: true, margin: 'sm' },
+            ] },
+            body: { type: 'box', layout: 'vertical', contents: [
+              { type: 'text', text: 'กดเปิดร้านผ่าน LINE เพื่อดูรอบและเข้าใช้งาน', color: '#334155', wrap: true },
+            ] },
+            footer: { type: 'box', layout: 'vertical', contents: [{
+              type: 'button', style: 'primary', color: '#9D174D',
+              action: { type: 'uri', label: 'เปิดหน้าร้าน', uri: referralLink.value },
+            }] },
+          },
+        }], { isMultiple: true });
+        if (result?.status === 'success') status.textContent = 'ส่งคำชวนแล้ว';
+      } catch { status.textContent = 'ส่ง Flex ไม่สำเร็จ คุณยังคัดลอกลิงก์ส่งให้เพื่อนได้'; }
+      finally { share.disabled = false; }
+    };
 
     async function initPromoter() {
       try {
@@ -85,23 +205,17 @@
         }
 
         document.getElementById('promoterName').innerText = user.display_name;
-        const money = amount => '฿' + Number(amount || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 });
         document.getElementById('promoterWallet').textContent = money(user.commission_balance);
-        document.getElementById('promoterWalletLink').href = playerEntryUrl(currentShopId);
+        openWithdraw.disabled = false;
+        shopName = result.shop_name || shopName;
 
         // สร้าง Link และ QR Code
         const refLink = playerEntryUrl(currentShopId, { ref: formatMemberCode(currentShopId, user.member_id) });
-        document.getElementById('refLinkInput').value = refLink;
+        referralLink.value = refLink;
+        copy.disabled = share.disabled = false;
         document.getElementById('qrCodeImg').src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(refLink)}`;
         
       } catch (e) { alert("Error: " + e.message); }
-    }
-
-    function copyLink() {
-      let copyText = document.getElementById("refLinkInput");
-      copyText.select(); copyText.setSelectionRange(0, 99999);
-      navigator.clipboard.writeText(copyText.value);
-      alert("คัดลอกลิงก์เรียบร้อยแล้ว ส่งให้เพื่อนได้เลย!");
     }
 
     initPromoter();
