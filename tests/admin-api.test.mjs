@@ -280,3 +280,27 @@ test('a shop invitation is issued only with the active shop owned by the verifie
     created_by: 'verified-user', referrer_shop_id: 'SHOP_001', referral_tier: 'standard',
   }]);
 });
+
+test('round IDs are distinct across shops and keep the accounting-day sequence', () => {
+  const html = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
+  const accounting = fs.readFileSync(new URL('../accounting-day.js', import.meta.url), 'utf8');
+  const helper = html.slice(html.indexOf('    function nextShopRoundId'), html.indexOf('    async function controlRound'));
+  const context = vm.createContext({});
+  vm.runInContext(accounting + '\n' + helper, context);
+  const time = Date.parse('2026-11-13T19:54:00+07:00');
+  const plans = [
+    ['SHOP_000', 'R-261113-4', 'R-261113-5-SHOP_000'],
+    ['SHOP_001', 'R-261111-7', 'R-261113-1-SHOP_001'],
+    ['SHOP_002', undefined, 'R-261113-1-SHOP_002'],
+  ];
+  const ids = plans.map(([shop, previous, expected]) => {
+    const id = context.nextShopRoundId(shop, previous, time);
+    assert.equal(id, expected);
+    assert.match(id, /^[A-Za-z0-9_-]{1,80}$/);
+    return id;
+  });
+  assert.equal(new Set(ids).size, 3);
+  assert.equal(context.nextShopRoundId('SHOP_001', ids[1], time), 'R-261113-2-SHOP_001');
+  assert.equal(context.nextShopRoundId('SHOP_001', ids[1], Date.parse('2026-11-14T05:59:00+07:00')), 'R-261113-2-SHOP_001');
+  assert.equal(context.nextShopRoundId('SHOP_001', ids[1], Date.parse('2026-11-14T06:00:00+07:00')), 'R-261114-1-SHOP_001');
+});
