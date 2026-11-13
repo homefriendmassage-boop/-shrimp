@@ -29,8 +29,20 @@
     .container { max-width: 480px; margin: 0 auto; padding: 20px; }
     .oa-link { margin: 0 0 14px; }
     .player-entry { max-width: 360px; margin: clamp(48px, 19vh, 160px) auto 0; padding: 24px; }
-    #playerOaChat { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 26px; margin: -11px 0 4px; padding: 2px 8px; border-radius: 7px; font-size: .78rem; line-height: 1.3; }
+    .player-quick-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: -11px 0 4px; }
+    .player-quick-actions .player-entry-action { display: flex; align-items: center; justify-content: center; min-height: 38px; margin: 0; padding: 5px 8px; font-size: .85rem; line-height: 1.3; }
     #playerOaChat[hidden] { display: none; }
+    #playerShareOpen { grid-column: 1; background: #fb923c; border-color: #fb923c; color: #291405; font-weight: 600; }
+    #playerOaChat { grid-column: 2; }
+    #playerShareDialog { box-sizing: border-box; width: min(400px, calc(100% - 32px)); max-height: 90vh; padding: 20px; border: 1px solid var(--card-border); border-radius: 16px; background: var(--card-bg); color: var(--text-main); }
+    #playerShareDialog::backdrop { background: #0009; }
+    #playerShareDialog h2 { margin: 0 0 12px; }
+    #playerShareLink { box-sizing: border-box; width: 100%; margin: 4px 0 10px; padding: 10px; color: var(--text-main); background: var(--bg-dark); border: 1px solid #657084; border-radius: 8px; font: inherit; }
+    #playerShareQr:not(:empty) { width: max-content; margin: 0 auto 12px; padding: 10px; border-radius: 8px; background: white; }
+    .player-share-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .player-share-controls [hidden] { display: none; }
+    #playerShareFlex { border-color: #06c755; background: #06c755; color: #071b0f; font-weight: 600; }
+    #playerShareStatus { margin: 8px 0 0; color: var(--text-muted); }
     .player-entry h1 { margin: 0 0 4px; font-size: 1.5rem; }
     .player-entry p { margin: 0 0 18px; color: var(--text-muted); }
     .player-entry-action { display: block; box-sizing: border-box; width: 100%; min-height: 46px; padding: 10px 14px; border: 1px solid #657084; border-radius: 10px; background: transparent; color: white; font: inherit; text-align: center; text-decoration: none; cursor: pointer; }
@@ -233,7 +245,23 @@
       </div>
     </div>
 
-    <a id="playerOaChat" class="player-entry-action player-entry-add" target="_blank" rel="noopener" hidden>แชตกับแอดมิน</a>
+    <div class="player-quick-actions">
+      <button id="playerShareOpen" class="player-entry-action" type="button" aria-haspopup="dialog">ชวนเพื่อน</button>
+      <a id="playerOaChat" class="player-entry-action player-entry-add" target="_blank" rel="noopener" hidden>แชตกับแอดมิน</a>
+    </div>
+    <dialog id="playerShareDialog" aria-labelledby="playerShareTitle">
+      <h2 id="playerShareTitle">ชวนเพื่อน</h2>
+      <div id="playerShareQr" role="img" aria-label="QR Code ลิงก์ร้าน"></div>
+      <label for="playerShareLink">ลิงก์ร้าน</label>
+      <input id="playerShareLink" type="url" readonly>
+      <form method="dialog" class="player-share-controls">
+        <button id="playerShareCopy" class="player-entry-action" type="button">คัดลอกลิงก์</button>
+        <button id="playerShareFlex" class="player-entry-action" type="button">ส่ง Flex ใน LINE</button>
+        <a id="playerShareQrSave" class="player-entry-action" download="shop-qr.png" hidden>บันทึก QR</a>
+        <button class="player-entry-action" value="close">ปิด</button>
+      </form>
+      <p id="playerShareStatus" role="status"></p>
+    </dialog>
     <!-- ปุ่มเมนูพิเศษ -->
     <div class="special-menu-container">
         <a id="switchToAdmin" class="hidden" style="display:block;color:var(--blue-main);padding:12px">สลับไปหน้า Admin</a>
@@ -457,6 +485,80 @@
         chat.hidden = false;
       } catch { /* Shop details are optional. */ }
     }
+
+    const playerShareDialog = document.getElementById('playerShareDialog');
+    const playerShareLink = document.getElementById('playerShareLink');
+    const playerShareStatus = document.getElementById('playerShareStatus');
+    const playerShareFlex = document.getElementById('playerShareFlex');
+
+    document.getElementById('playerShareOpen').onclick = () => {
+      // Start with the canonical shop URL so no referral or session context is shared.
+      playerShareLink.value = playerEntryUrl(currentShopId);
+      playerShareStatus.textContent = '';
+      const qr = document.getElementById('playerShareQr');
+      qr.replaceChildren();
+      const save = document.getElementById('playerShareQrSave');
+      save.hidden = true;
+      try {
+        new QRCode(qr, { text: playerShareLink.value, width: 152, height: 152 });
+        const canvas = qr.querySelector('canvas');
+        if (canvas) {
+          const image = document.createElement('canvas');
+          image.width = image.height = canvas.width + 24;
+          const context = image.getContext('2d');
+          context.fillStyle = 'white';
+          context.fillRect(0, 0, image.width, image.height);
+          context.drawImage(canvas, 12, 12);
+          save.href = image.toDataURL('image/png');
+          save.hidden = false;
+        }
+      } catch {
+        playerShareStatus.textContent = 'แสดง QR ไม่สำเร็จ ใช้ลิงก์ร้านได้';
+      }
+      playerShareDialog.showModal();
+    };
+
+    document.getElementById('playerShareCopy').onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(playerShareLink.value);
+        playerShareStatus.textContent = 'คัดลอกลิงก์แล้ว';
+      } catch {
+        playerShareLink.focus();
+        playerShareLink.select();
+        playerShareStatus.textContent = 'แตะค้างที่ลิงก์เพื่อคัดลอก';
+      }
+    };
+
+    playerShareFlex.onclick = async () => {
+      if (!liff.isApiAvailable('shareTargetPicker')) {
+        playerShareStatus.textContent = 'ส่ง Flex ไม่ได้ในหน้าต่างนี้ คัดลอกลิงก์ส่งในแชตได้';
+        return;
+      }
+      playerShareFlex.disabled = true;
+      try {
+        const shop = entryShopName || 'บ่อตกกุ้ง';
+        const result = await liff.shareTargetPicker([{
+          type: 'flex', altText: ('ชวนเพื่อนมาที่ ' + shop).slice(0, 300),
+          contents: {
+            type: 'bubble',
+            body: { type: 'box', layout: 'vertical', contents: [
+              { type: 'text', text: 'ชวนเพื่อนมาที่', size: 'sm', wrap: true },
+              { type: 'text', text: shop, weight: 'bold', size: 'lg', wrap: true },
+            ] },
+            footer: { type: 'box', layout: 'vertical', contents: [{
+              type: 'button', style: 'primary', action: {
+                type: 'uri', label: 'เปิดหน้าร้าน', uri: playerShareLink.value,
+              },
+            }] },
+          },
+        }]);
+        if (result?.status === 'success') playerShareStatus.textContent = 'ส่งคำชวนแล้ว';
+      } catch {
+        playerShareStatus.textContent = 'ส่ง Flex ไม่สำเร็จ คัดลอกลิงก์ส่งในแชตได้';
+      } finally {
+        playerShareFlex.disabled = false;
+      }
+    };
 
     async function initializeApp() {
       const urlParams = playerEntryParams();
