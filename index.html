@@ -223,10 +223,11 @@
         </div>
       </div>
       <div class="header-box" style="text-align: right; display: flex; flex-direction: column; justify-content: center;">
-        <div class="label">เครดิตคงเหลือ</div>
+        <div class="label" id="creditLabel">Wallet ส่วนตัว</div>
         <div class="value val-green" id="creditDisplay">฿0</div>
+        <small id="playerTableRound" hidden></small>
         <small id="playerSyncStatus" role="status" style="display:block;color:var(--text-muted)"></small>
-        <button onclick="openTopupModal()" style="margin-top: 5px; background: var(--blue-main); border: none; color: white; border-radius: 6px; padding: 4px; font-size: 0.75rem; font-family: 'Kanit'; cursor: pointer;">
+        <button id="playerWalletAction" onclick="openTopupModal()" style="margin-top: 5px; background: var(--blue-main); border: none; color: white; border-radius: 6px; padding: 4px; font-size: 0.75rem; font-family: 'Kanit'; cursor: pointer;">
           <i class="fa-solid fa-plus"></i> แจ้งทำรายการ
         </button>
       </div>
@@ -677,6 +678,10 @@
 
     function setMode(mode) {
       playMode = mode;
+      document.getElementById('creditLabel').textContent = mode === 'table' ? 'ยอดเงินสดของโต๊ะ' : 'Wallet ส่วนตัว';
+      document.getElementById('playerWalletAction').hidden = mode === 'table';
+      document.getElementById('playerTableRound').hidden = true;
+      document.getElementById('creditDisplay').textContent = '—';
       document.getElementById('modeTable').classList.remove('active');
       document.getElementById('modePrivate').classList.remove('active');
       if(mode === 'table') {
@@ -796,9 +801,21 @@
 
     function renderLiveSnapshot(snapshot, table) {
       const credit = playMode === 'table' ? (table ? snapshot.table_credit : null) : snapshot.credit;
-      document.getElementById('creditDisplay').textContent = credit == null ? '—'
-        : playMode === 'table' && Number(credit) < 0 ? 'ค้าง ฿' + Math.abs(Number(credit)).toLocaleString('th-TH')
-        : '฿' + Number(credit).toLocaleString('th-TH');
+      const amount = credit == null ? '—' : '฿' + (playMode === 'table' ? Math.abs(Number(credit)) : Number(credit)).toLocaleString('th-TH');
+      const tableMode = playMode === 'table';
+      document.getElementById('creditDisplay').textContent = !tableMode || credit == null ? amount
+        : Number(credit) < 0 ? 'ต้องจ่ายร้าน ' + amount
+        : Number(credit) > 0 ? 'ร้านต้องจ่าย ' + amount : 'เคลียร์แล้ว';
+      const tableRoundLine = document.getElementById('playerTableRound');
+      tableRoundLine.hidden = !tableMode || snapshot.table_round_total == null;
+      tableRoundLine.textContent = tableRoundLine.hidden ? '' : 'ยอดลงรอบนี้ ฿' + Number(snapshot.table_round_total).toLocaleString('th-TH');
+      if (tableMode && !table && userTableNo) {
+        document.getElementById('tableDisplay').textContent = 'QR หมดอายุ · กรุณาสแกนใหม่';
+      }
+      if (tableMode && table) {
+        const heading = snapshot.table_name || 'โต๊ะ ' + table;
+        document.getElementById('tableDisplay').textContent = snapshot.table_open ? heading : heading + ' · ปิดรับยอด';
+      }
       const round = snapshot.round;
       const result = snapshot.last_result;
       const totals = snapshot.totals;
@@ -839,11 +856,11 @@
       if (liveRequest) { refreshAfterRequest = true; return; }
       liveRequest = true;
       const sync = document.getElementById('playerSyncStatus');
-      const table = userTableNo || null;
+      const table = playMode === 'table' && cashTableQr?.table_day === shopAccountingDay() ? userTableNo : null;
       let delay = 2000;
       try {
         const { snapshot } = await readPlayerProfile('player_state', {
-          table_no: table,
+          ...(table ? cashTableQr : {}),
           include_results: !document.getElementById('statsView').classList.contains('hidden')
         });
         if (!snapshot) throw new Error('PLAYER_STATE_UNAVAILABLE');
@@ -884,6 +901,7 @@
         ROUND_CLOSED: 'รอบนี้ปิดรับแล้วหรือเปลี่ยนรอบ กรุณาตรวจรอบปัจจุบัน',
         TABLE_QR_EXPIRED: 'QR โต๊ะหมดอายุเวลา 06:00 น. กรุณาขอ QR ใหม่จากร้าน',
         TABLE_QR_INVALID: 'QR โต๊ะนี้ใช้ไม่ได้ กรุณาขอสแกนจากร้านอีกครั้ง',
+        TABLE_CLOSED: 'โต๊ะนี้ปิดรับยอด กรุณาติดต่อแคชเชียร์',
         CASH_TABLE_REQUIRED: 'โต๊ะนี้ยังไม่ได้เปิดโหมดเงินสด กรุณาแจ้งพนักงาน',
         TABLE_CREDIT_LIMIT: 'ยอดค้างจะเกินวงเงินของโต๊ะ กรุณาติดต่อพนักงาน',
         CREDIT_INSUFFICIENT: 'เครดิตส่วนตัวไม่พอ กรุณาเติมเงิน',
@@ -1070,6 +1088,7 @@
     }
 
     function openTopupModal() {
+      if (playMode === 'table') return;
       if (currentUserStatus !== 'Active') { alert("บัญชียังไม่เปิดใช้งาน"); return; }
       const draft = readDepositDraft();
       if (draft) {

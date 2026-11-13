@@ -6,7 +6,7 @@
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=cash-table-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=cash-table-1"></script>
+  <script src="admin-api-client.js?v=cash-table-2"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -168,6 +168,10 @@
     }
     #walletDecisionDialog button[value="approve"] { background: linear-gradient(#008c51, #007a45); }
     #walletDecisionDialog button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+    #tableListContainer { display:grid; grid-template-columns:repeat(auto-fill,minmax(122px,1fr)); gap:8px; }
+    #tableListContainer button { width:100%; min-height:76px; white-space:normal; overflow-wrap:anywhere; }
+    #tableListContainer button[aria-pressed="true"] { border-color:var(--blue-main); background:#192d4e; }
+    #selectedTableActions { display:flex; flex-wrap:wrap; gap:8px; }
   </style>
 </head>
 <body>
@@ -334,7 +338,19 @@
           <button type="submit" class="btn btn-blue">บันทึกบิล</button>
           <button type="button" class="btn btn-outline" onclick="this.form.classList.add('hidden')">ปิด</button>
         </form>
-        <div id="tableListContainer" style="max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 5px;"></div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0">
+          <button type="button" class="btn btn-outline" onclick="createTableRange(this)">สร้างโต๊ะชุด</button>
+          <a class="btn btn-outline" id="cashBoardLink" target="_blank" rel="noopener">จอทีวีและ MC</a>
+          <label>แสดงโต๊ะ <select class="form-control" id="tableFilter">
+            <option value="visible">ทุกโต๊ะที่แสดง</option><option value="open">เปิดรับยอด</option>
+            <option value="pending">รอผล</option><option value="receive">ต้องรับเงิน</option>
+            <option value="pay">ต้องจ่ายเงิน</option><option value="closed">ปิดรับยอด</option><option value="hidden">โต๊ะที่ซ่อน</option>
+          </select></label>
+        </div>
+        <p id="tableGridRound" aria-live="polite"></p>
+        <div id="tableListContainer"></div>
+        <p id="selectedTableStatus"></p>
+        <div id="selectedTableActions"></div>
       </div>
 
       <div class="card" id="cardUserManage">
@@ -456,10 +472,10 @@
         
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; margin-top: 20px;">
           <div style="background: #0f111a; padding: 10px; border-radius: 8px; border: 1px solid var(--card-border);">
-            <div style="font-size: 0.8rem; color: var(--text-muted);">ยอดเติมเงินรวม</div><div id="repTotalDeposit" style="font-size: 1.1rem; font-weight: bold; color: var(--green-main);">฿0</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">ยอดเติม Wallet</div><div id="repTotalDeposit" style="font-size: 1.1rem; font-weight: bold; color: var(--green-main);">฿0</div>
           </div>
           <div style="background: #0f111a; padding: 10px; border-radius: 8px; border: 1px solid var(--card-border);">
-            <div style="font-size: 0.8rem; color: var(--text-muted);">ยอดถอนเงินรวม</div><div id="repTotalWithdraw" style="font-size: 1.1rem; font-weight: bold; color: var(--red-main);">฿0</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">ยอดถอน Wallet</div><div id="repTotalWithdraw" style="font-size: 1.1rem; font-weight: bold; color: var(--red-main);">฿0</div>
           </div>
           <div style="background: #0f111a; padding: 10px; border-radius: 8px; border: 1px solid var(--card-border);">
             <div style="font-size: 0.8rem; color: var(--text-muted);">ยอดแทงรวม (Gross)</div><div id="repGrossBet" style="font-size: 1.1rem; font-weight: bold; color: white;">฿0</div>
@@ -713,7 +729,13 @@
           switchAdminTab('control'); 
           fetchAdminDashboard(); 
           setInterval(fetchAdminDashboard, 3000); 
-          loadTableList(); 
+          loadTableList();
+          document.getElementById('cashBoardLink').href = 'board.html?shop=' + encodeURIComponent(currentShopId);
+          setInterval(() => {
+            if (!document.hidden && document.getElementById('cardTableManage').getClientRects().length) {
+              loadTableList().catch(() => {});
+            }
+          }, 6000);
           loadPendingRequests();
           setInterval(loadPendingRequests, 4000); 
         }
@@ -1339,8 +1361,9 @@
         let tDep = 0, tWd = 0; let countDep = 0, countWd = 0;
         if(tx) {
             tx.forEach(t => {
-                if(t.type === 'deposit') { tDep += t.amount; countDep++; }
-                else if(t.type === 'withdraw' || t.type === 'aff_withdraw') { tWd += t.amount; countWd++; }
+                if (t.target_type === 'table' || t.cash_table_no != null) return;
+                if(t.type === 'deposit') { tDep += Number(t.amount); countDep++; }
+                else if(t.type === 'withdraw') { tWd += Number(t.amount); countWd++; }
             });
         }
 
@@ -1487,6 +1510,8 @@
           }
 
           const { data: bets } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('round_id', r.round_id).neq('status', 'Cancelled').order('bet_id', { ascending: false });
+          tableRound = { id: r.round_id, status: r.status, bets: (bets || []).filter(b => b.play_mode === 'table') };
+          renderTableGrid();
           let ea=0, oa=0; let et=new Set(), ot=new Set(); let fl = document.getElementById('liveBetsFeedList'); fl.innerHTML = '';
           if(bets && bets.length > 0) {
             bets.forEach(b => {
@@ -1502,6 +1527,8 @@
         } else {
           isRoundOpen = false;
           targetEndTimeMs = 0;
+          tableRound = null;
+          renderTableGrid();
           document.getElementById('adminRoundId').textContent = 'รอบ -';
           document.getElementById('adminStatusBadge').textContent = 'ยังไม่มีรอบ';
           document.getElementById('adminRoundSubInfo').textContent = 'ยังไม่มีรอบในร้านนี้';
@@ -1946,57 +1973,138 @@
       } finally { button.disabled = false; }
     });
 
+    let tableDesks = [];
+    let tableRound = null;
+    let selectedTable = null;
+    let tableRequest = 0;
+    const deskName = desk => desk.table_name || 'โต๊ะ ' + desk.table_no;
+    document.getElementById('tableFilter').addEventListener('change', renderTableGrid);
+
     async function loadTableList() {
-      const list = document.getElementById('tableListContainer');
-      const { data: desks } = await _supabase.from('tables').select('*').eq('shop_id', currentShopId).order('created_at', { ascending: true });
-      list.replaceChildren();
-      if (!desks?.length) list.textContent = 'ยังไม่มีโต๊ะในระบบ';
-      for (const desk of desks ?? []) {
-        const row = document.createElement('div');
-        row.style.cssText = 'background:#0f111a;padding:12px;border:1px solid var(--card-border);border-radius:8px';
-        const label = document.createElement('p');
-        const balance = Number(desk.credit);
-        label.textContent = 'โต๊ะ ' + desk.table_no + ' · ' + (balance < 0 ? 'ค้างชำระ' : 'ยอดโต๊ะ')
-          + ' ฿' + Math.abs(balance).toLocaleString('th-TH')
-          + (desk.cash_limit == null ? '' : ' · วงเงิน ฿' + Number(desk.cash_limit).toLocaleString('th-TH'));
-        row.append(label);
-        const addButton = (label, style, action) => {
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.className = 'btn ' + style;
-          button.textContent = label;
-          button.style.margin = '3px';
-          button.onclick = async () => {
-            button.disabled = true;
-            try { await action(); }
-            catch (error) {
-              alert(error.message === 'CASH_TABLE_WAITING_RESULT' ? 'กรุณารอผลของโต๊ะก่อนบันทึกเงินสด' :
-                error.message === 'CASH_AMOUNT_EXCEEDS_BALANCE' ? 'เงินสดที่กรอกเกินยอดที่ต้องชำระ' :
-                error.message === 'CASH_TABLE_OPEN_BALANCE' ? 'กรุณาเคลียร์ยอดและรอบค้างก่อนลบโต๊ะ' : 'ทำรายการไม่สำเร็จ กรุณาตรวจยอดก่อนลองใหม่');
-            } finally { button.disabled = false; }
-          };
-          row.append(button);
+      const request = ++tableRequest;
+      const { data } = await _supabase.from('tables').select('*').eq('shop_id', currentShopId);
+      if (request !== tableRequest) return;
+      tableDesks = (data || []).sort((a, b) => a.table_no.localeCompare(b.table_no, 'th', { numeric: true }));
+      renderTableGrid();
+    }
+
+    function renderTableGrid() {
+      const filter = document.getElementById('tableFilter').value;
+      const grid = document.getElementById('tableListContainer');
+      const focused = grid.contains(document.activeElement) ? document.activeElement.dataset.table : null;
+      const actions = document.getElementById('selectedTableActions');
+      const status = document.getElementById('selectedTableStatus');
+      const pending = new Set(tableRound?.bets.filter(b => b.cash_table && b.status === 'Active').map(b => b.table_no));
+      document.getElementById('tableGridRound').textContent = tableRound ? 'รอบ ' + tableRound.id : 'ยังไม่มีรอบ';
+      const shown = tableDesks.filter(desk => {
+        if (filter === 'hidden') return desk.is_hidden;
+        if (desk.is_hidden) return false;
+        if (filter === 'open') return desk.is_open && desk.cash_limit != null;
+        if (filter === 'closed') return !desk.is_open;
+        if (filter === 'pending') return pending.has(desk.table_no);
+        if (filter === 'receive') return desk.cash_limit != null && Number(desk.credit) < 0 && !pending.has(desk.table_no);
+        if (filter === 'pay') return desk.cash_limit != null && Number(desk.credit) > 0 && !pending.has(desk.table_no);
+        return true;
+      });
+      const button = (label, action, style = 'btn-outline') => {
+        const element = document.createElement('button');
+        element.type = 'button';
+        element.className = 'btn ' + style;
+        element.textContent = label;
+        element.onclick = async () => {
+          element.disabled = true;
+          try { await action(); } catch (error) {
+            alert(({ TABLE_CLOSED: 'โต๊ะนี้ปิดรับยอด', CASH_TABLE_WAITING_RESULT: 'กรุณารอผลก่อนบันทึกเงินสด',
+              CASH_AMOUNT_EXCEEDS_BALANCE: 'จำนวนเงินเกินยอดที่ต้องชำระ' })[error.message] || 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง');
+          } finally { element.disabled = false; }
         };
-        addButton('QR', 'btn-blue', () => showQrCode(desk.table_no, desk.cash_limit != null));
-        addButton('วงเงินสด', 'btn-outline', () => setCashTableLimit(desk.table_no, desk.cash_limit));
-        if (desk.cash_limit != null) addButton('ลงยอดให้โต๊ะ', 'btn-blue', () => {
-          const form = document.getElementById('staffCashBetForm');
-          form.dataset.table = desk.table_no;
-          document.getElementById('staffCashBetTitle').textContent = 'ลงยอดเงินสดให้โต๊ะ ' + desk.table_no;
-          form.classList.remove('hidden');
-          form.elements.amount.focus();
+        return element;
+      };
+      grid.replaceChildren();
+      const desk = shown.find(row => row.table_no === selectedTable);
+      for (const row of shown) {
+        const balance = Number(row.credit);
+        const state = row.is_hidden ? 'ซ่อน' : !row.is_open ? 'ปิด' : row.cash_limit == null ? 'ยังไม่ตั้งวงเงิน'
+          : pending.has(row.table_no) ? 'รอผล' : balance < 0 ? 'ต้องรับเงิน' : balance > 0 ? 'ต้องจ่ายเงิน' : 'เคลียร์แล้ว';
+        const item = button(deskName(row) + ' · ' + state, () => {
+          selectedTable = row.table_no;
+          renderTableGrid();
+          actions.querySelector('button')?.focus();
         });
-        if (desk.cash_limit != null && balance !== 0) {
-          addButton(balance < 0 ? 'รับเงินสด' : 'จ่ายเงินสด', 'btn-green', async () => {
-            const amount = prompt(balance < 0 ? 'จำนวนเงินสดที่รับจริง' : 'จำนวนเงินสดที่จ่ายจริง', Math.abs(balance).toFixed(2));
-            if (amount === null || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0) return;
-            await recordCashAtTable(desk.table_no, balance < 0 ? 'deposit' : 'withdraw', amount.trim());
-          });
+        item.setAttribute('aria-pressed', String(row.table_no === selectedTable));
+        item.dataset.table = row.table_no;
+        grid.append(item);
+        if (focused === row.table_no) item.focus();
+      }
+      if (!shown.length) grid.textContent = 'ไม่มีโต๊ะในตัวกรองนี้';
+      if (!desk) {
+        status.textContent = '';
+        actions.replaceChildren();
+        actions.dataset.key = '';
+        return;
+      }
+      const balance = Number(desk.credit);
+      const current = tableRound?.bets.filter(b => b.table_no === desk.table_no) || [];
+      const roundTotal = current.reduce((sum, bet) => sum + Number(bet.amount), 0);
+      status.textContent = deskName(desk) + ' · หมายเลข ' + desk.table_no + ' · รอบนี้ ฿' + roundTotal.toLocaleString('th-TH')
+        + (balance < 0 ? ' · ต้องรับ ฿' : balance > 0 ? ' · ต้องจ่าย ฿' : ' · สุทธิ ฿')
+        + Math.abs(balance).toLocaleString('th-TH')
+        + (desk.cash_limit == null ? '' : ' · วงเงิน ฿' + Number(desk.cash_limit).toLocaleString('th-TH'));
+      const key = JSON.stringify([desk, pending.has(desk.table_no), isRoundOpen]);
+      if (actions.dataset.key === key) return;
+      actions.dataset.key = key;
+      actions.replaceChildren();
+      const update = async values => {
+        await _supabase.from('tables').update(values).eq('shop_id', currentShopId).eq('table_no', desk.table_no);
+        await loadTableList();
+      };
+      actions.append(button('แก้ชื่อ', async () => {
+        const name = prompt('ชื่อโต๊ะ (เว้นว่างเพื่อใช้หมายเลขโต๊ะ)', desk.table_name || '');
+        if (name !== null) {
+          if (name.trim().length > 40) return alert('ชื่อโต๊ะต้องไม่เกิน 40 ตัวอักษร');
+          await update({ table_name: name.trim() || null });
         }
-        addButton('ลบโต๊ะ', 'btn-red', () => deleteTable(desk.table_no));
-        list.append(row);
+      }), button(desk.is_hidden ? 'แสดงโต๊ะ' : 'ซ่อนโต๊ะ', () =>
+        update(desk.is_hidden ? { is_hidden: false } : { is_hidden: true, is_open: false })));
+      if (!desk.is_hidden) {
+        actions.append(button(desk.is_open ? 'ปิดรับยอด' : 'เปิดรับยอด', () => update({ is_open: !desk.is_open })),
+          button('วงเงินสด', () => setCashTableLimit(desk.table_no, desk.cash_limit)));
+        if (desk.is_open && desk.cash_limit != null) {
+          actions.append(button('QR', () => showQrCode(desk.table_no, true, deskName(desk))));
+          if (isRoundOpen) actions.append(button('ลงยอดให้โต๊ะ', () => {
+            const form = document.getElementById('staffCashBetForm');
+            form.dataset.table = desk.table_no;
+            document.getElementById('staffCashBetTitle').textContent = 'ลงยอดเงินสดให้ ' + deskName(desk);
+            form.classList.remove('hidden');
+            form.elements.amount.focus();
+          }, 'btn-blue'));
+        }
+      }
+      if (desk.cash_limit != null && balance !== 0 && !pending.has(desk.table_no)) {
+        actions.append(button(balance < 0 ? 'รับเงินสด' : 'จ่ายเงินสด', async () => {
+          const amount = prompt(balance < 0 ? 'จำนวนเงินสดที่รับจริง' : 'จำนวนเงินสดที่จ่ายจริง', Math.abs(balance).toFixed(2));
+          if (amount === null || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0) return;
+          await recordCashAtTable(desk.table_no, balance < 0 ? 'deposit' : 'withdraw', amount.trim());
+        }, 'btn-green'));
       }
     }
+
+    async function createTableRange(button) {
+      const count = prompt('สร้างโต๊ะหมายเลข 1 ถึง (เก็บโต๊ะเดิมไว้)', '30');
+      if (count === null) return;
+      if (!/^(?:[1-9]\d?|100)$/.test(count.trim())) return alert('กรอกจำนวนโต๊ะตั้งแต่ 1 ถึง 100');
+      const limit = prompt('วงเงินสดต่อโต๊ะใหม่ (บาท)');
+      if (limit === null) return;
+      if (!/^\d{1,9}(?:\.\d{1,2})?$/.test(limit.trim()) || Number(limit) <= 0) return alert('กรอกวงเงินมากกว่า 0');
+      button.disabled = true;
+      try {
+        const { added } = await _supabase.createCashTables(Number(count), limit.trim());
+        await loadTableList();
+        alert('เพิ่มโต๊ะใหม่ ' + added + ' โต๊ะ');
+      } catch { alert('สร้างโต๊ะชุดไม่สำเร็จ'); }
+      finally { button.disabled = false; }
+    }
+
     async function addNewTable() {
       const input = document.getElementById('txtNewTable');
       const tableNo = input.value.trim();
@@ -2019,20 +2127,37 @@
           ? 'หมายเลขโต๊ะนี้มีอยู่แล้ว' : 'เพิ่มหรือโหลดโต๊ะไม่สำเร็จ [' + error.message + ']');
       } finally { button.disabled = false; }
     }
-    async function deleteTable(tNo) { if(confirm(`ยืนยันลบโต๊ะ ${tNo}?`)){ await _supabase.from('tables').delete().eq('shop_id', currentShopId).eq('table_no', tNo); await loadTableList(); } }
-    
-    async function showQrCode(table, cashEnabled) {
+    let tableQrRefresh;
+    let tableQrGeneration = 0;
+
+    async function showQrCode(table, cashEnabled, name = table) {
         if (!cashEnabled) return alert('กรุณาเปิดวงเงินสดให้โต๊ะก่อนสร้าง QR');
+        const generation = ++tableQrGeneration;
+        clearTimeout(tableQrRefresh);
         const { day, token } = await _supabase.tableQr(table);
+        if (generation !== tableQrGeneration) return;
         const playerUrl = playerEntryUrl(currentShopId, { table, d: day, table_token: token });
-        document.getElementById('qrTableNoDisplay').textContent = table;
+        document.getElementById('qrTableNoDisplay').textContent = name;
         const image = document.getElementById('qrImage');
         image.replaceChildren();
         new QRCode(image, { text: playerUrl, width: 200, height: 200 });
         document.getElementById('qrModal').classList.remove('hidden');
+        const [, end] = shopAccountingWindow(day);
+        tableQrRefresh = setTimeout(() => {
+          document.getElementById('qrImage').replaceChildren();
+          showQrCode(table, cashEnabled, name).catch(() => {
+            closeQrModal();
+            alert('แสดง QR ของวันบัญชีใหม่ไม่ได้ กรุณาเปิด QR อีกครั้ง');
+          });
+        }, Math.max(100, Date.parse(end) - Date.now() + 300));
     }
 
-    function closeQrModal() { document.getElementById('qrModal').classList.add('hidden'); }
+    function closeQrModal() {
+      tableQrGeneration++;
+      clearTimeout(tableQrRefresh);
+      document.getElementById('qrModal').classList.add('hidden');
+      document.getElementById('qrImage').replaceChildren();
+    }
     
     async function loadSettings() {
       try {

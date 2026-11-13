@@ -144,6 +144,15 @@
       color: var(--red-main);
       border-color: rgba(239, 68, 68, 0.5);
     }
+    body { padding:clamp(12px,3vw,38px); box-sizing:border-box; }
+    .dashboard-container { max-width:1180px; box-sizing:border-box; padding:clamp(14px,3vw,34px); }
+    .board-tools { display:flex; gap:12px; align-items:center; margin:12px 0; color:var(--text-muted); }
+    .board-tools button { background:#252e42; border:1px solid #465472; color:white; padding:8px 12px; border-radius:8px; font:inherit; cursor:pointer; }
+    .board-details { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
+    .board-details section { border:1px solid var(--card-border); border-radius:12px; padding:12px; }
+    .board-details h2 { margin:0 0 8px; font-size:1.1rem; }
+    .board-details p { margin:0; overflow-wrap:anywhere; }
+    @media(max-width:620px) { .board-details { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
@@ -157,7 +166,7 @@
         <div class="dot green"></div>
       </div>
       <div class="title-area">
-        🦐 บอร์ดสด — บ่อตกกุ้ง
+        <span id="boardShopName">บอร์ดสด</span>
       </div>
       <div class="live-badge">
         <div class="live-dot"></div> LIVE
@@ -211,53 +220,86 @@
       </div>
       <div class="winner-badge" id="lastWinner">-</div>
     </div>
+    <div class="board-details">
+      <section><h2>โต๊ะในรอบนี้</h2><p id="boardTables">—</p></section>
+      <section><h2>สถิติวันบัญชี · ตัดรอบ 06:00 น.</h2><p id="boardStats">—</p></section>
+    </div>
+    <div class="board-tools">
+      <button type="button" id="boardFullscreen">เต็มจอ</button>
+      <span id="boardConnection" role="status">กำลังเชื่อมต่อ</span>
+    </div>
   </div>
 
   <script>
-    function formatMoney(amount) {
-      return '฿' + amount.toLocaleString('th-TH');
+    const boardShop = new URLSearchParams(location.search).get('shop') || 'SHOP_000';
+    const set = (id, text) => { document.getElementById(id).textContent = text; };
+    const money = value => '฿' + Number(value).toLocaleString('th-TH');
+    let currentRound;
+
+    function updateBoardTimer() {
+      const remaining = currentRound?.status === 'Open'
+        ? Math.max(0, Math.ceil((Number(currentRound.end_time_ms) - Date.now()) / 1000)) : 0;
+      set('timerDisplay', [Math.floor(remaining / 60), remaining % 60].map(n => String(n).padStart(2, '0')).join(':'));
+      set('statusDisplay', !currentRound ? 'ยังไม่มีรอบ' : currentRound.status === 'Ended' ? 'จบรอบแล้ว'
+        : remaining > 0 ? 'เปิดรับยอด' : 'ปิดรับยอด · รอผล');
     }
 
-    async function fetchLiveBoard() {
+    async function refreshBoard() {
       try {
-        const response = await fetch(`${APP_CONFIG.GAS_URL}?action=getDashboard`);
-        const data = await response.json();
-        
-        if (data && data.roundId) {
-          document.getElementById('roundIdDisplay').innerText = `รอบ ${data.roundId}`;
-          document.getElementById('statusDisplay').innerText = data.status === 'Open' ? 'เปิดรับแทง' : 'ปิดรับแทงแล้ว รอผล';
-          
-          document.getElementById('evenAmount').innerText = formatMoney(data.totalEven);
-          document.getElementById('oddAmount').innerText = formatMoney(data.totalOdd);
-          document.getElementById('totalAmount').innerText = formatMoney(data.totalAll);
-          
-          // คำนวณ Progress Bar
-          let total = data.totalAll > 0 ? data.totalAll : 1;
-          let evenPercent = (data.totalEven / total) * 100;
-          let oddPercent = (data.totalOdd / total) * 100;
-          
-          document.getElementById('evenProgress').style.width = `${evenPercent}%`;
-          document.getElementById('oddProgress').style.width = `${oddPercent}%`;
-
-          // (รอ Backend ส่งข้อมูลจำนวนโต๊ะที่แทง และผลรอบล่าสุดมาเพิ่มเติม)
+        const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
+          method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(9000),
+          headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY },
+          body: JSON.stringify({ action: 'public_cash_board', shop_id: boardShop }),
+        });
+        const { board } = await response.json();
+        if (!response.ok || !board) {
+          if (response.status === 404) {
+            currentRound = null;
+            updateBoardTimer();
+            for (const id of ['roundIdDisplay', 'evenAmount', 'oddAmount', 'totalAmount', 'evenCount', 'oddCount', 'lastWeight', 'lastWinner', 'boardTables', 'boardStats']) set(id, '—');
+            for (const side of ['even', 'odd']) document.getElementById(side + 'Progress').style.width = '0%';
+            set('boardConnection', 'ร้านนี้ยังไม่เปิดบริการ');
+            return;
+          }
+          throw new Error('BOARD_UNAVAILABLE');
         }
-      } catch (error) {
-        console.error("Error fetching live board:", error);
+        set('boardShopName', board.shop_name);
+        currentRound = board.round;
+        set('roundIdDisplay', board.round ? 'รอบ ' + board.round.round_id : 'รอบ —');
+        updateBoardTimer();
+        const totals = board.totals;
+        const total = Number(totals.even) + Number(totals.odd);
+        for (const side of ['even', 'odd']) {
+          set(side + 'Amount', money(totals[side]));
+          set(side + 'Count', totals[side + '_count'] + ' โต๊ะ/บิล');
+          document.getElementById(side + 'Progress').style.width = (total ? Number(totals[side]) / total * 100 : 0) + '%';
+        }
+        set('totalAmount', money(total));
+        set('lastWeight', board.last_result ? board.last_result.weight + ' กรัม' : '—');
+        set('lastWinner', board.last_result?.result || '—');
+        set('boardTables', totals.tables.length ? totals.tables.sort((a, b) => a.localeCompare(b, 'th', { numeric: true })).join(' · ') : '—');
+        set('boardStats', 'คู่ ' + board.daily.even + ' รอบ · คี่ ' + board.daily.odd + ' รอบ');
+        set('boardConnection', 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' }));
+      } catch {
+        set('boardConnection', 'ข้อมูลอาจไม่ล่าสุด · กำลังเชื่อมต่อใหม่');
+      } finally {
+        setTimeout(refreshBoard, 3000);
       }
     }
 
-    // Timer จำลอง (ต้องผูกกับ Timestamp การเปิดรอบจาก Backend จริง)
-    let timeLeft = 84; // 01:24
-    setInterval(() => {
-      if(timeLeft > 0) timeLeft--;
-      let m = Math.floor(timeLeft / 60).toString().padStart(2, '0');
-      let s = (timeLeft % 60).toString().padStart(2, '0');
-      document.getElementById('timerDisplay').innerText = `${m}:${s}`;
-    }, 1000);
-
-    // ดึงข้อมูลทุก 3 วินาที
-    fetchLiveBoard();
-    setInterval(fetchLiveBoard, 3000);
+    const fullscreen = document.getElementById('boardFullscreen');
+    fullscreen.hidden = !document.fullscreenEnabled;
+    fullscreen.onclick = async () => {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await document.documentElement.requestFullscreen();
+      } catch { set('boardConnection', 'เปิดเต็มจอจากเมนูเบราว์เซอร์ได้'); }
+    };
+    document.addEventListener('fullscreenchange', () => {
+      fullscreen.textContent = document.fullscreenElement ? 'ออกจากเต็มจอ' : 'เต็มจอ';
+    });
+    setInterval(updateBoardTimer, 1000);
+    refreshBoard();
   </script>
 </body>
 </html>
