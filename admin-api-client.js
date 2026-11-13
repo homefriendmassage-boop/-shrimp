@@ -1,14 +1,24 @@
 // Admin-only transport. LINE ID tokens are verified by admin-api on every request.
 function createAdminApiClient(config, getShopId) {
-  async function call(payload, endpoint = 'admin-api') {
+  async function call(payload, endpoint = 'admin-api', receipt = null) {
     const token = liff.getIDToken();
     if (!token) throw new Error('LINE_AUTH_INVALID');
+    const headers = { apikey: config.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + token };
+    let body;
+    if (receipt) {
+      body = new FormData();
+      body.set('shop_id', getShopId());
+      body.set('request_id', payload.request_id);
+      body.set('receipt', receipt);
+    } else {
+      headers['Content-Type'] = 'application/json';
+      body = JSON.stringify({ ...payload, shop_id: getShopId() });
+    }
     let response;
     try {
       response = await fetch(config.SUPABASE_URL + '/functions/v1/' + endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: config.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + token },
-        body: JSON.stringify({ ...payload, shop_id: getShopId() }),
+        headers, body,
         signal: AbortSignal.timeout(20000)
       });
     } catch (_) { throw new Error('ADMIN_API_UNAVAILABLE'); }
@@ -58,7 +68,8 @@ function createAdminApiClient(config, getShopId) {
     tableCashReport: day => call({ action: 'table_cash_report', day }),
     finalizeBalancedRound: (roundId, weight) => call({ action: 'round_finalize_balanced', round_id: roundId, weight }),
     approveWalletDeposit: requestId => call({ action: 'wallet_approve_deposit', request_id: String(requestId) }),
-    approveWalletWithdrawal: requestId => call({ action: 'wallet_approve_withdrawal', request_id: String(requestId) }),
+    approveWalletWithdrawal: (requestId, receipt) => call({ action: 'wallet_approve_withdrawal', request_id: String(requestId) }, 'admin-api', receipt),
+    rejectWalletWithdrawal: (requestId, reason) => call({ action: 'wallet_reject_withdrawal', request_id: String(requestId), rejection_reason: reason }),
     access: () => call({ action: 'access' }),
     membershipSummary: () => call({ action: 'membership_summary' })
   };

@@ -308,3 +308,61 @@ test('round IDs are distinct across shops and keep the accounting-day sequence',
   assert.equal(context.nextShopRoundId('SHOP_001', ids[1], Date.parse('2026-11-14T05:59:00+07:00')), 'R-261113-001-2');
   assert.equal(context.nextShopRoundId('SHOP_001', ids[1], Date.parse('2026-11-14T06:00:00+07:00')), 'R-261114-001-1');
 });
+
+test('withdrawal decisions send a private LINE image or a rejection reason to the linked player', async () => {
+  const uid = 'U' + 'a'.repeat(32);
+  const recipient = 'U' + 'b'.repeat(32);
+  const key = '97b30417-a83c-4825-97da-16132977b4b3';
+  const image = 'https://example.supabase.co/signed-receipt';
+  const sent = [];
+  const decisions = [];
+  const uploads = [];
+  const env = name => ({ LINE_CHANNEL_ID_ADMIN:'admin', SUPABASE_URL:'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY:'secret' })[name];
+  const db = {
+    from(table) {
+      const row = { users:{ uid, role:'Admin', status:'Active' }, shops:{ status:'active' },
+        topup_requests:{ type:'ถอนเงิน', status:'Pending' }, shop_oa_runtime:{ line_oa_token:'shop-token' } }[table];
+      const query = { select:()=>query, eq:()=>query, maybeSingle:async()=>({ data:row }) };
+      return query;
+    },
+    async rpc(name, args) {
+      if (name === 'resolve_shop_oa_recipient') {
+        assert.deepEqual(args, { p_shop:'SHOP_001', p_member:uid });
+        return { data:recipient };
+      }
+      assert.equal(name, 'decide_player_withdrawal');
+      decisions.push(args);
+      return { data:{ code:'DECIDED', uid, type:'ถอนเงิน', amount:100, member_id:'M0001', notice_key:key,
+        status:args.p_reason ? 'Rejected' : 'Approved', rejection_reason:args.p_reason, receipt_path:args.p_receipt } };
+    },
+    storage:{ from(name) {
+      assert.equal(name,'slips-private');
+      return { upload:async path=>{ uploads.push(path); return {}; }, createSignedUrl:async()=>({ data:{ signedUrl:image } }) };
+    } },
+  };
+  const handler = makeHandler({ env, createDb:()=>db, fetcher:async (url, options) => {
+    if (url.includes('/verify')) return Response.json({ sub:uid, aud:'admin', exp:Date.now()/1000+60 });
+    sent.push({ headers:options.headers, ...JSON.parse(options.body) });
+    return new Response();
+  } });
+  const missing = await handler(request({ action:'wallet_approve_withdrawal', request_id:'12' }));
+  assert.equal((await missing.json()).code,'WITHDRAWAL_RECEIPT_REQUIRED');
+  assert.equal(decisions.length,0);
+
+  const body = new FormData();
+  body.set('shop_id','SHOP_001');
+  body.set('request_id','12');
+  body.set('receipt', new File([Uint8Array.from([255,216,255,224])], 'receipt.jpg', { type:'image/jpeg' }));
+  const approved = await handler(new Request('https://example.supabase.co', { method:'POST', headers:{ authorization:'Bearer token' }, body }));
+  assert.deepEqual(await approved.json(),{ ok:true, notified:true });
+  assert.match(uploads[0], /^SHOP_001\/withdrawal-receipts\/12\//);
+  assert.equal(sent[0].to,recipient);
+  assert.equal(sent[0].headers['X-Line-Retry-Key'],key);
+  assert.deepEqual(sent[0].messages[1],{ type:'image', originalContentUrl:image, previewImageUrl:image });
+
+  const rejected = await handler(request({ action:'wallet_reject_withdrawal', request_id:'12', rejection_reason:'ยอดไม่ตรง' }));
+  assert.deepEqual(await rejected.json(),{ ok:true, notified:true });
+  assert.equal(sent[1].to,recipient);
+  assert.match(JSON.stringify(sent[1].messages), /ยอดไม่ตรง/);
+  assert.equal(sent[1].messages.length,1);
+});
