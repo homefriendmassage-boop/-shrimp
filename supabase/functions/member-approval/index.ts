@@ -198,10 +198,9 @@ Deno.serve(async req => {
     if (isAdmin) {
       const staff = await db.from('users').select('role,status').eq('uid', uid).eq('shop_id', shopId).maybeSingle();
       if (staff.error) return error('DATABASE_ERROR', 500);
-      const legacyAdmin = staff.data?.status === 'Active' && ['Admin', 'Superadmin'].includes(staff.data.role);
-      const grant = await db.from('membership_admins').select('line_uid').eq('shop_id', shopId).eq('line_uid', uid).maybeSingle();
-      if (grant.error) return error('ADMIN_GRANTS_UNAVAILABLE', 503);
-      if (!legacyAdmin && !grant.data) return error('ADMIN_REQUIRED', 403);
+      if (staff.data?.status !== 'Active' || !['Admin','Superadmin','Cashier'].includes(staff.data.role)) {
+        return error('ADMIN_REQUIRED', 403);
+      }
       if (action === 'queue') {
         const result = await db.from('membership_applications').select('id,member_id,display_name,state,requested_at,decided_at,reason,profile_pic,line_uid')
           .eq('shop_id', shopId).order('requested_at', { ascending: false }).limit(100);
@@ -236,8 +235,16 @@ Deno.serve(async req => {
       .eq('shop_id', shopId).eq('line_uid', uid).maybeSingle();
     if (action === 'apply') {
       const displayName = typeof input.display_name === 'string' ? input.display_name.trim().slice(0, 80) : '';
+      let referralMemberId = null;
+      if (typeof input.referral_member_id === 'string' && /^M[0-9]{4,}$/.test(input.referral_member_id)) {
+        const referrer = await db.from('users').select('member_id').eq('shop_id', shopId)
+          .eq('member_id', input.referral_member_id).neq('uid', uid).eq('status', 'Active')
+          .in('role', ['Admin','Superadmin','Cashier','Promoter']).maybeSingle();
+        if (referrer.error) return error('DATABASE_ERROR', 500);
+        referralMemberId = referrer.data?.member_id ?? null;
+      }
       const result = await db.from('membership_applications').upsert({
-        shop_id: shopId, line_uid: uid, display_name: displayName, profile_pic: picture, state: 'Pending'
+        shop_id: shopId, line_uid: uid, display_name: displayName, profile_pic: picture, state: 'Pending', referral_member_id: referralMemberId
       }, { onConflict: 'shop_id,line_uid', ignoreDuplicates: true });
       if (result.error) return error('DATABASE_ERROR', 500);
     }

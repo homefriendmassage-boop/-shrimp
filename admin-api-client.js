@@ -59,6 +59,16 @@ function createAdminApiClient(config, getShopId) {
     finalizeBalancedRound: (roundId, weight) => call({ action: 'round_finalize_balanced', round_id: roundId, weight }),
     approveWalletDeposit: requestId => call({ action: 'wallet_approve_deposit', request_id: String(requestId) }),
     approveWalletWithdrawal: requestId => call({ action: 'wallet_approve_withdrawal', request_id: String(requestId) }),
+    referralProfile: () => call({ action: 'referral_profile' }),
+    backerProfile: () => call({ action: 'backer_profile' }),
+    commissionRequest: (request_id, type, amount) => call({ action: 'commission_request', request_id, type, amount }),
+    tableOverview: () => call({ action: 'table_overview' }),
+    roleDirectory: page => call({ action: 'role_directory', page }),
+    roleHistory: page => call({ action: 'role_history', page }),
+    changeRole: (target_uid, changes) => call({ action: 'role_change', target_uid, ...changes }),
+    cancelBill: (bet_id, reason) => call({ action: 'cancel_bill', bet_id, reason }),
+    adjustBalance: (target_type, target, type, amount, request_id) => call({ action: 'adjust_balance', target_type, target, type, amount, request_id }),
+    rejectWallet: (request_id, reason) => call({ action: 'wallet_reject', request_id, reason }),
     access: () => call({ action: 'access' }),
     membershipSummary: () => call({ action: 'membership_summary' })
   };

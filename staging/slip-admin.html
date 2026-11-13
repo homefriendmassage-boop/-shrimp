@@ -31,7 +31,7 @@ async function load(){
    if(e.image_url){const img=document.createElement('img');img.src=e.image_url;img.alt='หลักฐานสลิปของรายการ '+e.id;img.loading='lazy';card.appendChild(img)}
    $('items').appendChild(card);
   }
- }catch(e){$('message').textContent='ไม่สามารถโหลดรายการ: '+e.message}
+ }catch(e){$('message').textContent=['ADMIN_REQUIRED','ACCESS_DENIED'].includes(e.message)?'คุณไม่มีสิทธิ์เข้าถึงหน้านี้ กรุณาติดต่อเจ้าของร้าน':'ไม่สามารถโหลดรายการ: '+e.message}
 }
 $('reload').onclick=load;init();
 </script></body></html>

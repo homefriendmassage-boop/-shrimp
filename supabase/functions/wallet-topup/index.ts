@@ -124,7 +124,7 @@ Deno.serve(async (req) => {
     if (member.error || application.error || account.error || store.error) return reply("WALLET_UNAVAILABLE", 503);
     if (String(store.data?.status).toLowerCase() !== "active") return reply("SHOP_NOT_AVAILABLE", 403);
     if (!member.data || !application.data || member.data.member_id !== application.data.member_id ||
-        member.data.role === "Backer") return reply("PLAYER_ACCESS_REQUIRED", 403);
+        !["Admin","Superadmin","Operator","Promoter","Customer","Backer"].includes(member.data.role)) return reply("PLAYER_ACCESS_REQUIRED", 403);
     if (!account.data.length) return reply("AUTO_CREDIT_DISABLED", 503);
 
     const digest = await crypto.subtle.digest("SHA-256", await image.arrayBuffer());

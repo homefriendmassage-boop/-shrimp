@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>ระบบผู้แนะนำ (Promoter)</title>
   <script src="config.js?v=player-entry-1"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="admin-api-client.js?v=shop-rbac-1"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
@@ -19,6 +19,7 @@
     .bg-pink { background: #ec4899; }
     .wallet-box { background: #0f111a; border: 1px solid #ec4899; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 15px; }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 </head>
 <body>
   <div class="container">
@@ -26,12 +27,13 @@
       <div style="font-size: 1.3rem; font-weight: bold;" class="text-pink">
           <i class="fa-solid fa-share-nodes"></i> ระบบแนะนำเพื่อน
       </div>
-      <button onclick="window.location.href='index.html?shop=' + encodeURIComponent(currentShopId)" style="background: transparent; color: #94a3b8; border: 1px solid #94a3b8; border-radius: 6px; padding: 5px 10px; cursor: pointer;">
+      <button data-back-player onclick="window.location.href='index.html?shop=' + encodeURIComponent(currentShopId)" style="background: transparent; color: #94a3b8; border: 1px solid #94a3b8; border-radius: 6px; padding: 5px 10px; cursor: pointer;">
           กลับหน้าหลัก
       </button>
     </div>
 
-    <div class="card">
+    <p id="referralStatus" role="status">กำลังตรวจสอบสิทธิ์…</p>
+    <div class="card referral-content" hidden>
       <div class="wallet-box">
         <div style="color: #94a3b8; font-size: 0.9rem;">ยอดค่าคอมมิชชั่นสะสม</div>
         <div id="commBalance" style="font-size: 2.5rem; font-weight: bold; color: #10b981; margin-top: 5px;">฿0.00</div>
@@ -40,103 +42,111 @@
       <button class="btn bg-pink" onclick="requestWithdraw()"><i class="fa-solid fa-money-bill-transfer"></i> แจ้งถอนค่าคอมมิชชั่น</button>
     </div>
 
-    <div class="card">
+    <div class="card referral-content" hidden>
       <h3 style="margin-top: 0; border-bottom: 1px dashed #2a2d3d; padding-bottom: 10px;" class="text-pink">
           <i class="fa-solid fa-link"></i> ลิงก์ชวนเพื่อนของคุณ
       </h3>
       <p style="font-size: 0.9rem; color: #94a3b8;">ให้เพื่อนของคุณสแกน QR Code หรือกดลิงก์ด้านล่างเพื่อเข้าเล่น คุณจะได้รับส่วนแบ่งเมื่อเพื่อนมีการแทงกุ้ง</p>
       
       <div style="background: white; padding: 15px; border-radius: 12px; display: inline-block; margin: 10px auto; text-align: center; width: 100%; box-sizing: border-box;">
-          <img id="qrCodeImg" src="https://via.placeholder.com/200?text=Loading+QR..." alt="QR Code" style="width: 200px; height: 200px; margin: 0 auto;">
+          <div id="referralQr" role="img" aria-label="QR แนะนำลูกค้า" style="display:flex;justify-content:center"></div>
       </div>
       
       <div style="display: flex; gap: 10px; margin-top: 15px;">
-        <input type="text" id="refLinkInput" readonly style="flex: 2; padding: 10px; border-radius: 8px; background: #0f111a; border: 1px solid #2a2d3d; color: white;">
+        <input type="text" aria-label="ลิงก์แนะนำ" id="refLinkInput" readonly style="flex: 2; padding: 10px; border-radius: 8px; background: #0f111a; border: 1px solid #2a2d3d; color: white;">
         <button class="btn" style="flex: 1; background: #3b82f6;" onclick="copyLink()"><i class="fa-regular fa-copy"></i> คัดลอก</button>
       </div>
+      <p>รหัสแนะนำ <strong id="referralCode"></strong></p>
+      <button id="shareReferral" class="btn bg-pink" type="button">แชร์ลิงก์ LINE</button>
+      <button id="shareReferralFlex" class="btn bg-pink" type="button">แชร์ Flex ใน LINE</button>
     </div>
   </div>
 
   <script>
-    const _supabase = supabase.createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_ANON_KEY);
     const params = new URLSearchParams(location.search);
     const restored = new URL(params.get('liff.state') || '/', location.origin);
     const currentShopId = params.get('shop') ||
       (restored.origin === location.origin && restored.searchParams.get('shop')) || 'SHOP_000';
-    let currentUser = null;
+    const api = createAdminApiClient(APP_CONFIG, () => currentShopId);
+    const referralStatus = document.getElementById('referralStatus');
+    const referralLink = document.getElementById('refLinkInput');
+    let currentUser;
+    let commissionRetry;
+    let commissionBusy = false;
 
     async function initPromoter() {
       try {
         await liff.init({ liffId: APP_CONFIG.LIFF_ID_PLAYER });
-        if (!liff.isLoggedIn()) { liff.login(); return; }
-        
-        const profile = await liff.getProfile();
-        const { data: user } = await _supabase.from('users').select('*').eq('shop_id', currentShopId).eq('uid', profile.userId).single();
-        
-        if (!user || user.role !== 'Promoter') {
-            document.body.innerHTML = `<div style="text-align:center; padding:50px; color:red; font-family:'Kanit';"><h3>ไม่มีสิทธิ์เข้าถึง</h3><p>บัญชีของคุณไม่ใช่ผู้แนะนำ (Promoter)</p><button onclick="window.location.href='index.html?shop=' + encodeURIComponent(currentShopId)" style="margin-top:20px; padding:10px; border-radius:8px;">กลับหน้าหลัก</button></div>`;
-            return;
+        if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+        ({ profile: currentUser } = await api.referralProfile());
+        const code = formatMemberCode(currentShopId,currentUser.member_id);
+        referralLink.value = playerEntryUrl(currentShopId, { ref: code });
+        document.getElementById('referralCode').textContent = code;
+        document.getElementById('promoterName').textContent = currentUser.display_name;
+        document.getElementById('commBalance').textContent = '฿' + Number(currentUser.commission_balance || 0).toLocaleString('th-TH');
+        if (currentUser.role === 'Cashier') {
+          const back = document.querySelector('[data-back-player]');
+          back.textContent = 'กลับหน้าแคชเชียร์';
+          back.onclick = () => { location.href = 'admin.html?shop=' + encodeURIComponent(currentShopId); };
         }
-
-        currentUser = user;
-        document.getElementById('promoterName').innerText = user.display_name;
-        document.getElementById('commBalance').innerText = `฿${(user.commission_balance || 0).toLocaleString()}`;
-
-        // สร้าง Link และ QR Code
-        const refLink = playerEntryUrl(currentShopId, { ref: formatMemberCode(currentShopId, user.member_id) });
-        document.getElementById('refLinkInput').value = refLink;
-        document.getElementById('qrCodeImg').src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(refLink)}`;
-        
-      } catch (e) { alert("Error: " + e.message); }
+        document.getElementById('shareReferralFlex').hidden = !liff.isApiAvailable('shareTargetPicker');
+        document.querySelectorAll('.referral-content').forEach(card => { card.hidden = false; });
+        referralStatus.textContent = '';
+        if (typeof QRCode === 'function') new QRCode(document.getElementById('referralQr'), { text: referralLink.value, width: 200, height: 200 });
+        else document.getElementById('referralQr').textContent = 'โหลด QR ไม่สำเร็จ';
+      } catch (error) {
+        referralStatus.textContent = error.message === 'ACCESS_DENIED'
+          ? 'คุณไม่มีสิทธิ์เข้าถึงหน้านี้ กรุณาติดต่อเจ้าของร้าน' : 'เปิดหน้าแนะนำลูกค้าไม่สำเร็จ กรุณาเปิดใหม่';
+      }
     }
 
-    function copyLink() {
-      let copyText = document.getElementById("refLinkInput");
-      copyText.select(); copyText.setSelectionRange(0, 99999);
-      navigator.clipboard.writeText(copyText.value);
-      alert("คัดลอกลิงก์เรียบร้อยแล้ว ส่งให้เพื่อนได้เลย!");
+    async function copyLink() {
+      if (!referralLink.value) return;
+      try {
+        await navigator.clipboard.writeText(referralLink.value);
+        referralStatus.textContent = 'คัดลอกลิงก์แล้ว';
+      } catch {
+        referralLink.select();
+        referralStatus.textContent = 'เลือกลิงก์แล้ว กดคัดลอกบนอุปกรณ์';
+      }
     }
+
+    document.getElementById('shareReferral').onclick = () => {
+      if (!referralLink.value) return;
+      liff.openWindow({ url: 'https://line.me/R/msg/text/?' + encodeURIComponent(referralLink.value), external: true });
+    };
+    document.getElementById('shareReferralFlex').onclick = async () => {
+      if (!referralLink.value || !liff.isApiAvailable('shareTargetPicker')) return;
+      try {
+        const sent = await liff.shareTargetPicker([{ type: 'flex', altText: 'ชวนเข้าใช้งานบ่อตกกุ้ง', contents: {
+          type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [
+            { type: 'text', text: 'ชวนเข้าใช้งานบ่อตกกุ้ง', weight: 'bold', wrap: true },
+          ] }, footer: { type: 'box', layout: 'vertical', contents: [
+            { type: 'button', style: 'primary', action: { type: 'uri', label: 'เปิดลิงก์แนะนำ', uri: referralLink.value } },
+          ] },
+        } }]);
+        if (sent) referralStatus.textContent = 'แชร์คำเชิญแล้ว';
+      } catch { referralStatus.textContent = 'แชร์ Flex ไม่สำเร็จ'; }
+    };
 
     async function requestWithdraw() {
-      let amt = parseFloat(prompt(`คุณมีค่าคอมมิชชั่น ฿${currentUser.commission_balance}\nกรุณาระบุจำนวนเงินที่ต้องการถอน:`));
-      if (!amt || isNaN(amt) || amt <= 0) return;
-      if (amt > currentUser.commission_balance) return alert("ยอดเงินไม่พอ");
-
-      let typeCode = prompt("เลือกรูปแบบการรับเงิน:\nพิมพ์ 1 = โอนเข้าบัญชีธนาคาร (เงินสด)\nพิมพ์ 2 = เติมเป็นเครดิตเล่นเกม");
-      if(typeCode !== '1' && typeCode !== '2') return alert("ยกเลิกการทำรายการ");
-
+      if (!currentUser || commissionBusy) return;
+      const amount = prompt('ระบุจำนวนค่าคอมมิชชั่นที่ต้องการถอน (บาท)')?.trim();
+      if (!amount || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) return;
+      const mode = prompt('พิมพ์ 1 เพื่อรับเงินโอน หรือ 2 เพื่อเติมเครดิต');
+      if (mode !== '1' && mode !== '2') return;
+      const type = mode === '1' ? 'cash' : 'credit';
+      const key = type + ':' + amount;
+      if (commissionRetry?.key !== key) commissionRetry = { key, id: crypto.randomUUID() };
+      commissionBusy = true;
       try {
-          let newBal = currentUser.commission_balance - amt;
-          await _supabase.from('users').update({ commission_balance: newBal }).eq('shop_id', currentShopId).eq('uid', currentUser.uid);
-          
-          let wType = typeCode === '1' ? 'cash' : 'credit';
-          let rType = typeCode === '1' ? 'ถอนค่าคอม' : 'ฝากเงิน';
-          let mId = wType === 'cash' ? '-' : `(เปลี่ยนค่าคอมเป็นเครดิต)`;
-          
-          // แจ้ง GAS
-          fetch(APP_CONFIG.GAS_URL, {
-              method: 'POST',
-              body: JSON.stringify({
-                  action: 'requestAffiliateWithdraw',
-                  uid: currentUser.uid,
-                  memberId: currentUser.member_id,
-                  displayName: currentUser.display_name,
-                  amount: amt,
-                  withdrawType: wType,
-                  profilePic: currentUser.profile_pic
-              })
-          });
-
-          // บันทึกลงคิวให้แอดมิน
-          await _supabase.from('topup_requests').insert([{
-              uid: currentUser.uid, member_id: currentUser.member_id,
-              display_name: currentUser.display_name, type: rType,
-              amount: amt, method: mId, status: 'Pending'
-          }]);
-
-          alert("แจ้งทำรายการเรียบร้อยแล้ว รอแอดมินดำเนินการครับ");
-          window.location.reload();
-      } catch (e) { alert("เกิดข้อผิดพลาด"); }
+        await api.commissionRequest(commissionRetry.id, type, amount);
+        commissionRetry = null;
+        alert('ส่งคำขอให้แอดมินแล้ว');
+        location.reload();
+      } catch (error) {
+        referralStatus.textContent = 'ส่งคำขอไม่สำเร็จ: ' + error.message;
+      } finally { commissionBusy = false; }
     }
 
     initPromoter();

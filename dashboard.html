@@ -7,7 +7,7 @@
   
   <!-- โหลด Config และ Supabase -->
   <script src="config.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="admin-api-client.js?v=shop-rbac-1"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
   <style>
@@ -125,6 +125,7 @@
       .bottom-section { flex-direction: column; gap: 12px; } .summary-card, .last-result-card { padding: 14px 16px; border-radius: 12px; } .summary-label { font-size: 0.95rem; } .summary-total { font-size: 1.5rem; } .last-result-left { gap: 12px; } .scale-icon { font-size: 1.8rem; } .last-result-text { font-size: 0.8rem; } .last-result-weight { font-size: 1.3rem; } .winner-badge { padding: 6px 14px; font-size: 0.95rem; }
     }
   </style>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
 
@@ -177,6 +178,10 @@
     let _supabase; 
     let targetEndTimeMs = null; 
     let isRoundOpen = false; 
+    const params = new URLSearchParams(location.search);
+    const restored = new URL(params.get('liff.state') || '/', location.origin);
+    const currentShopId = params.get('shop') ||
+      (restored.origin === location.origin && restored.searchParams.get('shop')) || 'SHOP_000';
     let isFetching = false;
 
     function formatMoney(amount) { 
@@ -186,12 +191,12 @@
     // 2. ฟังก์ชันหลักสำหรับตั้งค่าหน้าจอ
     async function initDashboard() {
       try {
-        if (typeof supabase === 'undefined') {
-            throw new Error("โหลดไลบรารี Supabase ไม่สำเร็จ");
-        }
-        
-        _supabase = supabase.createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_ANON_KEY);
-        
+        await liff.init({ liffId: APP_CONFIG.LIFF_ID_ADMIN });
+        if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+        _supabase = createAdminApiClient(APP_CONFIG, () => currentShopId);
+        const { staff } = await _supabase.access();
+        if (!['Admin','Superadmin','Cashier'].includes(staff.role)) throw new Error('ADMIN_REQUIRED');
+
         // ดึงข้อมูลครั้งแรก
         await fetchLiveBoard();
         
@@ -203,7 +208,8 @@
         scheduleNextFetch();
         startTimerLoop();
       } catch (err) {
-        document.getElementById('loadingText').innerText = "ข้อผิดพลาด: ไม่สามารถเชื่อมต่อฐานข้อมูลได้";
+        document.getElementById('loadingText').innerText = err.message === 'ADMIN_REQUIRED'
+          ? 'คุณไม่มีสิทธิ์เข้าถึงหน้านี้ กรุณาติดต่อเจ้าของร้าน' : 'ไม่สามารถเชื่อมต่อฐานข้อมูลได้ กรุณาเปิดหน้าใหม่';
         document.getElementById('loadingText').style.color = "var(--red-main)";
         console.error(err);
       }
@@ -211,7 +217,7 @@
 
     function scheduleNextFetch() {
       setTimeout(async () => { 
-          await fetchLiveBoard(); 
+          try { await fetchLiveBoard(); } catch { /* The next poll retries. */ }
           scheduleNextFetch(); 
       }, 3000); 
     }
@@ -293,7 +299,12 @@
           document.getElementById('oddProgress').style.width = `${ta > 0 ? (oa/ta)*100 : 0}%`;
         }
       } catch (e) {
-          console.error("Dashboard Fetch Error: ", e);
+          if (['ADMIN_REQUIRED','SHOP_NOT_AVAILABLE'].includes(e.message)) {
+          document.getElementById('mainDashboard').style.display = 'none';
+          document.getElementById('loadingScreen').style.display = '';
+          document.getElementById('loadingText').textContent = 'คุณไม่มีสิทธิ์เข้าถึงหน้านี้ กรุณาติดต่อเจ้าของร้าน';
+        }
+        throw e;
       } finally { 
           isFetching = false; 
       }

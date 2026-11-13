@@ -413,7 +413,7 @@
       try {
         const restored = new URL(state, location.origin);
         if (restored.origin !== location.origin) return params;
-        for (const key of ['shop', 'table', 'd', 'table_token', 'ref', 'shop_login_check', 'shop_login', 'withdraw_confirm']) {
+        for (const key of ['shop', 'table', 'd', 'table_token', 'ref', 'shop_login_check', 'shop_login', 'withdraw_confirm', 'wallet']) {
           if (!params.has(key) && restored.searchParams.has(key)) params.set(key, restored.searchParams.get(key));
         }
       } catch { /* Explicit query values remain authoritative. */ }
@@ -477,7 +477,7 @@
 
         if (!liff.isLoggedIn()) {
           const redirect = new URL(location.pathname, location.origin);
-          for (const key of ['shop', 'table', 'd', 'table_token', 'ref', 'shop_login', 'withdraw_confirm']) {
+          for (const key of ['shop', 'table', 'd', 'table_token', 'ref', 'shop_login', 'withdraw_confirm', 'wallet']) {
             if (urlParams.has(key)) redirect.searchParams.set(key, urlParams.get(key));
           }
           liff.login({ redirectUri: redirect.href });
@@ -498,8 +498,8 @@
         if (urlParams.has('ref')) {
           const referrer = parseMemberCode(currentShopId, urlParams.get('ref'));
           try {
-            if (referrer) sessionStorage.setItem('referrer_id', referrer);
-            else sessionStorage.removeItem('referrer_id');
+            if (referrer) sessionStorage.setItem('referrer_id:' + currentShopId, referrer);
+            else sessionStorage.removeItem('referrer_id:' + currentShopId);
           } catch { /* Storage availability must not block access. */ }
         }
 
@@ -661,18 +661,19 @@
         document.getElementById('tableDisplay').textContent = currentDisplayName || 'บัญชีส่วนตัว';
         document.getElementById('creditDisplay').textContent = `฿${(user.credit_balance || 0).toLocaleString()}`;
         if (currentUserRole === 'Backer') document.getElementById('btnBackerMenu').style.display = 'block';
-        if (currentUserRole === 'Promoter') document.getElementById('btnPromoterMenu').style.display = 'block';
+        if (['Admin','Superadmin','Promoter'].includes(currentUserRole)) document.getElementById('btnPromoterMenu').style.display = 'block';
         document.getElementById('bettingView').classList.remove('hidden');
         document.getElementById('pendingView').classList.add('hidden');
         document.getElementById('bottomNavMenu').style.display = 'flex';
         if (cashTableQr) setMode('table');
         else fetchDashboard();
+        if (playerEntryParams().get('wallet') === '1') openTopupModal();
       } catch (error) {
         if (useShopLogin && error.message === 'OA_ACCOUNT_NOT_LINKED') {
           showShopLoginFallback('บัญชี LINE นี้ยังไม่ได้ผูกกับสมาชิกของบ่อทดสอบ2');
           return;
         }
-        showMembershipGate('ตรวจสอบบัญชีไม่สำเร็จ กรุณาเปิดหน้าใหม่ [' + error.message + ']', null);
+        showMembershipGate(error.message === 'ACCESS_DENIED' ? 'คุณไม่มีสิทธิ์เข้าถึงหน้านี้ กรุณาติดต่อเจ้าของร้าน' : 'ตรวจสอบบัญชีไม่สำเร็จ กรุณาเปิดหน้าใหม่ [' + error.message + ']', null);
       }
     }
 
@@ -697,10 +698,6 @@
 
     function selectBet(type) {
       if(!isRoundOpen) return; 
-      if (currentUserRole === 'Promoter') {
-          alert("สิทธิ์ผู้แนะนำ (Promoter) ไม่สามารถร่วมเดิมพันได้ครับ");
-          return;
-      }
       selectedBetType = type;
       document.getElementById('btnEven').classList.remove('selected');
       document.getElementById('btnOdd').classList.remove('selected');
@@ -765,13 +762,6 @@
       const btnOdd = document.getElementById('btnOdd');
       const btnSubmit = document.getElementById('btnSubmitBet');
       
-      if (currentUserRole === 'Promoter') {
-          btnEven.classList.add('disabled'); btnOdd.classList.add('disabled'); 
-          btnSubmit.classList.add('disabled'); btnSubmit.innerText = "ผู้แนะนำไม่สามารถแทงได้";
-          selectedBetType = ""; btnEven.classList.remove('selected'); btnOdd.classList.remove('selected');
-          return;
-      }
-
       if (isLocked) {
         btnEven.classList.add('disabled'); btnOdd.classList.add('disabled'); btnSubmit.classList.add('disabled'); btnSubmit.innerText = "ปิดรับแทงชั่วคราว"; selectedBetType = ""; btnEven.classList.remove('selected'); btnOdd.classList.remove('selected');
       } else {
@@ -915,7 +905,6 @@
 
     async function submitBet() {
       if (betSubmitting) return;
-      if (currentUserRole === 'Promoter') { alert('ผู้แนะนำไม่สามารถแทงได้ครับ'); return; }
       if (!isRoundOpen || !displayedRoundId) { alert('ขณะนี้ปิดรับแทงแล้วครับ'); return; }
       if (playMode === 'table' && (!cashTableQr || cashTableQr.table_day !== shopAccountingDay())) {
         alert('กรุณาสแกน QR โต๊ะเงินสดของรอบบัญชีปัจจุบัน');

@@ -9,17 +9,13 @@ const fields = {
   bets: 'bet_id shop_id round_id uid table_no bet_type amount status play_mode payout created_at cash_table',
   backer_logs: 'id shop_id round_id uid member_id share_percent gap_amount result_status pnl_amount water_fee_deducted wallet_balance_after created_at',
   transactions: 'id shop_id target_id type amount admin_name target_type created_at cash_table_no',
-  topup_requests: 'id shop_id uid member_id display_name type amount method fee_option slip_url status admin_name created_at',
+  topup_requests: 'id shop_id uid member_id display_name type amount method fee_option slip_url status withdrawal_confirmation_id wallet_slip_id admin_name created_at',
   system_settings: 'id shop_id water_margin min_bet max_bet round_duration comm_rate withdrawal_fee_mode created_at'
 };
 const writes = {
-  users: { update: 'role status credit_balance total_deposit commission_balance backer_share backer_water_fee backer_wallet' },
-  tables: { insert: 'shop_id table_no credit', update: 'credit cash_limit table_name is_open is_hidden' },
-  rounds: { insert: 'shop_id round_id status end_time_ms resolver_type', update: 'status end_time_ms resolver_type weight result' },
-  bets: { update: 'status payout' },
-  backer_logs: { insert: 'shop_id round_id uid member_id share_percent gap_amount result_status pnl_amount water_fee_deducted wallet_balance_after' },
-  transactions: { insert: 'shop_id target_id type amount admin_name target_type' },
-  topup_requests: { update: 'status admin_name' },
+  users: { update: 'backer_share backer_water_fee' },
+  tables: { insert: 'shop_id table_no credit', update: 'cash_limit table_name is_open is_hidden', delete: '' },
+  rounds: { insert: 'shop_id round_id status end_time_ms resolver_type', update: 'status end_time_ms resolver_type' },
   system_settings: { update: 'water_margin min_bet max_bet round_duration comm_rate withdrawal_fee_mode' }
 };
 const identity = { users: ['uid', 'member_id'], tables: ['table_no'], rounds: ['round_id'], bets: ['bet_id'], topup_requests: ['id'] };
@@ -65,12 +61,36 @@ async function verifyLineClaims(token, clientId, fetcher, useCache) {
   return claims;
 }
 
+const owners = ['Admin', 'Superadmin'];
+const managers = [...owners, 'Cashier'];
+const tableStaff = [...managers, 'Operator'];
+const playerRoles = [...owners, 'Operator', 'Promoter', 'Customer', 'Backer'];
+const referralRoles = [...managers, 'Promoter'];
+const staffActions = {
+  Operator: ['table_overview', 'table_qr', 'table_cash_bet', 'table_cash_payment'],
+  Cashier: ['table_overview', 'table_qr', 'table_cash_bet', 'table_cash_payment', 'table_bulk_create',
+    'table_cash_report', 'table_send_cash_report', 'round_finalize_balanced', 'membership_summary',
+    'wallet_approve_deposit', 'wallet_approve_withdrawal', 'wallet_reject', 'adjust_balance'],
+  Admin: ['table_overview', 'table_qr', 'table_cash_bet', 'table_cash_payment', 'table_bulk_create',
+    'table_cash_report', 'table_send_cash_report', 'round_finalize_balanced', 'membership_summary',
+    'wallet_approve_deposit', 'wallet_approve_withdrawal', 'wallet_reject', 'adjust_balance',
+    'role_directory', 'role_history', 'role_change', 'cancel_bill'],
+};
+const roleOf = row => row?.status === 'Active' ? row.role : null;
+const loadMember = (db, shop, uid, columns = 'uid,shop_id,role,status,member_id,display_name') =>
+  db.from('users').select(columns).eq('shop_id', shop).eq('uid', uid).maybeSingle();
+
 export function validateQuery(input, role, shopId) {
   const { table, operation = 'select' } = input;
   if (!Object.hasOwn(fields, table)) fail('TABLE_NOT_ALLOWED', 403);
   if (!['select', 'insert', 'update', 'delete'].includes(operation)) fail('OPERATION_NOT_ALLOWED', 403);
-  if (!['Admin', 'Superadmin', 'Operator'].includes(role)) fail('ADMIN_REQUIRED', 403);
-  if (role === 'Operator' && operation === 'select' && ['transactions', 'backer_logs'].includes(table)) fail('ADMIN_REQUIRED', 403);
+  if (!tableStaff.includes(role)) fail('ADMIN_REQUIRED', 403);
+  if (role === 'Operator' && (table !== 'tables' || operation !== 'select')) fail('ADMIN_REQUIRED', 403);
+  if (role === 'Cashier' && operation !== 'select' && !['tables', 'rounds'].includes(table)) fail('ADMIN_REQUIRED', 403);
+  if (role === 'Cashier' && table === 'users' && operation === 'select') {
+    const reportingFields = 'uid,display_name,backer_water_fee';
+    if (input.columns !== reportingFields && input.columns !== 'uid, display_name, backer_water_fee') fail('COLUMN_NOT_ALLOWED', 403);
+  }
   const columns = input.columns === '*' || input.columns === undefined ? fields[table].split(' ') : String(input.columns).split(',').map(s => s.trim());
   if (!columns.length || columns.some(c => !includes(fields[table], c))) fail('COLUMN_NOT_ALLOWED', 403);
   const filters = input.filters ?? [];
@@ -86,7 +106,6 @@ export function validateQuery(input, role, shopId) {
   if (operation !== 'select') {
     const allowed = writes[table]?.[operation];
     if (allowed === undefined) fail('WRITE_NOT_ALLOWED', 403);
-    if (role === 'Operator' && (table === 'system_settings' || (table === 'users' && Object.keys(input.values ?? {}).some(k => !['credit_balance', 'total_deposit', 'commission_balance', 'backer_wallet'].includes(k))))) fail('ADMIN_REQUIRED', 403);
     if (operation === 'update' || operation === 'delete') {
       // The shop predicate is added by the server; never accept an unbounded mutation.
       if (table !== 'system_settings' && !(identity[table] ?? []).some(c => filters.some(f => f.op === 'eq' && f.column === c && String(f.value).length > 0))) fail('TARGET_REQUIRED');
@@ -101,13 +120,16 @@ export function validateQuery(input, role, shopId) {
           if (!includes(allowed, key) || (!primitive(value) && value !== null)) fail('VALUE_NOT_ALLOWED', 403);
           if (key === 'shop_id' && value !== shopId) fail('SHOP_MISMATCH', 403);
           if (['credit_balance', 'total_deposit', 'commission_balance', 'backer_wallet', 'credit', 'payout', 'amount'].includes(key) && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) fail('AMOUNT_INVALID');
+          if (['backer_share','backer_water_fee'].includes(key) && (typeof value !== 'number' || value < 0 || value > 100)) fail('AMOUNT_INVALID');
+          if (table === 'tables' && key === 'table_no' && (typeof value !== 'string' || !/^\d{1,8}$/.test(value))) fail('TABLE_INVALID');
           if (key === 'cash_limit' && value !== null &&
               (typeof value !== 'number' || value < 0.01 || value > 999999999)) fail('AMOUNT_INVALID');
           if (key === 'table_name' && value !== null &&
               (typeof value !== 'string' || !value.trim() || value.length > 40)) fail('TABLE_NAME_INVALID');
           if (['is_open', 'is_hidden'].includes(key) && typeof value !== 'boolean') fail('TABLE_INVALID');
-          if (key === 'role' && !['Customer', 'Promoter', 'Backer', 'Operator', 'Admin'].includes(String(value))) fail('ROLE_INVALID');
-          if (table === 'users' && key === 'status' && !['Active', 'Inactive'].includes(String(value))) fail('STATUS_INVALID');
+          if (table === 'tables' && key === 'credit' && value !== 0) fail('AMOUNT_INVALID');
+          if (table === 'rounds' && key === 'status' && !['Open', 'Closed'].includes(value)) fail('STATUS_INVALID');
+          if (table === 'rounds' && key === 'resolver_type' && ![null, 'none', 'backer', 'shop'].includes(value)) fail('STATUS_INVALID');
         }
       }
     }
@@ -175,22 +197,6 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
         });
         if (!result.ok) console.error('wallet LINE notification rejected', result.status);
       } catch { console.error('wallet LINE notification unavailable'); }
-    }
-    const group = shop.data?.admin_group_id || shop.data?.membership_notice_recipient_uid;
-    if (request.status === 'Pending' && /^[CUR][0-9a-f]{32}$/i.test(group || '') && group !== target.data &&
-        /^\d+-[a-zA-Z0-9]+$/.test(adminLiff)) {
-      const adminBubble = { ...bubble, footer: { type: 'box', layout: 'vertical', contents: [{
-        type: 'button', style: 'primary', action: {
-          type: 'uri', label: 'ตรวจสอบรายการ',
-          uri: 'https://liff.line.me/' + adminLiff + '?shop=' + encodeURIComponent(shopId) + '&tab=pending',
-        },
-      }] } };
-      const notice = await fetcher('https://api.line.me/v2/bot/message/push', {
-        method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: group, messages: [{ type: 'flex', altText: title, contents: adminBubble }] }),
-        signal: AbortSignal.timeout(3000),
-      });
-      if (!notice.ok) console.error('wallet admin LINE notification rejected', notice.status);
     }
   } catch { console.error('wallet LINE notification unavailable'); }
 }
@@ -271,19 +277,12 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
-      if (input.action === 'public_cash_board') {
-        if (!/^SHOP_[0-9]{3,24}$/.test(shopId)) fail('SHOP_INVALID');
-        const result = await database().rpc('read_public_cash_board', { p_shop: shopId });
-        if (result.error) fail('BOARD_UNAVAILABLE', 500);
-        if (!result.data) fail('SHOP_NOT_AVAILABLE', 404);
-        return reply({ ok: true, board: result.data });
-      }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'referral_profile', 'backer_profile', 'commission_request', 'role_directory', 'role_history', 'role_change', 'cancel_bill', 'adjust_balance', 'wallet_reject', 'table_overview', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
-      const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
+      const channelKey = (playerRequest || ['referral_profile', 'backer_profile', 'commission_request'].includes(input.action)) ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
       const shopLogin = input.shop_login === true;
       if (shopLogin && (!playerRequest || shopId !== 'SHOP_001')) fail('SHOP_LOGIN_NOT_ALLOWED', 403);
       const clientId = shopLogin ? '2009043114' : env(channelKey);
@@ -316,6 +315,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           canCreateShop(),
         ]);
         if (membership.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+        if (!canInvite && !membership.data?.length) fail('ACCESS_DENIED', 403);
         const shops = (membership.data ?? []).flatMap(({ shop, member_id }) => shop ? [{
           shop_id: shop.shop_id, shop_name: shop.shop_name, status: shop.status,
           oa_configured: Boolean(shop.line_oa_bot_uid || shop.line_oa_token?.trim()),
@@ -527,7 +527,35 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (result.data?.code !== 'CREATED') fail('SHOP_CREATE_FAILED', 500);
         return reply({ ok: true, shop_id: result.data.shop_id, status: 'Inactive', plan_code: result.data.plan_code });
       }
+      if (['referral_profile', 'backer_profile', 'commission_request'].includes(input.action)) {
+        const [profile, shop] = await Promise.all([
+          loadMember(db, shopId, claims.sub, 'uid,member_id,display_name,profile_pic,role,status,commission_balance,backer_wallet,backer_share,backer_water_fee'),
+          db.from('shops').select('status').eq('shop_id', shopId).maybeSingle(),
+        ]);
+        if (profile.error || shop.error) fail('DATABASE_ERROR', 500);
+        const role = roleOf(profile.data);
+        const allowed = input.action === 'backer_profile' ? role === 'Backer' : referralRoles.includes(role);
+        if (!allowed || String(shop.data?.status).toLowerCase() !== 'active') fail('ACCESS_DENIED', 403);
+        const { member_id, display_name, commission_balance } = profile.data;
+        if (input.action === 'referral_profile') return reply({ ok: true, profile: { member_id, display_name, commission_balance, role } });
+        if (input.action === 'commission_request') {
+          if (!shopInviteIdPattern.test(input.request_id) || !['cash','credit'].includes(input.type) ||
+              !/^\d{1,9}(?:\.\d{1,2})?$/.test(input.amount || '')) fail('AMOUNT_INVALID');
+          const result = await db.rpc('request_promoter_commission', { p_shop: shopId, p_uid: claims.sub,
+            p_id: input.request_id, p_type: input.type, p_amount: input.amount });
+          if (result.error) fail('WALLET_REQUEST_UNAVAILABLE', 500);
+          if (result.data !== 'QUEUED') fail(result.data, 409);
+          return reply({ ok: true });
+        }
+        const logs = await db.from('backer_logs').select(fields.backer_logs.split(' ').join(','))
+          .eq('shop_id', shopId).eq('uid', claims.sub).order('created_at', { ascending: false }).limit(20);
+        if (logs.error) fail('DATABASE_ERROR', 500);
+        return reply({ ok: true, profile: profile.data, logs: logs.data });
+      }
       if (input.action === 'player_state') {
+        const profile = await loadMember(db, shopId, claims.sub, 'role,status');
+        if (profile.error) fail('DATABASE_ERROR', 500);
+        if (!playerRoles.includes(roleOf(profile.data))) fail('ACCESS_DENIED', 403);
         const table = input.table_no;
         if (table != null && (typeof table !== 'string' || table.length > 40)) fail('TABLE_INVALID');
         const validTable = table && input.table_day === tableDay() &&
@@ -560,7 +588,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const profile = await db.from('users').select(input.action === 'wallet_request' ? 'uid,role,status,member_id,credit_balance,display_name' : 'uid,role,status,member_id,credit_balance')
           .eq('uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (profile.error) fail('DATABASE_ERROR', 500);
-        const staff = profile.data?.status === 'Active' && ['Admin', 'Superadmin'].includes(profile.data.role);
+        if (profile.data && !playerRoles.includes(roleOf(profile.data))) fail('ACCESS_DENIED', 403);
+        const staff = [...owners,'Operator'].includes(roleOf(profile.data));
         const application = await db.from('membership_applications').select('state,member_id')
           .eq('line_uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (application.error) fail('DATABASE_ERROR', 500);
@@ -666,19 +695,83 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       }
 
       // Identity always comes from LINE verification, never from input.uid/role.
-      const staff = await db.from('users').select('uid,shop_id,role,status,member_id,display_name').eq('uid', claims.sub).eq('shop_id', shopId).maybeSingle();
+      const staff = await loadMember(db, shopId, claims.sub);
       if (staff.error) fail('DATABASE_ERROR', 500);
-      if (!staff.data || staff.data.status !== 'Active' || !['Admin', 'Superadmin', 'Operator'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
+      const role = roleOf(staff.data);
+      if (![...tableStaff, 'Promoter'].includes(role)) fail('ADMIN_REQUIRED', 403);
       const shop = await db.from('shops').select('shop_id,status').eq('shop_id', shopId).maybeSingle();
       if (shop.error) fail('DATABASE_ERROR', 500);
-      if (!shop.data || String(shop.data.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
+      if (String(shop.data?.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
       if (input.action === 'access') {
-        const picture = lineProfilePicture(claims.picture);
-        if (picture) await db.from('users').update({ profile_pic: picture }).eq('shop_id', shopId).eq('uid', claims.sub);
         return reply({ ok: true, staff: staff.data, can_create_shop: await canCreateShop() });
       }
+      const allowed = staffActions[role === 'Superadmin' ? 'Admin' : role];
+      if (!(allowed?.includes(input.action) || (input.action === 'query' && tableStaff.includes(role)))) fail('ADMIN_REQUIRED', 403);
+
+      if (input.action === 'role_directory' || input.action === 'role_history') {
+        const page = input.page ?? 0;
+        if (!Number.isInteger(page) || page < 0 || page > 10000) fail('PAGE_INVALID');
+        const history = input.action === 'role_history';
+        const result = await db.from(history ? 'shop_role_audit' : 'users')
+          .select(history ? 'uid,actor_uid,old_role,new_role,old_status,new_status,created_at' : 'uid,member_id,display_name,role,status')
+          .eq('shop_id', shopId).order(history ? 'id' : 'uid', { ascending: !history })
+          .range(page * 50, page * 50 + 49);
+        if (result.error) fail('DATABASE_ERROR', 500);
+        return reply({ ok: true, data: result.data });
+      }
+      if (input.action === 'role_change') {
+        if (typeof input.target_uid !== 'string' || !input.target_uid || input.target_uid.length > 100 ||
+            (input.role != null && !['Admin','Cashier','Operator','Promoter','Customer','Backer'].includes(input.role)) ||
+            (input.status != null && !['Active','Inactive'].includes(input.status)) ||
+            (input.role == null && input.status == null)) fail('ROLE_INVALID');
+        const result = await db.rpc('set_shop_member_access', { p_shop: shopId, p_actor: claims.sub,
+          p_uid: input.target_uid, p_role: input.role ?? null, p_status: input.status ?? null });
+        if (result.error) fail('ROLE_CHANGE_UNAVAILABLE', 500);
+        if (result.data !== 'SAVED') fail(result.data, 409);
+        return reply({ ok: true });
+      }
+      if (input.action === 'cancel_bill') {
+        const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+        if (!shopInviteIdPattern.test(input.bet_id) || !reason || reason.length > 300) fail('BILL_INVALID');
+        const result = await db.rpc('cancel_shop_bill', { p_shop: shopId, p_actor: claims.sub, p_id: input.bet_id, p_reason: reason });
+        if (result.error) fail('BILL_CANCEL_UNAVAILABLE', 500);
+        if (result.data !== 'CANCELLED') fail(result.data, 409);
+        return reply({ ok: true });
+      }
+      if (input.action === 'adjust_balance') {
+        const target = input.target;
+        if (!['table','user'].includes(input.target_type) || typeof target !== 'string' || !target || target.length > 80 ||
+            !shopInviteIdPattern.test(input.request_id) || !['deposit','withdraw'].includes(input.type) ||
+            !/^\d{1,9}(?:\.\d{1,2})?$/.test(input.amount || '')) fail('AMOUNT_INVALID');
+        if (role === 'Cashier' && (input.target_type !== 'table' || input.type !== 'deposit')) fail('ADMIN_REQUIRED', 403);
+        const result = await db.rpc('adjust_shop_balance', { p_shop: shopId, p_actor: claims.sub,
+          p_id: input.request_id, p_target: target, p_target_type: input.target_type, p_type: input.type, p_amount: input.amount });
+        if (result.error) fail('WALLET_REQUEST_UNAVAILABLE', 500);
+        if (result.data?.code !== 'RECORDED') fail(result.data?.code || 'WALLET_REQUEST_UNAVAILABLE', 409);
+        return reply({ ok: true, balance: result.data.balance });
+      }
+      if (input.action === 'wallet_reject') {
+        const id = String(input.request_id ?? '');
+        const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+        if (!/^\d{1,20}$/.test(id) || !reason || reason.length > 300) fail('WALLET_REQUEST_INVALID');
+        const result = await db.rpc('reject_shop_wallet_request', { p_shop: shopId, p_actor: claims.sub, p_request: id, p_reason: reason });
+        if (result.error) fail('WALLET_REQUEST_UNAVAILABLE', 500);
+        if (result.data?.code !== 'REJECTED') fail(result.data?.code || 'WALLET_REQUEST_UNAVAILABLE', 409);
+        await notifyWalletPlayer(db, fetcher, env, shopId, result.data);
+        return reply({ ok: true });
+      }
+      if (input.action === 'table_overview') {
+        const round = await db.from('rounds').select('round_id,status,end_time_ms').eq('shop_id', shopId)
+          .order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1);
+        if (round.error) fail('DATABASE_ERROR', 500);
+        if (!round.data?.length) return reply({ ok: true, round: null, bets: [] });
+        const current = round.data[0];
+        const bets = await db.from('bets').select('table_no,amount,cash_table,status').eq('shop_id', shopId)
+          .eq('round_id', current.round_id).eq('play_mode', 'table').neq('status', 'Cancelled');
+        if (bets.error) fail('DATABASE_ERROR', 500);
+        return reply({ ok: true, round: current, bets: bets.data });
+      }
       if (['table_cash_report', 'table_send_cash_report'].includes(input.action)) {
-        if (staff.data.role === 'Operator') fail('ADMIN_REQUIRED', 403);
         if (typeof input.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.day)) fail('TABLE_DATE_INVALID');
         const result = await db.rpc('cash_table_daily_report', { p_shop: shopId, p_day: input.day });
         if (result.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
@@ -742,9 +835,10 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         }
         if (!shopInviteIdPattern.test(input.entry_id) || !['deposit','withdraw'].includes(input.type) ||
             typeof input.amount !== 'string' || !/^\d{1,9}(?:\.\d{1,2})?$/.test(input.amount)) fail('AMOUNT_INVALID');
+        if (role === 'Operator' && input.type !== 'deposit') fail('ADMIN_REQUIRED', 403);
         const result = await db.rpc('record_cash_table_payment', {
           p_shop: shopId, p_table: table, p_id: input.entry_id, p_type: input.type,
-          p_amount: input.amount, p_staff: staff.data.display_name || staff.data.member_id,
+          p_amount: input.amount, p_staff: claims.sub,
         });
         if (result.error) fail('TABLE_PAYMENT_UNAVAILABLE', 500);
         if (result.data?.code !== 'RECORDED') fail(result.data?.code || 'TABLE_PAYMENT_UNAVAILABLE', 409);
@@ -753,9 +847,10 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (input.action === 'round_finalize_balanced') {
         if (typeof input.round_id !== 'string' || !input.round_id || input.round_id.length > 100 ||
             !Number.isFinite(input.weight) || input.weight <= 0 || input.weight > 1000000) fail('ROUND_WEIGHT_INVALID');
-        const result = await db.rpc('finalize_balanced_round', {
-          p_shop: shopId, p_round: input.round_id, p_weight: input.weight,
+        const result = await db.rpc('finalize_shop_round', {
+          p_shop: shopId, p_round: input.round_id, p_weight: input.weight, p_actor: claims.sub,
         });
+        if (result.error?.message === 'BACKER_INSUFFICIENT_BALANCE') fail('BACKER_INSUFFICIENT_BALANCE', 409);
         if (result.error) fail('ROUND_FINALIZE_UNAVAILABLE', 500);
         if (!['ENDED', 'RECOVERED'].includes(result.data)) fail(result.data || 'ROUND_FINALIZE_UNAVAILABLE', 409);
         return reply({ ok: true, recovered: result.data === 'RECOVERED' });
@@ -773,7 +868,6 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true });
       }
       if (input.action === 'membership_summary') {
-        if (!['Admin', 'Superadmin'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
         const states = ['Approved', 'Pending', 'Rejected'];
         const results = await Promise.all(states.map(state =>
           db.from('membership_applications').select('id', { count: 'exact', head: true })
@@ -804,16 +898,10 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       else query = query.delete();
       if (spec.operation !== 'insert') query = query.eq('shop_id', shopId);
       for (const f of spec.filters) query = query[f.op](f.column, f.value);
-      if (spec.table === 'tables' && spec.operation === 'update' && Object.hasOwn(input.values, 'credit')) {
-        query = query.is('cash_limit', null);
-      }
-      const changingBet = spec.table === 'bets' && spec.operation === 'update';
-      if (changingBet) query = query.eq('status', 'Active');
-      const walletDecision = spec.table === 'topup_requests' && spec.operation === 'update' &&
-        ['Approved', 'Rejected'].includes(input.values?.status);
-      if (walletDecision) query = query.eq('status', 'Pending').select(input.returning ? spec.columns : 'uid,type,amount,status');
-      else if (changingBet) query = query.select(spec.columns);
-      else if (spec.operation !== 'select' && input.returning) query = query.select(spec.columns);
+      if (spec.table === 'tables' && spec.operation === 'delete') query = query.eq('credit', 0);
+      if (spec.table === 'rounds' && spec.operation === 'update') query = query.neq('status', 'Ended');
+      if (spec.table === 'users' && spec.operation === 'update') query = query.eq('role', 'Backer');
+      if (spec.operation !== 'select' && input.returning) query = query.select(spec.columns);
       for (const o of spec.orders) query = query.order(o.column, { ascending: o.ascending });
       if (spec.operation === 'select') query = query.limit(input.limit ?? 1000);
       if (input.single) query = query.single();
@@ -823,14 +911,6 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (spec.table === 'tables' && spec.operation === 'insert' && result.error.code === '23505') fail('TABLE_ALREADY_EXISTS', 409);
         console.error('admin-api database error', spec.table, spec.operation, result.error.code);
         fail('ADMIN_DATABASE_ERROR', 500);
-      }
-      if (changingBet && !result.data?.length) fail('BET_NOT_ACTIVE', 409);
-      if (walletDecision) {
-        const rejectionReason = input.values.status === 'Rejected' && typeof input.rejection_reason === 'string'
-          ? input.rejection_reason.trim().slice(0, 300) : '';
-        for (const request of result.data ?? []) {
-          await notifyWalletPlayer(db, fetcher, env, shopId, { ...request, rejection_reason: rejectionReason });
-        }
       }
       const profileLookup = spec.table === 'users' && spec.operation === 'select' && input.limit === 2 &&
         spec.filters.some(filter => filter.op === 'eq' && ['uid', 'member_id'].includes(filter.column));
@@ -852,7 +932,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           } catch { /* A missing OA profile must not block member search. */ }
         }
       }
-      return reply({ ok: true, data: walletDecision && !input.returning ? null : result.data });
+      return reply({ ok: true, data: result.data });
     } catch (e) {
       if (!e.status) console.error('admin-api unexpected error', e.name);
       return reply({ ok: false, code: e.status ? e.message : 'SERVER_ERROR' }, e.status || 500);

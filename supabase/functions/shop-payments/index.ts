@@ -102,14 +102,15 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
       if (member.error || store.error) return fail('PAYMENTS_UNAVAILABLE', 503);
       if (member.data?.status !== 'Active') return fail('MEMBERSHIP_REQUIRED', 403);
       if (staff) {
-        const roles = ['destinations', 'wallet_review'].includes(action) ? ['Admin', 'Superadmin', 'Operator'] : ['Admin', 'Superadmin'];
+        const roles = action === 'destinations' ? ['Admin','Superadmin','Cashier'] : ['Admin','Superadmin'];
         if (!roles.includes(member.data.role)) return fail('ADMIN_REQUIRED', 403);
       } else {
-        if (String(store.data?.status).toLowerCase() !== 'active') return fail('SHOP_NOT_AVAILABLE', 403);
+        if (!['Admin','Superadmin','Operator','Promoter','Customer','Backer'].includes(member.data.role)) return fail('ACCESS_DENIED', 403);
         const approved = await db.from('membership_applications').select('member_id').eq('shop_id', shop)
           .eq('line_uid', uid).eq('state', 'Approved').maybeSingle();
         if (approved.error || approved.data?.member_id !== member.data.member_id) return fail('PLAYER_ACCESS_REQUIRED', 403);
       }
+      if (action !== 'billing_bank' && String(store.data?.status).toLowerCase() !== 'active') return fail('SHOP_NOT_AVAILABLE', 403);
       if (action === 'billing_bank') {
         if (member.data.member_id !== 'M0000' || !uuid.test(input.order_id)) return fail('OWNER_REQUIRED', 403);
         const [order, receiver] = await Promise.all([
