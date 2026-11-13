@@ -6,7 +6,7 @@
   <title>บอร์ดสด - บ่อตกกุ้ง</title>
   
   <!-- โหลด Config และ Supabase -->
-  <script src="config.js"></script>
+  <script src="config.js?v=round-name-1"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
@@ -229,7 +229,7 @@
         
         if (rounds && rounds.length > 0) {
           const r = rounds[0];
-          document.getElementById('roundIdDisplay').innerText = `รอบ ${r.round_id}`;
+          document.getElementById('roundIdDisplay').innerText = `รอบ ${formatRoundName(r.round_id)}`;
           targetEndTimeMs = r.end_time_ms || 0;
           let now = new Date().getTime(); 
           let badge = document.getElementById('mainLiveBadge'); 

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>แอปผู้เล่น - บ่อตกกุ้ง</title>
-  <script src="config.js?v=cash-table-1"></script>
+  <script src="config.js?v=round-name-1"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="payment-ui.js?v=1"></script>
@@ -751,7 +751,7 @@
         const time = new Date(round.created_at).toLocaleTimeString('th-TH', {
           hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok'
         });
-        card.textContent = 'รอบ ' + round.round_id + ' · ' + time + ' · ' + round.weight + ' กรัม · ' + round.result;
+        card.textContent = 'รอบ ' + formatRoundName(round.round_id) + ' · ' + time + ' · ' + round.weight + ' กรัม · ' + round.result;
         list.append(card);
       }
       if (!rounds.length) list.textContent = 'ยังไม่มีข้อมูลผลรอบของวันนี้';
@@ -830,7 +830,7 @@
       } else if (wasOpen !== isRoundOpen) {
         lockBettingUI(!isRoundOpen);
       }
-      document.getElementById('roundIdDisplay').textContent = round ? 'รอบ ' + round.round_id : '-';
+      document.getElementById('roundIdDisplay').textContent = round ? 'รอบ ' + formatRoundName(round.round_id) : '-';
       const status = document.getElementById('statusDisplay');
       status.innerHTML = isRoundOpen ? '<span class="live-badge">● LIVE</span> เปิดรับแทง'
         : round?.status === 'Ended' ? '<span style="color:var(--text-muted)">⚫ จบรอบแล้ว</span>'
@@ -979,7 +979,7 @@
           let d = new Date(item.created_at);
           let timeStr = `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
           const card = document.createElement('div'); card.className = 'history-card';
-          card.innerHTML = `<div class="hist-info"><div class="hist-round">${item.round_id}</div><div class="hist-time">${timeStr}</div><div class="hist-type ${typeClass}">${item.bet_type}</div></div><div class="hist-action"><div class="hist-amt">฿${item.amount.toLocaleString()}</div><div style="margin-bottom: 5px;">${statusHtml}</div>${cancelBtnHtml}</div>`;
+          card.innerHTML = `<div class="hist-info"><div class="hist-round">${formatRoundName(item.round_id)}</div><div class="hist-time">${timeStr}</div><div class="hist-type ${typeClass}">${item.bet_type}</div></div><div class="hist-action"><div class="hist-amt">฿${item.amount.toLocaleString()}</div><div style="margin-bottom: 5px;">${statusHtml}</div>${cancelBtnHtml}</div>`;
           listDiv.appendChild(card);
         });
       } catch (error) { listDiv.innerHTML = '<div style="color:red; text-align:center;">เกิดข้อผิดพลาด</div>'; }

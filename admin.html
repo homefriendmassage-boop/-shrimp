@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Admin Panel - บ่อตกกุ้ง</title>
-  <script src="config.js?v=cash-table-1"></script>
+  <script src="config.js?v=round-name-1"></script>
   <script src="payment-ui.js?v=1"></script>
   <script src="admin-api-client.js?v=mc-board-3"></script>
   <script src="accounting-day.js?v=1"></script>
@@ -1387,7 +1387,7 @@
             
             let pCol = rNet >= 0 ? 'var(--green-main)' : 'var(--red-main)';
             let card = document.createElement('div'); card.style.cssText = "background: #0f111a; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;";
-            card.innerHTML = `<div><div style="font-weight: 600; font-size: 0.95rem;">${r.round_id} <span style="font-size: 0.75rem; color: var(--text-muted);">(${r.weight||'-'}g - ${r.result||'-'})</span></div><div style="font-size: 0.8rem; color: var(--text-muted);">แทง: ฿${rTotBet.toLocaleString()} | จ่าย: ฿${rTotPay.toLocaleString()}</div></div><div style="text-align: right;"><div style="font-weight: bold; font-size: 1rem; color: ${pCol};">฿${rNet.toLocaleString()}</div><div style="font-size: 0.75rem; color: var(--text-muted);">${r.status}</div></div>`;
+            card.innerHTML = `<div><div style="font-weight: 600; font-size: 0.95rem;">${formatRoundName(r.round_id)} <span style="font-size: 0.75rem; color: var(--text-muted);">(${r.weight||'-'}g - ${r.result||'-'})</span></div><div style="font-size: 0.8rem; color: var(--text-muted);">แทง: ฿${rTotBet.toLocaleString()} | จ่าย: ฿${rTotPay.toLocaleString()}</div></div><div style="text-align: right;"><div style="font-weight: bold; font-size: 1rem; color: ${pCol};">฿${rNet.toLocaleString()}</div><div style="font-size: 0.75rem; color: var(--text-muted);">${r.status}</div></div>`;
             listDiv.appendChild(card);
           }
         } else { listDiv.innerHTML = '<div style="text-align:center; color: var(--text-muted); padding: 15px;">ยังไม่มีการออกรอบในวันที่เลือก</div>'; }
@@ -1513,7 +1513,7 @@
 
         if(rounds && rounds.length > 0) {
           let r = rounds[0];
-          document.getElementById('adminRoundId').innerText = `รอบ ${r.round_id}`;
+          document.getElementById('adminRoundId').innerText = `รอบ ${formatRoundName(r.round_id)}`;
           targetEndTimeMs = r.end_time_ms || 0; let now = new Date().getTime();
           let badge = document.getElementById('adminStatusBadge');
           let subInfo = document.getElementById('adminRoundSubInfo');
@@ -1610,10 +1610,10 @@
       const shopNumber = /^SHOP_([0-9]{3,24})$/.exec(shop)?.[1];
       if (!shopNumber) throw new Error('รหัสร้านไม่ถูกต้อง');
       const date = shopAccountingDay(time).slice(2).replaceAll('-', '');
-      const prefix = 'R-' + date + '-';
-      const previous = /^R-([0-9]{6})-([0-9]+)(?:-SHOP_[0-9]{3,24})?$/.exec(previousId ?? '');
-      const number = previous?.[1] === date ? Number(previous[2]) + 1 : 1;
-      return prefix + number + '-SHOP_' + shopNumber;
+      const previous = /^R-([0-9]{6})-(?:([0-9]{3,24})-)?([0-9]+)$/.exec(formatRoundName(previousId));
+      const sameShop = !previous?.[2] || previous[2] === shopNumber;
+      const number = previous?.[1] === date && sameShop ? Number(previous[3]) + 1 : 1;
+      return 'R-' + date + '-' + shopNumber + '-' + number;
     }
 
     async function controlRound(cmd) {
@@ -1628,8 +1628,8 @@
         const { data: rounds } = await _supabase.from('rounds').select('status, round_id').eq('shop_id', shop)
           .order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1);
         const latest = rounds?.[0];
-        if (latest?.status === 'Closed') throw new Error('รอบ ' + latest.round_id + ' ปิดรับแล้ว กรุณากรอกน้ำหนักจริงแล้วกด คำนวณ + ตัดผล ก่อนเปิดรอบใหม่');
-        if (latest && latest.status !== 'Ended') throw new Error('กรุณาปิดรับและตัดผลรอบ ' + latest.round_id + ' ก่อนเปิดรอบใหม่');
+        if (latest?.status === 'Closed') throw new Error('รอบ ' + formatRoundName(latest.round_id) + ' ปิดรับแล้ว กรุณากรอกน้ำหนักจริงแล้วกด คำนวณ + ตัดผล ก่อนเปิดรอบใหม่');
+        if (latest && latest.status !== 'Ended') throw new Error('กรุณาปิดรับและตัดผลรอบ ' + formatRoundName(latest.round_id) + ' ก่อนเปิดรอบใหม่');
         const { data: [settings] } = await _supabase.from('system_settings').select('round_duration').eq('shop_id', shop).limit(1);
         const duration = Number(settings?.round_duration) || 15;
         if (shop !== currentShopId) return;
