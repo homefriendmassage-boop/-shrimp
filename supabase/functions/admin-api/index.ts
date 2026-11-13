@@ -13,7 +13,7 @@ const fields = {
   system_settings: 'id shop_id water_margin min_bet max_bet round_duration comm_rate withdrawal_fee_mode created_at'
 };
 const writes = {
-  users: { update: 'role status credit_balance total_deposit commission_balance backer_share backer_water_fee backer_wallet' },
+  users: { update: 'credit_balance total_deposit commission_balance backer_share backer_water_fee backer_wallet' },
   tables: { insert: 'shop_id table_no credit', update: 'credit cash_limit table_name is_open is_hidden' },
   rounds: { insert: 'shop_id round_id status end_time_ms resolver_type', update: 'status end_time_ms resolver_type weight result' },
   bets: { update: 'status payout' },
@@ -106,8 +106,6 @@ export function validateQuery(input, role, shopId) {
           if (key === 'table_name' && value !== null &&
               (typeof value !== 'string' || !value.trim() || value.length > 40)) fail('TABLE_NAME_INVALID');
           if (['is_open', 'is_hidden'].includes(key) && typeof value !== 'boolean') fail('TABLE_INVALID');
-          if (key === 'role' && !['Customer', 'Promoter', 'Backer', 'Operator', 'Admin'].includes(String(value))) fail('ROLE_INVALID');
-          if (table === 'users' && key === 'status' && !['Active', 'Inactive'].includes(String(value))) fail('STATUS_INVALID');
         }
       }
     }
@@ -369,7 +367,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, board: result.data });
       }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'manage_member_access', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
@@ -897,6 +895,20 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (approval.error) fail('WALLET_REQUEST_UNAVAILABLE', 500);
         if (approval.data?.code !== 'APPROVED') fail(approval.data?.code || 'WALLET_REQUEST_UNAVAILABLE', 409);
         await notifyWalletPlayer(db, fetcher, env, shopId, approval.data);
+        return reply({ ok: true });
+      }
+      if (input.action === 'manage_member_access') {
+        if (!['Admin', 'Superadmin'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
+        if (typeof input.member_uid !== 'string' || !/^U[0-9a-f]{32}$/i.test(input.member_uid) ||
+            (input.role != null && !['Admin','Operator','Promoter','Customer','Backer'].includes(input.role)) ||
+            (input.status != null && !['Active','Inactive'].includes(input.status)) ||
+            (input.role == null && input.status == null)) fail('ROLE_INVALID');
+        const result = await db.rpc('set_shop_member_access', {
+          p_shop: shopId, p_actor: claims.sub, p_uid: input.member_uid,
+          p_role: input.role ?? null, p_status: input.status ?? null,
+        });
+        if (result.error) fail('ROLE_CHANGE_UNAVAILABLE', 500);
+        if (result.data !== 'SAVED') fail(result.data || 'ROLE_CHANGE_UNAVAILABLE', 409);
         return reply({ ok: true });
       }
       if (input.action === 'membership_summary') {

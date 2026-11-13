@@ -61,6 +61,7 @@ function createAdminApiClient(config, getShopId) {
     approveWalletDeposit: requestId => call({ action: 'wallet_approve_deposit', request_id: String(requestId) }),
     approveWalletWithdrawal: requestId => call({ action: 'wallet_approve_withdrawal', request_id: String(requestId) }),
     access: () => call({ action: 'access' }),
+    setMemberAccess: (memberUid, changes) => call({ ...changes, action: 'manage_member_access', member_uid: memberUid }),
     membershipSummary: () => call({ action: 'membership_summary' })
   };
 }
