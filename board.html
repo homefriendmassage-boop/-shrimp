@@ -159,9 +159,10 @@
     .history-heading time { margin-inline-start:auto; color:#cbd5e1; font-size:.9rem; white-space:nowrap; }
     .daily-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; margin:0; padding:0 12px 12px; }
     .daily-summary div { min-width:0; background:#222637; border-radius:9px; padding:7px clamp(4px,1vw,10px); text-align:center; }
-    .daily-summary .summary-even { background:#1e3a70; }
-    .daily-summary .summary-odd { background:#672832; }
+    .daily-summary .summary-even { background:var(--blue-main); color:#0b1220; }
+    .daily-summary .summary-odd { background:var(--red-main); color:#0b1220; }
     .daily-summary dt { color:#d2dbea; font-size:clamp(.69rem,1.1vw,.9rem); }
+    .daily-summary :is(.summary-even,.summary-odd) dt { color:inherit; }
     .daily-summary dd { margin:0; font-size:clamp(.85rem,1.7vw,1.35rem); font-weight:600; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
     [hidden] { display:none !important; }
     .board-gate { width:min(100%,400px); margin:28px auto; padding:22px; border:1px solid var(--card-border); border-radius:14px; background:#171925; box-sizing:border-box; }
