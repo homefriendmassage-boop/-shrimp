@@ -112,6 +112,8 @@
       box-shadow: 0 18px 48px #0008;
     }
     #walletDecisionDialog::backdrop { background: #080b13b3; }
+    #walletDecisionSlip[hidden] { display: none; }
+    #walletDecisionDialog button:disabled { opacity: 0.55; cursor: default; }
     #walletDecisionDialog .wallet-confirm-icon {
       display: grid;
       place-items: center;
@@ -557,6 +559,7 @@
       <p id="walletDecisionMember"></p>
       <p id="walletDecisionAmount"></p>
       <p id="walletDecisionNote"></p>
+      <a id="walletDecisionSlip" class="btn btn-outline" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" hidden>ดูรูปสลิป</a>
       <div class="wallet-confirm-actions">
         <button type="button" value="cancel" autofocus>ยกเลิก</button>
         <button type="submit" value="approve">ยืนยันเติมเงิน</button>
@@ -1138,7 +1141,7 @@
              `;
              const manage = card.querySelector('[data-manage-wallet]');
              const reject = card.querySelector('[data-reject-wallet]');
-             manage.textContent = r.type === 'ฝากเงิน' ? 'เติมเงิน' : r.type;
+             manage.textContent = r.fee_option === 'slip_review' ? 'ตรวจสลิป' : r.type === 'ฝากเงิน' ? 'เติมเงิน' : r.type;
              const submitting = walletDecision?.submitting && walletDecision.id === r.id;
              manage.disabled = reject.disabled = Boolean(submitting);
              manage.addEventListener('click', () => approveQueuedWalletRequest(r, card.dataset.bankDisplay));
@@ -1149,11 +1152,12 @@
        } catch (e) { console.error("Exception in loadPendingRequests:", e); }
     }
 
-    function approveQueuedWalletRequest(request, bankDisplay) {
+    async function approveQueuedWalletRequest(request, bankDisplay) {
       const dialog = document.getElementById('walletDecisionDialog');
       if (walletDecision || dialog.open || request.shop_id !== currentShopId) return;
 
       const deposit = request.type === 'ฝากเงิน';
+      const needsReview = deposit && request.fee_option === 'slip_review';
       const action = deposit ? 'เติมเงิน' : request.type;
       const note = request.type === 'ถอนค่าคอม' ? 'กดยืนยันหลังจากโอนค่าคอมให้สมาชิกแล้ว'
         : request.type === 'ถอนเงิน' ? [bankDisplay, 'ระบบจะหักยอด Wallet ตามจำนวนที่ยืนยัน'].filter(Boolean).join(' · ') : '';
@@ -1163,9 +1167,14 @@
         minimumFractionDigits: 2, maximumFractionDigits: 2,
       });
       const noteElement = document.getElementById('walletDecisionNote');
-      noteElement.textContent = note;
-      noteElement.hidden = !note;
-      dialog.querySelector('[value="approve"]').textContent = 'ยืนยัน' + action;
+      noteElement.textContent = needsReview ? 'กำลังโหลดข้อมูลสลิป…' : note;
+      noteElement.hidden = !needsReview && !note;
+      const slipLink = document.getElementById('walletDecisionSlip');
+      slipLink.hidden = true;
+      slipLink.removeAttribute('href');
+      const approve = dialog.querySelector('[value="approve"]');
+      approve.textContent = 'ยืนยัน' + action;
+      approve.disabled = needsReview;
       showWalletQueueStatus('');
       const events = new AbortController();
       const decision = {
@@ -1187,7 +1196,7 @@
       }, options);
       dialog.querySelector('form').addEventListener('submit', async event => {
         event.preventDefault();
-        if (decision.submitting || walletDecision !== decision) return;
+        if (decision.submitting || approve.disabled || walletDecision !== decision) return;
         if (decision.shop !== currentShopId) {
           decision.close(false);
           return;
@@ -1220,6 +1229,29 @@
         }
       }, options);
       dialog.showModal();
+      if (needsReview) {
+        try {
+          const { review } = await shopPaymentRequest(request.shop_id, 'wallet_review', { request_id: Number(request.id) });
+          if (walletDecision !== decision) return;
+          const reasons = {
+            AMOUNT_MISMATCH: 'ยอดที่ลูกค้ากรอกต่างจากยอดในสลิป',
+            RECEIVER_UNCONFIRMED: 'ชื่อผู้รับตรง กรุณาตรวจบัญชีผู้รับจากรายการเงินเข้า',
+            AMOUNT_AND_RECEIVER: 'ยอดที่ลูกค้ากรอกต่างจากยอดในสลิป และต้องตรวจบัญชีผู้รับ',
+          };
+          const money = value => Number(value).toLocaleString('th-TH', { style: 'currency', currency: 'THB' });
+          noteElement.textContent = [
+            reasons[review.reason],
+            'ลูกค้ากรอก ' + money(review.claimed_amount) + ' · ยอดจริง ' + money(review.slip_amount),
+            'เลขอ้างอิง ' + review.transaction_ref,
+            'ตรวจรายการเงินเข้าของร้านและยืนยันเติมตามยอดจริง',
+          ].join(' · ');
+          slipLink.href = review.image_url;
+          slipLink.hidden = false;
+          approve.disabled = false;
+        } catch {
+          if (walletDecision === decision) noteElement.textContent = 'เปิดข้อมูลสลิปไม่ได้ กรุณาปิดแล้วเปิดรายการอีกครั้ง';
+        }
+      }
     }
 
     async function rejectPendingRequest(id, uid, type, amount) {

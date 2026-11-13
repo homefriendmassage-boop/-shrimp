@@ -54,6 +54,19 @@ export function identifyWalletReceiver(slip, profile) {
   return null;
 }
 
+function comparableAccountName(value: unknown) {
+  if (typeof value !== "string") return "";
+  return value.normalize("NFKC").trim().toLowerCase()
+    .replace(/^(?:นางสาว|นาย|นาง|น\.\s*ส\.\s*|(?:mr|mrs|ms|miss)\.?\s+)/u, "")
+    .replace(/\s+/gu, "");
+}
+
+export function matchesWalletRecipientName(slip, profile) {
+  const name = comparableAccountName(profile?.account_name);
+  const raw = slip?.rawSlip?.receiver?.account?.name;
+  return Boolean(name && [raw?.th, raw?.en].some(value => comparableAccountName(value) === name));
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers });
   if (req.method !== "POST") return reply("METHOD_NOT_ALLOWED", 405);
@@ -140,19 +153,31 @@ Deno.serve(async (req) => {
     if (slip?.isDuplicate === true) return reply("DUPLICATE_SLIP", 409);
     if (typeof ref !== "string" || !ref.trim() || ref.length > 160 ||
         !Number.isFinite(time) || time > Date.now() + 60000) return reply("SLIP_NOT_VERIFIED", 422);
-    if (slip.isAmountMatched !== true || slip.amountInSlip !== Number(amount)) return reply("AMOUNT_MISMATCH", 422);
+    const actual = slip?.amountInSlip;
+    if (typeof actual !== "number" || !/^\d{1,9}(?:\.\d{1,2})?$/.test(String(actual)) || actual <= 0) {
+      return reply("SLIP_NOT_VERIFIED", 422);
+    }
+    const amountMismatch = actual !== Number(amount);
+    if (!amountMismatch && slip.isAmountMatched !== true) return reply("SLIP_NOT_VERIFIED", 422);
+
     let profile = null;
-    if (!slip?.matchedAccount && exactPromptPay(slip?.rawSlip?.receiver?.account?.proxy)) {
-      const configured = await db.from("shop_payment_profiles").select("bank_code,bank_number,promptpay")
+    const proxy = exactPromptPay(slip?.rawSlip?.receiver?.account?.proxy);
+    if (!slip?.matchedAccount) {
+      const configured = await db.from("shop_payment_profiles").select("bank_code,bank_number,account_name,promptpay")
         .eq("shop_id", shop).maybeSingle();
       if (configured.error) return reply("WALLET_UNAVAILABLE", 503);
       profile = configured.data;
     }
-    const receiver = identifyWalletReceiver(slip, profile);
-    if (!receiver) {
-      console.info("wallet slip receiver unavailable", shop, slip?.rawSlip?.receiver?.account?.proxy?.type || "none");
-      return reply("RECEIVER_UNCONFIRMED", 422);
+    const exactReceiver = identifyWalletReceiver(slip, profile);
+    if (!exactReceiver && proxy && profile?.promptpay && proxy !== profile.promptpay) {
+      return reply("RECEIVER_MISMATCH", 422);
     }
+    const nameMatches = !exactReceiver && matchesWalletRecipientName(slip, profile);
+    const receiver = exactReceiver ?? (nameMatches ? { bank: profile.bank_code, number: profile.bank_number } : null);
+    if (!receiver) return reply("RECEIVER_UNCONFIRMED", 422);
+    const reviewReason = !exactReceiver
+      ? (amountMismatch ? "AMOUNT_AND_RECEIVER" : "RECEIVER_UNCONFIRMED")
+      : (amountMismatch ? "AMOUNT_MISMATCH" : null);
     const { bank, number: normalizedNumber } = receiver;
     const match = await db.from("wallet_receiving_accounts").select("auto_credit_from")
       .eq("bank_code", bank).eq("bank_number", normalizedNumber).eq("shop_id", shop).eq("enabled", true).maybeSingle();
@@ -166,15 +191,21 @@ Deno.serve(async (req) => {
     const bucket = db.storage.from("slips-private");
     const upload = await bucket.upload(path, image, { contentType: image.type, upsert: false });
     if (upload.error) return reply("STORAGE_ERROR", 500);
-    const credit = await db.rpc("credit_verified_wallet_slip", {
-      p_id: id, p_shop: shop, p_uid: uid, p_ref: ref.trim(), p_hash: hash,
-      p_amount: amount, p_bank: bank, p_number: normalizedNumber, p_path: path, p_slip_at: new Date(time).toISOString(),
-    });
-    if (credit.error?.code === "P7201") {
+    const reference = {
+      p_id: id, p_shop: shop, p_uid: uid, p_ref: ref.trim(),
+      p_bank: bank, p_number: normalizedNumber, p_path: path, p_slip_at: new Date(time).toISOString(),
+    };
+    const credit = reviewReason
+      ? await db.rpc("queue_verified_wallet_slip", {
+        ...reference, p_claimed: amount, p_actual: actual, p_reason: reviewReason,
+      })
+      : await db.rpc("credit_verified_wallet_slip", { ...reference, p_hash: hash, p_amount: amount });
+    if (credit.error?.code === "P7201" || credit.error?.code === "23505") {
       await bucket.remove([path]);
-      return reply("SLIP_QUOTA_EXHAUSTED", 409);
+      return credit.error.code === "P7201" ? reply("SLIP_QUOTA_EXHAUSTED", 409) : reply("DUPLICATE_SLIP", 409);
     }
     if (credit.error) return reply("WALLET_UNAVAILABLE", 503);
+    if (credit.data === "REVIEW_QUEUED") return reply(credit.data, 200);
     if (credit.data === "CREDITED") {
       try {
         const settings = await db.from("shop_oa_runtime").select("line_oa_token,admin_group_id,line_notifications_enabled")
@@ -212,7 +243,7 @@ Deno.serve(async (req) => {
       return reply("CREDITED", 200);
     }
     await bucket.remove([path]);
-    if (credit.data === "ALREADY_CREDITED") return reply(credit.data, 200);
+    if (["ALREADY_CREDITED", "REVIEW_ALREADY_QUEUED"].includes(credit.data)) return reply(credit.data, 200);
     return reply(credit.data, credit.data === "DUPLICATE_SLIP" ? 409 : 422);
   } catch {
     return reply("WALLET_UNAVAILABLE", 503);

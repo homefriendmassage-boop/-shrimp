@@ -1185,6 +1185,14 @@
         return true;
       }
 
+      if (response.ok && ['REVIEW_QUEUED', 'REVIEW_ALREADY_QUEUED'].includes(result.code)) {
+        closeTopupModal();
+        alert(result.code === 'REVIEW_QUEUED'
+          ? 'ส่งสลิปเข้าคิวรอแอดมินตรวจแล้ว ดูสถานะได้ในประวัติ Wallet'
+          : 'สลิปนี้อยู่ในคิวรอแอดมินตรวจแล้ว');
+        return true;
+      }
+
       const messages = {
         IMAGE_INVALID: 'กรุณาเลือกรูป JPG, PNG, GIF หรือ WebP ขนาดไม่เกิน 4 MB',
         AMOUNT_INVALID: 'กรุณาระบุจำนวนเงินให้ถูกต้อง (ทศนิยมไม่เกิน 2 ตำแหน่ง)',

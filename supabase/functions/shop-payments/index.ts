@@ -73,7 +73,7 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
       const shop = input?.shop_id;
       if (typeof shop !== 'string' || !/^SHOP_[0-9]{3,24}$/.test(shop)) return fail('SHOP_INVALID');
       const action = input?.action;
-      const staff = ['settings', 'save_settings', 'destinations', 'billing_bank'].includes(action);
+      const staff = ['settings', 'save_settings', 'destinations', 'billing_bank', 'wallet_review'].includes(action);
       if (!staff && !['receiver', 'withdraw_start', 'withdraw_confirm'].includes(action)) return fail('INVALID_ACTION');
       const shopLogin = input.shop_login === true;
       if (shopLogin && (staff || shop !== 'SHOP_001')) return fail('SHOP_LOGIN_NOT_ALLOWED', 403);
@@ -102,7 +102,7 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
       if (member.error || store.error) return fail('PAYMENTS_UNAVAILABLE', 503);
       if (member.data?.status !== 'Active') return fail('MEMBERSHIP_REQUIRED', 403);
       if (staff) {
-        const roles = action === 'destinations' ? ['Admin', 'Superadmin', 'Operator'] : ['Admin', 'Superadmin'];
+        const roles = ['destinations', 'wallet_review'].includes(action) ? ['Admin', 'Superadmin', 'Operator'] : ['Admin', 'Superadmin'];
         if (!roles.includes(member.data.role)) return fail('ADMIN_REQUIRED', 403);
       } else {
         if (String(store.data?.status).toLowerCase() !== 'active') return fail('SHOP_NOT_AVAILABLE', 403);
@@ -150,6 +150,26 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
           .eq('shop_id', shop).in('id', ids);
         if (found.error) return fail('PAYMENTS_UNAVAILABLE', 503);
         return reply({ ok: true, destinations: found.data });
+      }
+      if (action === 'wallet_review') {
+        if (!Number.isInteger(input.request_id) || input.request_id < 1 || input.request_id > 2147483647) {
+          return fail('WALLET_REQUEST_INVALID');
+        }
+        const pending = await db.from('topup_requests').select('wallet_slip_id,uid')
+          .eq('shop_id', shop).eq('id', input.request_id).eq('status', 'Pending').maybeSingle();
+        if (pending.error) return fail('PAYMENTS_UNAVAILABLE', 503);
+        if (!pending.data?.wallet_slip_id) return fail('REQUEST_NOT_PENDING', 409);
+
+        const review = await db.from('slip_verifications').select('claimed_amount,slip_amount,error_code,storage_path,transaction_ref')
+          .eq('shop_id', shop).eq('uid', pending.data.uid).eq('id', pending.data.wallet_slip_id)
+          .eq('status', 'ReviewRequired').maybeSingle();
+        if (review.error || !review.data?.storage_path) return fail('PAYMENTS_UNAVAILABLE', 503);
+        const signed = await db.storage.from('slips-private').createSignedUrl(review.data.storage_path, 300);
+        if (signed.error || !signed.data?.signedUrl) return fail('PAYMENTS_UNAVAILABLE', 503);
+        return reply({ ok: true, review: {
+          claimed_amount: review.data.claimed_amount, slip_amount: review.data.slip_amount,
+          reason: review.data.error_code, transaction_ref: review.data.transaction_ref, image_url: signed.data.signedUrl,
+        } });
       }
       if (action === 'withdraw_confirm') {
         if (typeof input.confirmation_id !== 'string' || !uuid.test(input.confirmation_id)) return fail('WITHDRAWAL_INVALID');
