@@ -314,16 +314,17 @@ test('daily report labels cash movements separately from wallet credit and perfo
     const message = dailyFinanceFlex('2026-11-13', 'บ่อทดสอบ', {
       settled_stake:500, payout:380, pnl:10, cancelled:50, cash_stake:300, cash_in:210, cash_out:80,
       customer_wallet_liability:652.5, wallet_as_of:'2026-11-13T13:00:00Z',
+      online_stake:200, online_payout:80, online_bills:2, table_stake:300, table_payout:300, table_bills:3,
       credit_in:900, credit_out:300, table_credit_in:40, table_credit_out:20, rounds:3, ended:2, even:1, odd:1, pending:4,
     });
     assert.equal(message.type, 'flex');
     assert.match(message.altText, /บ่อทดสอบ/);
-    const rows = new Map(message.contents.body.contents.filter(item => item.layout === 'horizontal')
+    const rows = new Map(message.contents.body.contents.flatMap(item => item.contents ?? []).filter(item => item.layout === 'horizontal')
       .map(item => item.contents.map(cell => cell.text)));
-    assert.equal(rows.get('ส่วนต่างก่อนค่าคอมและค่าใช้จ่าย'), '110 บาท');
-    assert.equal(rows.get('เงินสดสุทธิจากโต๊ะ'), '130 บาท');
-    assert.equal(rows.get('เพิ่มเครดิตบัญชีสมาชิก'), '900 บาท');
-    assert.equal(rows.get('เครดิตรับฝากลูกค้าคงเหลือ (หนี้สินร้าน)'), '652.5 บาท');
+    assert.equal(rows.get('ค่าน้ำสุทธิก่อนค่าคอมและค่าใช้จ่าย'), '+฿110');
+    assert.equal(rows.get('เงินสดสุทธิจากโต๊ะ'), '+฿130');
+    assert.equal(rows.get('เพิ่มเครดิตสมาชิก'), '+฿900');
+    assert.equal(rows.get('เครดิตลูกค้าคงเหลือ (หนี้สินร้าน)'), '฿652.5');
   });
 });
 

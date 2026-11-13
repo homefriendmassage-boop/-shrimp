@@ -195,50 +195,86 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
   } catch { console.error('wallet LINE notification unavailable'); }
 }
 
-export function dailyFinanceFlex(day, shopName, data) {
-  const money = amount => Number(amount).toLocaleString('th-TH', { maximumFractionDigits: 2 }) + ' บาท';
-  const text = (value, extra = {}) => ({ type: 'text', text: String(value), wrap: true, color: '#E8EEF8', size: 'sm', ...extra });
-  const row = (label, value) => ({ type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
-    text(label, { flex: 3, color: '#BAC6D9' }), text(value, { flex: 2, align: 'end' }),
-  ] });
-  const section = (title, rows) => [
-    { type: 'separator', margin: 'lg', color: '#364053' },
-    text(title, { weight: 'bold', color: '#83B5FF', margin: 'md' }),
-    ...rows,
-  ];
-  const title = 'รายงานสรุปยอดประจำวัน · ' + shopName;
-  return { type: 'flex', altText: (title + ' · ' + day).slice(0, 300), contents: {
-    type: 'bubble', size: 'mega',
-    header: { type: 'box', layout: 'vertical', backgroundColor: '#20283A', spacing: 'sm', contents: [
-      text(title, { size: 'lg', weight: 'bold' }),
-      text(day + ' · 06:00 ถึงก่อน 06:00 วันถัดไป'),
-    ] },
-    body: { type: 'box', layout: 'vertical', backgroundColor: '#131925', spacing: 'sm', contents: [
-      text('ผลรอบที่ตัดผลแล้ว', { weight: 'bold', color: '#83B5FF' }),
+export function dailyFinanceFlex(day, shopName, data, preparedBy) {
+  const color = {
+    white: '#F8FAFC', muted: '#ADB9CE', blue: '#80B3FF', green: '#50D8A7',
+    red: '#FF838A', amber: '#FFD18A', border: '#343C4D',
+  };
+  const money = amount => '฿' + Number(amount).toLocaleString('th-TH', { maximumFractionDigits: 2 });
+  const signedMoney = amount => (amount < 0 ? '−' : amount > 0 ? '+' : '') + money(Math.abs(amount));
+  const movementColor = amount => amount < 0 ? color.red : amount > 0 ? color.green : color.white;
+  const count = (value, unit) => Number(value).toLocaleString('th-TH') + ' ' + unit;
+  const text = (value, extra = {}) => ({ type: 'text', text: String(value), wrap: true, color: color.white, size: 'sm', ...extra });
+  const row = (label, value, valueColor = color.white, emphasis = false) => ({
+    type: 'box', layout: 'horizontal', spacing: 'sm', contents: [
+      text(label, { flex: 5, color: emphasis ? color.white : color.muted, weight: emphasis ? 'bold' : 'regular' }),
+      text(value, { flex: 3, align: 'end', color: valueColor, weight: emphasis ? 'bold' : 'regular', size: emphasis ? 'md' : 'sm' }),
+    ],
+  });
+  const section = (title, rows) => ({
+    type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+      text(title, { weight: 'bold', color: color.blue, size: 'md' }), ...rows,
+    ],
+  });
+  const snapshot = new Date(data.wallet_as_of).toLocaleString('th-TH', {
+    timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short',
+  });
+  const margin = Number(data.settled_stake) - Number(data.payout) - Number(data.pnl);
+  const netCash = Number(data.cash_in) - Number(data.cash_out);
+  const title = 'รายงานสรุปยอดประจำวัน';
+  const sections = [
+    section('กำไรค่าน้ำ', [
       row('ยอดเล่นที่ตัดผล', money(data.settled_stake)),
-      row('เครดิตจ่ายผู้ชนะ', money(data.payout)),
-      row('ผลสุทธิผู้รับจบ', money(data.pnl)),
-      row('ส่วนต่างก่อนค่าคอมและค่าใช้จ่าย', money(Number(data.settled_stake) - Number(data.payout) - Number(data.pnl))),
+      row('จ่ายผู้ชนะ', signedMoney(-Number(data.payout)), movementColor(-Number(data.payout))),
+      row('ผลสุทธิผู้รับจบ', signedMoney(-Number(data.pnl)), movementColor(-Number(data.pnl))),
+      row('ค่าน้ำสุทธิก่อนค่าคอมและค่าใช้จ่าย', signedMoney(margin), movementColor(margin), true),
+    ]),
+    section('การเงินบ่อ', [
+      row('รับเงินสดจากโต๊ะ', signedMoney(Number(data.cash_in)), color.green),
+      row('จ่ายเงินสดให้โต๊ะ', signedMoney(-Number(data.cash_out)), color.red),
+      row('เงินสดสุทธิจากโต๊ะ', signedMoney(netCash), movementColor(netCash), true),
+      row('เพิ่มเครดิตสมาชิก', signedMoney(Number(data.credit_in)), color.green),
+      row('ลดเครดิตสมาชิก', signedMoney(-Number(data.credit_out)), color.red),
+      row('เพิ่ม / ลดเครดิตโต๊ะเดิม', money(data.table_credit_in) + ' / ' + money(data.table_credit_out)),
+    ]),
+    section('ยอดคงเหลือใน Wallet', [
+      row('เครดิตลูกค้าคงเหลือ (หนี้สินร้าน)', money(data.customer_wallet_liability), color.amber, true),
+      text('ยอดปัจจุบัน ณ ' + snapshot + ' น.', { color: color.muted, size: 'xs' }),
+    ]),
+    section('สถิติยอดออนไลน์', [
+      row('ยอดเล่นส่วนตัวที่ตัดผล', money(data.online_stake)),
+      row('ยอดจ่ายผู้ชนะ', money(data.online_payout)),
+      row('จำนวนบิลที่ตัดผล', count(data.online_bills, 'บิล')),
+    ]),
+    section('สถิติบนโต๊ะ', [
+      row('ยอดเล่นบนโต๊ะที่ตัดผล', money(data.table_stake)),
+      row('ในนั้นเป็นโต๊ะเงินสด', money(data.cash_stake)),
+      row('ยอดจ่ายผู้ชนะ', money(data.table_payout)),
+      row('จำนวนบิลที่ตัดผล', count(data.table_bills, 'บิล')),
+    ]),
+    section('สถิติรอบ', [
+      row('เปิดทั้งหมด', count(data.rounds, 'รอบ')),
+      row('ตัดผลแล้ว', count(data.ended, 'รอบ')),
+      row('ออกคู่', count(data.even, 'รอบ'), color.blue),
+      row('ออกคี่', count(data.odd, 'รอบ'), color.red),
+      row('บิลรอตัดผล', count(data.pending, 'บิล'), color.amber),
       row('ยอดบิลยกเลิก', money(data.cancelled)),
-      ...section('เงินสดที่บันทึกบนโต๊ะ', [
-        row('ยอดเล่นโต๊ะเงินสดที่ตัดผล', money(data.cash_stake)),
-        row('รับเงินสดจากโต๊ะ', money(data.cash_in)), row('จ่ายเงินสดให้โต๊ะ', money(data.cash_out)),
-        row('เงินสดสุทธิจากโต๊ะ', money(Number(data.cash_in) - Number(data.cash_out))),
-      ]),
-      ...section('Wallet และเครดิต', [
-        row('เครดิตรับฝากลูกค้าคงเหลือ (หนี้สินร้าน)', money(data.customer_wallet_liability)),
-        text('ยอด ณ ' + new Date(data.wallet_as_of).toLocaleString('th-TH', {
-          timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short',
-        }) + ' น.', { color: '#BAC6D9', size: 'xs' }),
-        row('เพิ่มเครดิตบัญชีสมาชิก', money(data.credit_in)), row('ลดเครดิตบัญชีสมาชิก', money(data.credit_out)),
-        row('เพิ่มเครดิตโต๊ะเดิม', money(data.table_credit_in)), row('ลดเครดิตโต๊ะเดิม', money(data.table_credit_out)),
-        text('ยอดเครดิตมีหลายช่องทาง ใช้แยกจากยอดเงินสดและรายได้', { color: '#BAC6D9', size: 'xs' }),
-      ]),
-      ...section('สถิติการเล่น', [
-        row('เปิดรอบ / ตัดผล', data.rounds + ' / ' + data.ended),
-        row('ออกคู่ / ออกคี่', data.even + ' / ' + data.odd), row('บิลรอตัดผล', data.pending + ' บิล'),
-      ]),
+    ]),
+  ];
+  if (Number(data.unclassified_bills) > 0) {
+    sections[5].contents.push(row('บิลเดิมที่ไม่ระบุช่องทาง', count(data.unclassified_bills, 'บิล'), color.amber));
+  }
+  return { type: 'flex', altText: (title + ' · ' + shopName + ' · ' + day).slice(0, 300), contents: {
+    type: 'bubble', size: 'mega',
+    header: { type: 'box', layout: 'vertical', backgroundColor: '#202433', spacing: 'sm', paddingAll: 'lg', contents: [
+      text('📊 ' + title, { size: 'lg', weight: 'bold' }),
+      text(shopName, { weight: 'bold' }),
+      text('วันที่บัญชี ' + day + ' · 06:00 ถึงก่อน 06:00 วันถัดไป', { color: color.muted, size: 'xs' }),
+      ...(preparedBy ? [text('สรุปโดย ' + preparedBy, { color: color.muted, size: 'xs' })] : []),
     ] },
+    body: { type: 'box', layout: 'vertical', backgroundColor: '#141720', spacing: 'lg', paddingAll: 'lg',
+      contents: sections.flatMap((item, index) => index ? [{ type: 'separator', color: color.border }, item] : [item]),
+    },
   } };
 }
 
@@ -748,7 +784,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         }
         const result = await db.rpc('daily_group_finance_report', { p_shop: shopId, p_day: input.day });
         if (result.error || !result.data) fail('TABLE_REPORT_UNAVAILABLE', 500);
-        const report = dailyFinanceFlex(input.day, settings.shop_name || shopId, result.data);
+        const report = dailyFinanceFlex(input.day, settings.shop_name || shopId, result.data, staff.data.display_name);
         if (typeof input.delivery_id !== 'string' || !shopInviteIdPattern.test(input.delivery_id)) fail('TABLE_REPORT_UNAVAILABLE', 400);
         const sent = await fetcher('https://api.line.me/v2/bot/message/push', {
           method: 'POST', headers: { Authorization: 'Bearer ' + settings.line_oa_token,
