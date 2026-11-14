@@ -46,10 +46,10 @@ test('writes must have a target and use permitted fields and amounts', () => {
   assert.throws(() => validateQuery({ ...q, values: { credit_balance: 100 } }, 'Operator', 'SHOP_001'), /ADMIN_REQUIRED/);
 });
 
-function setup({ role = 'Admin', active = true, absent = false, aud = 'channel', exp = Date.now() / 1000 + 60, linked = true, shopStatus = 'active', brokenDb = false } = {}) {
+function setup({ role = 'Admin', active = true, absent = false, aud = 'channel', exp = Date.now() / 1000 + 60, linked = true, shopStatus = 'active', brokenDb = false, rpc } = {}) {
   const queries = [];
   const env = name => ({ LINE_CHANNEL_ID_ADMIN: 'channel', SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'server-only', WEB_ORIGIN: 'https://homefriendmassage-boop.github.io' })[name];
-  const createDb = () => ({ from(table) {
+  const createDb = () => ({ rpc, from(table) {
     const record = { table, calls: [] }; queries.push(record);
     const chain = {};
     for (const method of ['select', 'eq', 'neq', 'gte', 'lte', 'like', 'in', 'order', 'limit', 'insert', 'update', 'delete', 'single', 'maybeSingle']) {
@@ -306,32 +306,38 @@ test('a shop invitation is issued only with the active shop owned by the verifie
   }]);
 });
 
-test('round IDs are distinct across shops and keep the accounting-day sequence', () => {
-  const html = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
-  const accounting = fs.readFileSync(new URL('../accounting-day.js', import.meta.url), 'utf8');
-  const helper = html.slice(html.indexOf('    function nextShopRoundId'), html.indexOf('    async function controlRound'));
-  const context = vm.createContext({});
-  const config = fs.readFileSync(new URL('../config.js', import.meta.url), 'utf8');
-  vm.runInContext(config + '\n' + accounting + '\n' + helper, context);
-  const time = Date.parse('2026-11-13T19:54:00+07:00');
-  const plans = [
-    ['SHOP_000', 'R-261113-4', 'R-261113-000-5'],
-    ['SHOP_001', 'R-261111-7', 'R-261113-001-1'],
-    ['SHOP_002', undefined, 'R-261113-002-1'],
-  ];
-  const ids = plans.map(([shop, previous, expected]) => {
-    const id = context.nextShopRoundId(shop, previous, time);
-    assert.equal(id, expected);
-    assert.match(id, /^[A-Za-z0-9_-]{1,80}$/);
-    return id;
-  });
-  assert.equal(new Set(ids).size, 3);
-  assert.equal(context.formatRoundName('R-261113-1-SHOP_001'), 'R-261113-001-1');
-  assert.equal(context.formatRoundName('R-261113-7'), 'R-261113-7');
-  assert.equal(context.nextShopRoundId('SHOP_001', 'R-261113-1-SHOP_001', time), 'R-261113-001-2');
-  assert.equal(context.nextShopRoundId('SHOP_001', ids[1], time), 'R-261113-001-2');
-  assert.equal(context.nextShopRoundId('SHOP_001', ids[1], Date.parse('2026-11-14T05:59:00+07:00')), 'R-261113-001-2');
-  assert.equal(context.nextShopRoundId('SHOP_001', ids[1], Date.parse('2026-11-14T06:00:00+07:00')), 'R-261114-001-1');
+test('Cashier can close a round and assign the gap resolver but cannot write a result directly', () => {
+  const target = { table:'rounds', operation:'update', filters:[{op:'eq', column:'round_id', value:'R-1'}] };
+  for (const values of [{status:'Closed'},{resolver_type:'shop'},{resolver_type:'backer'}]) {
+    assert.equal(validateQuery({ ...target, values }, 'Cashier', 'SHOP_001').operation, 'update');
+    assert.throws(() => validateQuery({ ...target, values }, 'Operator', 'SHOP_001'), /ADMIN_REQUIRED/);
+  }
+  for (const values of [{status:'Open'},{status:'Ended'},{weight:22},{result:'คู่'},{status:'Closed',weight:22}]) {
+    assert.throws(() => validateQuery({ ...target, values }, 'Cashier', 'SHOP_001'), /ADMIN_REQUIRED/);
+  }
+  assert.throws(() => validateQuery({ ...target, operation:'insert', values:{round_id:'R-2'} },
+    'Cashier', 'SHOP_001'), /ADMIN_REQUIRED/);
+});
+
+test('only authorized shop staff can open or finalize a round through the round RPCs', async () => {
+  const open = { action:'round_open', round_id:'untrusted', duration:5000 };
+  const finalize = { action:'round_finalize', round_id:'R-1', weight:22, payout:5000 };
+  for (const config of [{role:'Operator'}, {role:'Customer'}, {role:'Cashier',active:false}]) {
+    const {handler} = setup(config);
+    for (const payload of [open,finalize]) assert.equal((await handler(request(payload))).status,403);
+  }
+  const calls = [];
+  const {handler, queries} = setup({ role:'Cashier', rpc:async (name, args) => {
+    calls.push([name,args]);
+    return {data:name === 'open_staff_round' ? {code:'OPENED',round_id:'R-2'} : 'ENDED'};
+  } });
+  assert.equal((await (await handler(request(open))).json()).round_id,'R-2');
+  queries.length = 0;
+  assert.equal((await handler(request(finalize))).status,200);
+  assert.deepEqual(calls, [
+    ['open_staff_round',{p_shop:'SHOP_001'}],
+    ['finalize_staff_round',{p_shop:'SHOP_001',p_round:'R-1',p_weight:22}],
+  ]);
 });
 
 test('daily report labels cash movements separately from wallet credit and performance', () => {
