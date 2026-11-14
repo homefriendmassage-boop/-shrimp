@@ -302,7 +302,8 @@ Deno.serve(async req => {
     if (linkRequest) return await memberOaLink(db, input.shop_id, claims.sub, input.action === 'oa_link_start');
     const staff = await db.from('users').select('role,status').eq('shop_id', input.shop_id).eq('uid', claims.sub).maybeSingle();
     if (staff.error) return fail('DATABASE_ERROR', 500);
-    if (staff.data?.status !== 'Active' || !['Admin', 'Superadmin', 'Operator'].includes(staff.data.role)) return fail('ADMIN_REQUIRED', 403);
+    const allowedRoles = creditRequest ? ['Admin', 'Superadmin', 'Operator'] : ['Admin', 'Superadmin', 'Operator', 'Cashier'];
+    if (staff.data?.status !== 'Active' || !allowedRoles.includes(staff.data.role)) return fail('ADMIN_REQUIRED', 403);
     const shop = await db.from('shop_oa_runtime').select('shop_id,shop_name,status,line_oa_token,line_notifications_enabled').eq('shop_id', input.shop_id).maybeSingle();
     if (shop.error) return fail('DATABASE_ERROR', 500);
     if (shop.data?.line_notifications_enabled === false) return reply({ ok: true, skipped: true, eligible: 0, accepted: 0, failed: 0 });
