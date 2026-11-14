@@ -448,3 +448,41 @@ test('cashier can open or close their own table, and cannot use generic financia
   assert.throws(() => validateQuery({ ...request, table: 'bets', values: { status: 'Cancelled' } }, 'Cashier', shop),
     /ADMIN_REQUIRED/);
 });
+
+test('active Cashier signed into Player is routed to the back office of the selected shop', async () => {
+  const reads = [];
+  let active = true;
+  const handler = makeHandler({
+    env: name => ({ LINE_CHANNEL_ID_PLAYER:'player', SUPABASE_URL:'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY:'server-only' })[name],
+    fetcher: async () => Response.json({ sub:'verified-cashier', aud:'player', exp:Date.now() / 1000 + 60 }),
+    createDb: () => ({
+      from(table) {
+        const filters = {};
+        const chain = { select: () => chain, eq(key, value) { filters[key] = value; return chain; },
+          maybeSingle: async () => {
+            reads.push({ table, filters });
+            return { data: table === 'shops' ? { status:'active' }
+              : { role:'Cashier', status:active ? 'Active' : 'Inactive' } };
+          } };
+        return chain;
+      },
+    }),
+  });
+  const shop_id = 'SHOP_005';
+  const profile = { shop_id, action:'player_profile', referral_member_id:'M0001', uid:'forged' };
+  assert.deepEqual(await (await handler(request(profile))).json(), {
+    ok:true, destination:'admin_tables', shop_id,
+  });
+  assert.deepEqual(reads, [
+    { table:'shops', filters:{ shop_id } },
+    { table:'users', filters:{ uid:'verified-cashier', shop_id } },
+  ]);
+  for (const payload of [{ ...profile, include_wallet_requests:true }, { shop_id, action:'player_place_bet' },
+    { shop_id, action:'wallet_request' }]) {
+    assert.equal((await handler(request(payload))).status, 403);
+  }
+  assert.equal((await (await handler(request({ shop_id, action:'player_state' }))).json()).code, 'CASHIER_ADMIN_REQUIRED');
+  active = false;
+  assert.equal((await handler(request(profile))).status, 403);
+});

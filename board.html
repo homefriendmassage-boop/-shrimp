@@ -149,14 +149,15 @@
     .card-amount { font-size:clamp(1.6rem,3.4vw,3.5rem); overflow-wrap:anywhere; }
     .summary-total { font-size:clamp(1.3rem,2.5vw,2.2rem); }
     .last-result-weight { font-size:clamp(1.3rem,2.2vw,2rem); }
-    .board-tools { display:flex; gap:12px; align-items:center; margin-top:16px; color:var(--text-muted); }
+    .board-tools { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:16px; color:var(--text-muted); }
     .board-tools button { background:#252e42; border:1px solid #465472; color:white; padding:8px 12px; border-radius:8px; font:inherit; cursor:pointer; }
-    .board-table-totals { margin-top:12px; max-height:300px; overflow:auto; }
-    .board-table-totals table { width:100%; }
+    .board-tools #boardViewToggle { background:#244981; }
+    .board-table-totals .round-table { font-size:clamp(.95rem,1.55vw,1.35rem); }
+    .board-table-totals :is(th,td) { padding:10px clamp(8px,1.1vw,18px); }
+    .board-table-totals td:first-child { white-space:normal; overflow-wrap:anywhere; min-width:5rem; }
+    .board-table-totals td[colspan] { text-align:center; color:var(--text-muted); }
     .board-table-totals .even-total { color:#84b9ff; }
     .board-table-totals .odd-total { color:#ff8c96; }
-    .board-tables { padding:12px 0 0; color:var(--text-muted); overflow-wrap:anywhere; }
-    .board-tables span { color:var(--text-main); }
     .history-panel { min-width:0; border:1px solid var(--card-border); background:#171925; border-radius:16px; overflow:hidden; }
     .history-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:16px 14px 12px; }
     .history-heading h2 { margin:0; font-size:clamp(1rem,1.6vw,1.25rem); }
@@ -218,6 +219,12 @@
       <p id="boardUnlockStatus" role="status"></p>
     </form>
     <div id="boardContent" hidden>
+    <div class="board-tools">
+      <button type="button" id="boardViewToggle" aria-controls="boardResultsPanel boardTablesPanel">ดูยอดรายโต๊ะ</button>
+      <button type="button" id="boardFullscreen">เต็มจอ</button>
+      <span id="boardConnection" role="status">กำลังเชื่อมต่อ</span>
+      <button type="button" id="boardLock">ล็อกจอ</button>
+    </div>
     <div class="board-layout">
       <section aria-label="รอบปัจจุบัน">
         <div class="header-info">
@@ -266,17 +273,8 @@
           </div>
           <div class="winner-badge" id="lastWinner">-</div>
         </div>
-        <details open>
-          <summary class="board-tables">ยอดตามโต๊ะในรอบนี้</summary>
-          <div class="board-table-totals">
-            <table class="round-table">
-              <thead><tr><th scope="col">โต๊ะ</th><th scope="col">คู่</th><th scope="col">คี่</th><th scope="col">รวม</th></tr></thead>
-              <tbody id="boardTableTotals"></tbody>
-            </table>
-          </div>
-        </details>
       </section>
-      <aside class="history-panel" aria-labelledby="historyHeading">
+      <aside class="history-panel" id="boardResultsPanel" aria-labelledby="historyHeading">
         <div class="history-heading">
           <h2 id="historyHeading">สรุปและผลแต่ละรอบ</h2>
           <time id="boardDay">—</time>
@@ -302,11 +300,17 @@
           <button type="button" id="nextHistoryPage">ถัดไป</button>
         </nav>
       </aside>
-    </div>
-    <div class="board-tools">
-      <button type="button" id="boardFullscreen">เต็มจอ</button>
-      <span id="boardConnection" role="status">กำลังเชื่อมต่อ</span>
-      <button type="button" id="boardLock">ล็อกจอ</button>
+      <aside class="history-panel" id="boardTablesPanel" aria-labelledby="boardTablesHeading" hidden>
+        <div class="history-heading">
+          <h2 id="boardTablesHeading">ยอดรายโต๊ะ</h2>
+        </div>
+        <div class="history-scroll board-table-totals" id="boardTableScroll" tabindex="0" role="region" aria-labelledby="boardTablesHeading">
+          <table class="round-table">
+            <thead><tr><th scope="col">โต๊ะ</th><th scope="col">คู่</th><th scope="col">คี่</th><th scope="col">รวม</th></tr></thead>
+            <tbody id="boardTableTotals"></tbody>
+          </table>
+        </div>
+      </aside>
     </div>
     </div>
   </div>
@@ -382,6 +386,15 @@
 
     const unlockForm = document.getElementById('boardUnlock');
     const boardContent = document.getElementById('boardContent');
+    const resultsPanel = document.getElementById('boardResultsPanel');
+    const tablesPanel = document.getElementById('boardTablesPanel');
+    const viewToggle = document.getElementById('boardViewToggle');
+    function showBoardTables(showTables) {
+      resultsPanel.hidden = showTables;
+      tablesPanel.hidden = !showTables;
+      viewToggle.textContent = showTables ? 'กลับไปดูผลรอบ' : 'ดูยอดรายโต๊ะ';
+    }
+    viewToggle.onclick = () => showBoardTables(tablesPanel.hidden);
     const sessionKey = 'mc-board-session:' + boardShop;
     let boardSession;
     let boardRefreshTimer;
@@ -400,6 +413,7 @@
       saveSession(null);
       currentRound = null;
       boardContent.hidden = true;
+      showBoardTables(false);
       unlockForm.hidden = false;
       set('boardShopName', 'จอทีวีและ MC');
       set('boardUnlockStatus', message);
@@ -474,6 +488,9 @@
         unlockForm.hidden = true;
         boardContent.hidden = false;
         set('boardShopName', board.shop_name);
+        if (currentRound?.round_id !== board.round?.round_id) {
+          document.getElementById('boardTableScroll').scrollTop = 0;
+        }
         currentRound = board.round;
         set('roundIdDisplay', board.round ? 'รอบ ' + formatRoundName(board.round.round_id) : 'รอบ —');
         updateBoardTimer();

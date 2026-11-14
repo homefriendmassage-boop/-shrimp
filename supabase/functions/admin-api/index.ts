@@ -623,9 +623,12 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, shop_id: result.data.shop_id, status: 'Inactive', plan_code: result.data.plan_code });
       }
       if (input.action === 'player_state') {
-        const member = await db.from('users').select('role').eq('shop_id', shopId).eq('uid', claims.sub).maybeSingle();
+        const member = await db.from('users').select('role,status').eq('shop_id', shopId).eq('uid', claims.sub).maybeSingle();
         if (member.error) fail('PLAYER_STATE_UNAVAILABLE', 500);
-        if (member.data?.role === 'Cashier') fail('PLAYER_ACCESS_REQUIRED', 403);
+        if (member.data?.role === 'Cashier') {
+          if (member.data.status === 'Active') fail('CASHIER_ADMIN_REQUIRED', 403);
+          fail('PLAYER_ACCESS_REQUIRED', 403);
+        }
         const table = input.table_no;
         if (table != null && (typeof table !== 'string' || table.length > 40)) fail('TABLE_INVALID');
         const validTable = table && input.table_day === tableDay() &&
@@ -655,14 +658,6 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (shop.error) fail('DATABASE_ERROR', 500);
         if (String(shop.data?.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
 
-        if (input.action === 'player_profile' && typeof input.referral_member_id === 'string'
-            && /^M[0-9]{4,19}$/.test(input.referral_member_id)) {
-          const referral = await db.rpc('claim_daily_player_referral', {
-            p_shop: shopId, p_player: claims.sub, p_member: input.referral_member_id,
-          });
-          if (referral.error) fail('REFERRAL_UNAVAILABLE', 503);
-        }
-
         if (input.action === 'promoter_profile') {
           const promoter = await db.from('users').select('uid,member_id,display_name,credit_balance,commission_balance')
             .eq('shop_id', shopId).eq('uid', claims.sub).eq('role', 'Promoter').eq('status', 'Active').maybeSingle();
@@ -674,7 +669,21 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const profile = await db.from('users').select(input.action === 'wallet_request' ? 'uid,role,status,member_id,credit_balance,commission_balance,display_name' : 'uid,role,status,member_id,credit_balance,commission_balance')
           .eq('uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (profile.error) fail('DATABASE_ERROR', 500);
-        if (profile.data?.role === 'Cashier') fail('PLAYER_ACCESS_REQUIRED', 403);
+        if (profile.data?.role === 'Cashier') {
+          if (input.action === 'player_profile' && input.include_wallet_requests !== true && profile.data.status === 'Active') {
+            return reply({ ok: true, destination: 'admin_tables', shop_id: shopId });
+          }
+          fail('PLAYER_ACCESS_REQUIRED', 403);
+        }
+
+        if (input.action === 'player_profile' && typeof input.referral_member_id === 'string'
+            && /^M[0-9]{4,19}$/.test(input.referral_member_id)) {
+          const referral = await db.rpc('claim_daily_player_referral', {
+            p_shop: shopId, p_player: claims.sub, p_member: input.referral_member_id,
+          });
+          if (referral.error) fail('REFERRAL_UNAVAILABLE', 503);
+        }
+
         const staff = profile.data?.status === 'Active' && ['Admin', 'Superadmin'].includes(profile.data.role);
         const application = await db.from('membership_applications').select('state,member_id')
           .eq('line_uid', claims.sub).eq('shop_id', shopId).maybeSingle();
