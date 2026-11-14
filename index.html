@@ -280,7 +280,7 @@
       <i class="fa-solid fa-lock" style="font-size: 4rem; color: var(--text-muted); margin-bottom: 20px;"></i>
       <h2 style="margin: 0; color: var(--text-main);" id="membershipGateTitle">รอการอนุมัติสิทธิ์</h2>
       <p id="membershipGateMessage" style="color: var(--text-muted); margin-top: 10px;">บัญชีของคุณยังไม่เปิดใช้งาน</p>
-      <a id="cashierAdminLink" class="hidden" style="color:var(--blue-main)">เปิดผังโต๊ะหลังบ้าน</a>
+      <a id="staffAdminLink" class="hidden" style="color:var(--blue-main)">เปิดผังโต๊ะหลังบ้าน</a>
       <a id="membershipApplyLink" class="hidden" style="color:var(--blue-main)">สมัครสมาชิก</a>
       <button id="retryOwnerNotice" type="button" class="hidden" style="margin:14px auto;padding:12px;border:0;border-radius:8px;background:var(--blue-main);color:white;font:inherit">ส่งเตือนแอดมินอีกครั้ง</button>
       <p id="retryOwnerNoticeResult" role="status"></p>
@@ -707,13 +707,13 @@
     const ownerNoticeStatus = document.getElementById('retryOwnerNoticeResult');
     ownerNoticeButton.onclick = () => syncOwnerNotice(ownerNoticeButton, ownerNoticeStatus, 'retry_notice');
 
-    function openCashierWorkspace(shopId) {
+    function openStaffWorkspace(shopId) {
       const url = new URL('https://liff.line.me/' + APP_CONFIG.LIFF_ID_ADMIN);
       url.searchParams.set('shop', shopId);
       url.searchParams.set('tab', 'tables');
-      showMembershipGate('กำลังเปิดผังโต๊ะสำหรับแคชเชียร์', null);
+      showMembershipGate('กำลังเปิดผังโต๊ะสำหรับพนักงาน', null);
       document.getElementById('membershipGateTitle').textContent = 'ผังโต๊ะหลังบ้าน';
-      const link = document.getElementById('cashierAdminLink');
+      const link = document.getElementById('staffAdminLink');
       link.href = url.href;
       link.classList.remove('hidden');
       location.replace(url.href);
@@ -724,7 +724,7 @@
         const result = await readPlayerProfile('player_profile', referralMemberId
           ? { referral_member_id: referralMemberId } : {});
         if (result.destination === 'admin_tables') {
-          openCashierWorkspace(result.shop_id);
+          openStaffWorkspace(result.shop_id);
           return;
         }
         if (referralMemberId) {
@@ -1001,9 +1001,9 @@
         isRoundOpen = false;
         targetEndTimeMs = 0;
         lockBettingUI(true);
-        if (error.message === 'CASHIER_ADMIN_REQUIRED') {
+        if (['CASHIER_ADMIN_REQUIRED','OPERATOR_ADMIN_REQUIRED'].includes(error.message)) {
           currentUserStatus = 'Inactive';
-          openCashierWorkspace(currentShopId);
+          openStaffWorkspace(currentShopId);
         } else if (error.message === 'PLAYER_ACCESS_REQUIRED') {
           currentUserStatus = 'Inactive';
           showMembershipGate('บัญชียังไม่พร้อมใช้งาน กรุณาติดต่อผู้ดูแลร้าน', memberId);

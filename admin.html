@@ -231,8 +231,15 @@
 
   <div id="qrModal" class="hidden no-print" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; display: flex; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box;">
     <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; padding: 20px; width: 100%; max-width: 350px; text-align: center; position: relative;">
-      <h3 style="margin-top: 0; color: var(--blue-main); border-bottom: 1px solid var(--card-border); padding-bottom: 10px;">QR Code โต๊ะ <span id="qrTableNoDisplay"></span></h3>
+      <h3 id="qrTableNoDisplay" style="margin-top:0;color:var(--blue-main)"></h3>
       <div style="background: white; padding: 15px; border-radius: 12px; display: inline-block; margin: 10px auto;"><div id="qrImage" role="img" aria-label="QR โต๊ะเงินสด"></div></div>
+      <label for="tableShareLink">ลิงก์สำหรับลูกค้า</label>
+      <input id="tableShareLink" class="form-control" type="url" readonly>
+      <div class="btn-group" style="margin-top:10px">
+        <button id="copyTableLink" class="btn btn-outline" type="button">คัดลอกลิงก์</button>
+        <button id="shareTableFlex" class="btn btn-green" type="button">ส่ง Flex ใน LINE</button>
+      </div>
+      <p id="tableShareStatus" role="status"></p>
       <button onclick="closeQrModal()" class="btn btn-blue" style="width: 100%;">ปิดหน้าต่าง</button>
     </div>
   </div>
@@ -434,6 +441,7 @@
         <p style="color:var(--text-muted)">เปิดวงเงินโต๊ะเพื่อให้ผู้เล่นจ่ายทีหลังได้ QR เปลี่ยนทุกวันเวลา 06:00 น.</p>
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0">
           <button type="button" class="btn btn-outline" onclick="createTableRange(this)">สร้างโต๊ะชุด</button>
+          <button type="button" class="btn btn-outline" onclick="shareShopFromTables()">แชร์ร้านให้ลูกค้า</button>
           <a class="btn btn-outline" id="cashBoardLink" target="_blank" rel="noopener">จอทีวีและ MC</a>
           <button class="btn btn-outline hidden" id="boardPasswordSettings" type="button">ตั้งรหัสผ่านจอ MC</button>
           <label>แสดงโต๊ะ <select class="form-control" id="tableFilter">
@@ -660,6 +668,7 @@
   <script>
     const _supabase = createAdminApiClient(APP_CONFIG, () => currentShopId);
     
+    let adminShopName = '';
     let currentShopId = "SHOP_000"; // ค่าเริ่มต้นสำหรับร้านค้า
     let currentOpId = "", currentAdminName = "", creditMode = "private", currentUserRole = "Customer", selectedUserIdForManage = ""; 
     let targetEndTimeMs = null, isRoundOpen = false;
@@ -681,6 +690,7 @@
         if (!response.ok || currentShopId !== shopId) return;
         const { shop_name } = await response.json();
         if (currentShopId !== shopId || typeof shop_name !== 'string' || !shop_name.trim()) return;
+        adminShopName = shop_name.trim();
         document.title = 'Admin Panel · ' + shop_name;
         document.querySelector('.header-title').textContent = 'Admin Panel · ' + shop_name;
       } catch { /* A shop name lookup must not delay sign-in. */ }
@@ -770,10 +780,10 @@
               ['pending', 'tables'].includes(requestedTab)) {
             switchAdminTab(requestedTab);
           }
-          await loadGeneralMembershipRequests();
+          if (currentUserRole !== 'Operator') await loadGeneralMembershipRequests();
 
           let hashData = window.location.hash; 
-          if (['Admin', 'Superadmin', 'Operator'].includes(currentUserRole) && urlParams.get('tab') !== 'pending' && new URLSearchParams(window.location.search).get('tab') !== 'pending' && hashData && hashData.length > 1) {
+          if (['Admin', 'Superadmin'].includes(currentUserRole) && urlParams.get('tab') !== 'pending' && new URLSearchParams(window.location.search).get('tab') !== 'pending' && hashData && hashData.length > 1) {
              let payloadData = hashData.substring(1); 
              let dataParts = payloadData.split('_'); 
              if (dataParts.length === 3) {
@@ -824,7 +834,7 @@
         } else {
           document.getElementById('accessDeniedView').classList.add('hidden');
           document.getElementById('adminTabs').style.display = 'flex';
-          if (access.can_create_shop === true && currentUserRole !== 'Cashier') {
+          if (access.can_create_shop === true && ['Admin','Superadmin'].includes(currentUserRole)) {
             shopPortalLink.classList.remove('hidden');
             saasAdminLink.classList.remove('hidden');
           }
@@ -850,9 +860,11 @@
             document.getElementById('txtNewTable').parentElement.classList.add('hidden');
             document.querySelector('button[onclick="createTableRange(this)"]').classList.add('hidden');
           } else if (currentUserRole === 'Operator') {
-             document.getElementById('tabReport').style.display = 'none';
-             document.getElementById('cardUserManage').classList.add('hidden');
-             document.getElementById('cardSettings').classList.add('hidden');
+            for (const id of ['tabControl','tabPending','tabReport','cashBoardLink']) {
+              document.getElementById(id).classList.add('hidden');
+            }
+            document.getElementById('txtNewTable').parentElement.classList.add('hidden');
+            document.querySelector('button[onclick="createTableRange(this)"]').classList.add('hidden');
           } else {
              loadSettings();
              void loadShopPaymentSettings();
@@ -870,7 +882,7 @@
               loadTableList().catch(() => {});
             }
           }, 6000);
-          if (currentUserRole !== 'Cashier') {
+          if (!['Cashier','Operator'].includes(currentUserRole)) {
             loadPendingRequests();
             setInterval(loadPendingRequests, 4000);
           }
@@ -1011,7 +1023,7 @@
 
     function switchAdminTab(tab) {
         if (document.getElementById('adminTabs').style.display !== 'flex') return;
-        if (currentUserRole === 'Cashier') tab = 'tables';
+        if (['Cashier','Operator'].includes(currentUserRole)) tab = 'tables';
         if (tab === 'tables' && !canOpenTableWorkspace()) tab = 'control';
         const showTables = tab === 'tables';
         document.body.classList.toggle('table-workspace', showTables);
@@ -1634,7 +1646,7 @@
         if (dist <= 0 && isRoundOpen) { 
             el.innerText = 'หมดเวลา · ปิดรับยอดลูกค้า';
             el.style.color = "var(--red-main)"; 
-            if (currentUserRole !== 'Cashier') prepareCloseBetting();
+            if (['Admin','Superadmin'].includes(currentUserRole)) prepareCloseBetting();
             else {
               isRoundOpen = false;
               renderTableGrid();
@@ -2253,6 +2265,7 @@
       const actions = document.getElementById('selectedTableActions');
       const bills = document.getElementById('selectedTableBills');
       const cashier = currentUserRole === 'Cashier';
+      const owner = ['Admin','Superadmin'].includes(currentUserRole);
       const status = document.getElementById('selectedTableStatus');
       const pending = new Set(tableRound?.bets.filter(b => b.status === 'Active').map(b => b.table_no));
       const settlementState = desk => {
@@ -2348,11 +2361,12 @@
           if (name.trim().length > 40) return alert('ชื่อโต๊ะต้องไม่เกิน 40 ตัวอักษร');
           await update({ table_name: name.trim() || null });
         }
-      }), button(desk.is_hidden ? 'แสดงโต๊ะ' : 'ซ่อนโต๊ะ', () =>
+      }));
+      if (owner) actions.append(button(desk.is_hidden ? 'แสดงโต๊ะ' : 'ซ่อนโต๊ะ', () =>
         update(desk.is_hidden ? { is_hidden: false } : { is_hidden: true, is_open: false })));
       if (!desk.is_hidden) {
         actions.append(button(desk.is_open ? 'ปิดรับยอด' : 'เปิดรับยอด', () => update({ is_open: !desk.is_open })));
-        if (!cashier) actions.append(button('วงเงินสด', () => setCashTableLimit(desk.table_no, desk.cash_limit)));
+        if (owner) actions.append(button('วงเงินสด', () => setCashTableLimit(desk.table_no, desk.cash_limit)));
         if (desk.is_open && desk.cash_limit != null) {
           actions.append(button('QR', () => showQrCode(desk.table_no, true, deskName(desk))));
           if (isRoundOpen) actions.append(button('ลงยอดให้โต๊ะ', () => openTableBetForm(desk, 'normal'), 'btn-blue'));
@@ -2430,11 +2444,7 @@
         const { day, token } = await _supabase.tableQr(table);
         if (generation !== tableQrGeneration) return;
         const playerUrl = playerEntryUrl(currentShopId, { table, d: day, table_token: token });
-        document.getElementById('qrTableNoDisplay').textContent = name;
-        const image = document.getElementById('qrImage');
-        image.replaceChildren();
-        new QRCode(image, { text: playerUrl, width: 200, height: 200 });
-        document.getElementById('qrModal').classList.remove('hidden');
+        openCustomerShare([adminShopName, name].filter(Boolean).join(' · '), playerUrl);
         const [, end] = shopAccountingWindow(day);
         tableQrRefresh = setTimeout(() => {
           document.getElementById('qrImage').replaceChildren();
@@ -2444,6 +2454,72 @@
           });
         }, Math.max(100, Date.parse(end) - Date.now() + 300));
     }
+
+    function openCustomerShare(label, url) {
+      document.getElementById('qrTableNoDisplay').textContent = label;
+      document.getElementById('tableShareLink').value = url;
+      const image = document.getElementById('qrImage');
+      image.replaceChildren();
+      const status = document.getElementById('tableShareStatus');
+      status.textContent = '';
+      try {
+        new QRCode(image, { text: url, width: 200, height: 200 });
+      } catch {
+        status.textContent = 'แสดง QR ไม่สำเร็จ คัดลอกลิงก์ส่งให้ลูกค้าได้';
+      }
+      document.getElementById('qrModal').classList.remove('hidden');
+    }
+
+    function shareShopFromTables() {
+      closeQrModal();
+      openCustomerShare(adminShopName || 'บ่อตกกุ้ง', playerEntryUrl(currentShopId));
+    }
+
+    document.getElementById('copyTableLink').onclick = async () => {
+      const link = document.getElementById('tableShareLink');
+      const status = document.getElementById('tableShareStatus');
+      try {
+        await navigator.clipboard.writeText(link.value);
+        status.textContent = 'คัดลอกลิงก์แล้ว';
+      } catch {
+        link.focus();
+        link.select();
+        status.textContent = 'เลือกลิงก์ไว้แล้ว คัดลอกเพื่อส่งในแชตได้';
+      }
+    };
+
+    document.getElementById('shareTableFlex').onclick = async event => {
+      const button = event.currentTarget;
+      const status = document.getElementById('tableShareStatus');
+      if (!liff.isApiAvailable('shareTargetPicker')) {
+        status.textContent = 'ส่ง Flex ในหน้าต่างนี้ไม่ได้ คัดลอกลิงก์ส่งในแชตได้';
+        return;
+      }
+      button.disabled = true;
+      try {
+        const title = document.getElementById('qrTableNoDisplay').textContent;
+        const result = await liff.shareTargetPicker([{
+          type: 'flex', altText: ('ชวนเพื่อนมาที่ ' + title).slice(0, 300),
+          contents: {
+            type: 'bubble',
+            body: { type: 'box', layout: 'vertical', contents: [
+              { type: 'text', text: 'ชวนเพื่อนมาที่', size: 'sm', wrap: true },
+              { type: 'text', text: title, weight: 'bold', size: 'lg', wrap: true },
+            ] },
+            footer: { type: 'box', layout: 'vertical', contents: [{
+              type: 'button', style: 'primary', action: {
+                type: 'uri', label: 'เปิดลิงก์', uri: document.getElementById('tableShareLink').value,
+              },
+            }] },
+          },
+        }]);
+        if (result?.status === 'success') status.textContent = 'ส่ง Flex แล้ว';
+      } catch {
+        status.textContent = 'ส่ง Flex ไม่สำเร็จ คัดลอกลิงก์ส่งในแชตได้';
+      } finally {
+        button.disabled = false;
+      }
+    };
 
     function closeQrModal() {
       tableQrGeneration++;
