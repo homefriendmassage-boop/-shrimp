@@ -43,7 +43,7 @@ test('writes must have a target and use permitted fields and amounts', () => {
   assert.throws(() => validateQuery({ ...q, values: { credit_balance: -1 } }, 'Admin', 'SHOP_001'));
   assert.throws(() => validateQuery({ ...q, values: { display_name: 'not writable' } }, 'Admin', 'SHOP_001'));
   assert.throws(() => validateQuery({ ...q, values: [{ role: 'Admin' }] }, 'Admin', 'SHOP_001'));
-  assert.equal(validateQuery({ ...q, values: { credit_balance: 100 } }, 'Operator', 'SHOP_001').operation, 'update');
+  assert.throws(() => validateQuery({ ...q, values: { credit_balance: 100 } }, 'Operator', 'SHOP_001'), /ADMIN_REQUIRED/);
 });
 
 function setup({ role = 'Admin', active = true, absent = false, aud = 'channel', exp = Date.now() / 1000 + 60, linked = true, shopStatus = 'active', brokenDb = false } = {}) {
@@ -449,9 +449,10 @@ test('cashier can open or close their own table, and cannot use generic financia
     /ADMIN_REQUIRED/);
 });
 
-test('active Cashier signed into Player is routed to the back office of the selected shop', async () => {
+test('active Cashier and Operator signed into Player are routed to the back office of the selected shop', async () => {
   const reads = [];
   let active = true;
+  let role = 'Cashier';
   const handler = makeHandler({
     env: name => ({ LINE_CHANNEL_ID_PLAYER:'player', SUPABASE_URL:'https://example.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY:'server-only' })[name],
@@ -463,7 +464,7 @@ test('active Cashier signed into Player is routed to the back office of the sele
           maybeSingle: async () => {
             reads.push({ table, filters });
             return { data: table === 'shops' ? { status:'active' }
-              : { role:'Cashier', status:active ? 'Active' : 'Inactive' } };
+              : { role, status:active ? 'Active' : 'Inactive' } };
           } };
         return chain;
       },
@@ -483,6 +484,26 @@ test('active Cashier signed into Player is routed to the back office of the sele
     assert.equal((await handler(request(payload))).status, 403);
   }
   assert.equal((await (await handler(request({ shop_id, action:'player_state' }))).json()).code, 'CASHIER_ADMIN_REQUIRED');
+  role = 'Operator';
+  assert.deepEqual(await (await handler(request(profile))).json(), { ok:true, destination:'admin_tables', shop_id });
+  assert.equal((await (await handler(request({ shop_id, action:'player_state' }))).json()).code, 'OPERATOR_ADMIN_REQUIRED');
+  for (const action of ['player_place_bet','player_cancel_bet','player_bet_history','wallet_request']) {
+    assert.equal((await handler(request({ shop_id, action }))).status, 403);
+  }
   active = false;
   assert.equal((await handler(request(profile))).status, 403);
+});
+
+test('Operator can rename and open their own tables without creating or adjusting balances', async () => {
+  const target = { table:'tables', operation:'update', filters:[{ op:'eq', column:'table_no', value:'1' }] };
+  for (const values of [{ table_name:'ริมบ่อ' },{ is_open:true }]) {
+    assert.equal(validateQuery({ ...target, values }, 'Operator', 'SHOP_001').operation, 'update');
+  }
+  for (const values of [{ credit:100 },{ cash_limit:100 },{ is_hidden:true }]) {
+    assert.throws(() => validateQuery({ ...target, values }, 'Operator', 'SHOP_001'), /ADMIN_REQUIRED/);
+  }
+  assert.throws(() => validateQuery({ table:'tables', operation:'insert', values:{ table_no:'2' } },
+    'Operator', 'SHOP_001'), /ADMIN_REQUIRED/);
+  const { handler } = setup({ role:'Operator' });
+  assert.equal((await handler(request({ action:'table_bulk_create', count:2, cash_limit:'300' }))).status, 403);
 });

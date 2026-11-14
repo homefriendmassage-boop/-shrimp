@@ -69,13 +69,14 @@ export function validateQuery(input, role, shopId) {
   const { table, operation = 'select' } = input;
   if (!Object.hasOwn(fields, table)) fail('TABLE_NOT_ALLOWED', 403);
   if (!['select', 'insert', 'update', 'delete'].includes(operation)) fail('OPERATION_NOT_ALLOWED', 403);
-  if (role === 'Cashier') {
+  if (['Cashier','Operator'].includes(role)) {
     if (operation === 'select' && !['tables','rounds','bets'].includes(table)) fail('ADMIN_REQUIRED', 403);
+    const allowedTableFields = role === 'Operator' ? ['is_open','table_name'] : ['is_open'];
+    const keys = Object.keys(input.values ?? {});
     if (operation !== 'select' && !(table === 'tables' && operation === 'update' &&
-      Object.keys(input.values ?? {}).length === 1 && Object.hasOwn(input.values, 'is_open'))) fail('ADMIN_REQUIRED', 403);
+      keys.length === 1 && allowedTableFields.includes(keys[0]))) fail('ADMIN_REQUIRED', 403);
   }
   if (!['Admin', 'Superadmin', 'Operator', 'Cashier'].includes(role)) fail('ADMIN_REQUIRED', 403);
-  if (role === 'Operator' && operation === 'select' && ['transactions', 'backer_logs'].includes(table)) fail('ADMIN_REQUIRED', 403);
   const columns = input.columns === '*' || input.columns === undefined ? fields[table].split(' ') : String(input.columns).split(',').map(s => s.trim());
   if (!columns.length || columns.some(c => !includes(fields[table], c))) fail('COLUMN_NOT_ALLOWED', 403);
   const filters = input.filters ?? [];
@@ -91,7 +92,6 @@ export function validateQuery(input, role, shopId) {
   if (operation !== 'select') {
     const allowed = writes[table]?.[operation];
     if (allowed === undefined) fail('WRITE_NOT_ALLOWED', 403);
-    if (role === 'Operator' && (table === 'system_settings' || (table === 'users' && Object.keys(input.values ?? {}).some(k => !['credit_balance', 'total_deposit', 'commission_balance', 'backer_wallet'].includes(k))))) fail('ADMIN_REQUIRED', 403);
     if (operation === 'update' || operation === 'delete') {
       // The shop predicate is added by the server; never accept an unbounded mutation.
       if (table !== 'system_settings' && !(identity[table] ?? []).some(c => filters.some(f => f.op === 'eq' && f.column === c && String(f.value).length > 0))) fail('TARGET_REQUIRED');
@@ -625,8 +625,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (input.action === 'player_state') {
         const member = await db.from('users').select('role,status').eq('shop_id', shopId).eq('uid', claims.sub).maybeSingle();
         if (member.error) fail('PLAYER_STATE_UNAVAILABLE', 500);
-        if (member.data?.role === 'Cashier') {
-          if (member.data.status === 'Active') fail('CASHIER_ADMIN_REQUIRED', 403);
+        if (['Cashier','Operator'].includes(member.data?.role)) {
+          if (member.data.status === 'Active') fail(member.data.role === 'Cashier' ? 'CASHIER_ADMIN_REQUIRED' : 'OPERATOR_ADMIN_REQUIRED', 403);
           fail('PLAYER_ACCESS_REQUIRED', 403);
         }
         const table = input.table_no;
@@ -669,7 +669,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const profile = await db.from('users').select(input.action === 'wallet_request' ? 'uid,role,status,member_id,credit_balance,commission_balance,display_name' : 'uid,role,status,member_id,credit_balance,commission_balance')
           .eq('uid', claims.sub).eq('shop_id', shopId).maybeSingle();
         if (profile.error) fail('DATABASE_ERROR', 500);
-        if (profile.data?.role === 'Cashier') {
+        if (['Cashier','Operator'].includes(profile.data?.role)) {
           if (input.action === 'player_profile' && input.include_wallet_requests !== true && profile.data.status === 'Active') {
             return reply({ ok: true, destination: 'admin_tables', shop_id: shopId });
           }
@@ -805,6 +805,9 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       const shop = await db.from('shops').select('shop_id,status').eq('shop_id', shopId).maybeSingle();
       if (shop.error) fail('DATABASE_ERROR', 500);
       if (!shop.data || String(shop.data.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
+      if (staff.data.role === 'Operator' && !['access','query','table_qr','table_cash_payment','table_cash_bet'].includes(input.action)) {
+        fail('ADMIN_REQUIRED', 403);
+      }
       if (staff.data.role === 'Cashier' && !['access','query','table_qr','table_cash_payment','table_cash_bet','table_correct_bet'].includes(input.action)) {
         fail('ADMIN_REQUIRED', 403);
       }
