@@ -449,6 +449,7 @@
             <div id="cashierQueue" class="hidden">
               <h3>คิวรับ–จ่ายเงินสด</h3>
               <div id="tableQueue"></div>
+              <p id="tableCashStatus" role="status"></p>
             </div>
             <p id="selectedTableStatus"></p>
             <div id="selectedTableActions"></div>
@@ -2027,7 +2028,9 @@
           if(tableError || !t) throw new Error("ไม่พบเบอร์โต๊ะนี้ในระบบ กรุณาตรวจสอบให้แน่ใจว่าได้กด 'เพิ่มโต๊ะ' เบอร์นี้ในระบบแล้ว");
           
           if (t.cash_limit != null) {
-            await recordCashAtTable(tId, type, amountStr);
+            const balance = await recordCashAtTable(tId, type, amountStr);
+            if (balance == null) return;
+            alert('บันทึกเงินสดแล้ว · ยอดโต๊ะ ฿' + Number(balance).toLocaleString('th-TH'));
             document.getElementById('txtTargetId').value = '';
             document.getElementById('txtAmount').value = '';
             return;
@@ -2126,9 +2129,30 @@
       try {
         const { balance } = await _supabase.recordTableCash(table, type, amount, cashPaymentRetry.id);
         cashPaymentRetry = null;
-        alert('บันทึกเงินสดแล้ว · ยอดโต๊ะ ฿' + Number(balance).toLocaleString('th-TH'));
+        await loadTableList();
+        return balance;
       } finally { cashPaymentBusy = false; }
-      await loadTableList();
+    }
+
+    async function confirmTableCashPayment(desk) {
+      if (cashPaymentBusy) return;
+      const balance = Number(desk.credit);
+      const receive = balance < 0;
+      const action = receive ? 'รับเงินสด' : 'จ่ายเงินสด';
+      const amount = prompt(
+        deskName(desk) + ' · ยืนยัน' + action + 'จริง (บาท)',
+        Math.abs(balance).toFixed(2)
+      );
+      if (amount === null) return;
+      const value = amount.trim();
+      if (!/^\d{1,9}(?:\.\d{1,2})?$/.test(value) || Number(value) <= 0) {
+        alert('กรุณาระบุจำนวนเงินให้ถูกต้อง');
+        return;
+      }
+      const balanceAfter = await recordCashAtTable(desk.table_no, receive ? 'deposit' : 'withdraw', value);
+      if (balanceAfter != null) {
+        document.getElementById('tableCashStatus').textContent = deskName(desk) + ' · บันทึก' + action + 'แล้ว';
+      }
     }
 
     async function setCashTableLimit(table, limit) {
@@ -2309,10 +2333,11 @@
         queue.replaceChildren(...unsettled.map(row => {
           const amount = Number(row.credit);
           return button(deskName(row) + (amount < 0 ? ' · รับ ฿' : ' · จ่าย ฿') + Math.abs(amount).toLocaleString('th-TH'), () => {
-            document.getElementById('tableFilter').value = row.is_hidden ? 'hidden' : 'visible';
-            selectedTable = row.table_no;
-            renderTableGrid();
-            actions.querySelector('button')?.focus();
+            if (selectedTable !== null) {
+              selectedTable = null;
+              renderTableGrid();
+            }
+            return confirmTableCashPayment(row);
           }, 'table-status-' + settlementState(row));
         }));
         if (!unsettled.length) queue.textContent = 'ไม่มีโต๊ะรอรับหรือจ่ายเงิน';
@@ -2374,11 +2399,8 @@
       }
       const settlement = settlementState(desk);
       if (settlement) {
-        actions.append(button(balance < 0 ? 'รับเงินสด' : 'จ่ายเงินสด', async () => {
-          const amount = prompt(balance < 0 ? 'จำนวนเงินสดที่รับจริง' : 'จำนวนเงินสดที่จ่ายจริง', Math.abs(balance).toFixed(2));
-          if (amount === null || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0) return;
-          await recordCashAtTable(desk.table_no, balance < 0 ? 'deposit' : 'withdraw', amount.trim());
-        }, 'table-status-' + settlement));
+        actions.append(button(balance < 0 ? 'รับเงินสด' : 'จ่ายเงินสด',
+          () => confirmTableCashPayment(desk), 'table-status-' + settlement));
       }
     }
 
