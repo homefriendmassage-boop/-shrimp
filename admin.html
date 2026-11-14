@@ -169,17 +169,25 @@
     }
     #walletDecisionDialog button[value="approve"] { background: linear-gradient(#008c51, #007a45); }
     #walletDecisionDialog button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-    #tableListContainer { display:grid; grid-template-columns:repeat(auto-fill,minmax(122px,1fr)); gap:8px; }
-    #tableListContainer button { width:100%; min-height:76px; white-space:normal; overflow-wrap:anywhere; }
-    #tableListContainer button[aria-pressed="true"] {
-      outline:2px solid #fff;
-      outline-offset:-4px;
-    }
+    #tableListContainer { display:grid; grid-template-columns:repeat(auto-fill,minmax(136px,1fr)); gap:10px; align-items:start; }
+    .table-card { min-width:0; border:1px solid #526079; border-radius:12px; background:#171b29; overflow:hidden; }
+    .table-card.is-selected { grid-column:1 / -1; border-color:#93b8f4; }
+    .table-card-toggle { display:grid; width:100%; gap:4px; text-align:left; padding:12px; border:0; border-radius:0; background:transparent; }
+    .table-card-toggle span { overflow-wrap:anywhere; }
+    .table-card-name { font-size:1.04rem; line-height:1.35; }
+    .table-card-state { font-size:.88rem; font-weight:400; }
+    .table-card-command { justify-self:start; margin-top:4px; font-size:.82rem; text-decoration:underline; }
+    #selectedTablePanel { padding:14px; background:#171b29; }
+    #selectedTableStatus { margin:0 0 12px; color:#c7d2e4; font-size:.92rem; }
+    #selectedTableActions > .btn { flex:0 1 auto; min-height:44px; }
+    #staffCashBetForm { max-width:460px; margin-top:12px; }
+    .cash-bet-sides button[aria-pressed="false"] { opacity:.78; }
+    #tableWorkspace .table-card-toggle:focus-visible { outline-offset:-4px; }
     #tableWorkspace .table-status-pending { background:#1d4280; border:1px solid #69a5ff; color:#fff; }
     #tableWorkspace .table-status-receive { background:#12523a; border:1px solid #49cf95; color:#fff; }
     #tableWorkspace .table-status-pay { background:#73360d; border:1px solid #ffac61; color:#fff; }
     #tableWorkspace button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
-    #tableWorkspace { display:grid; gap:16px; }
+    #tableWorkspace { display:grid; gap:16px; align-items:start; }
     #tableQueue button, .table-bill { margin-bottom:6px; width:100%; }
     .table-bill { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
     .table-bill .btn { flex:0 0 auto; padding:5px 12px; }
@@ -187,8 +195,11 @@
     @media (min-width:1000px) {
       .table-workspace .container { max-width:1420px; }
       .table-workspace #tableWorkspace { grid-template-columns:minmax(0, 2fr) minmax(300px, 1fr); }
-      .table-workspace #tableListContainer { grid-template-columns:repeat(6, minmax(0,1fr)); }
     }
+    .cash-bet-sides { border:0; padding:0; margin:0 0 8px; min-width:0; }
+    .cash-bet-sides legend { padding:0; margin-bottom:4px; }
+    .cash-bet-sides .btn-group { margin:0; }
+    .cash-bet-sides button[aria-pressed="true"] { outline:2px solid #fff; outline-offset:-4px; }
     #selectedTableActions { display:flex; flex-wrap:wrap; gap:8px; }
   </style>
 </head>
@@ -445,22 +456,31 @@
         <p id="tableGridRound" aria-live="polite"></p>
         <div id="tableWorkspace">
           <div id="tableListContainer"></div>
-          <aside>
-            <div id="cashierQueue" class="hidden">
-              <h3>คิวรับ–จ่ายเงินสด</h3>
-              <div id="tableQueue"></div>
-            </div>
+          <div id="selectedTablePanel" class="hidden">
             <p id="selectedTableStatus"></p>
             <div id="selectedTableActions"></div>
             <form id="staffCashBetForm" class="hidden" style="margin-bottom:12px">
               <p id="staffCashBetTitle"></p>
-              <label>ฝั่ง <select name="side" class="form-control"><option>คู่</option><option>คี่</option></select></label>
+              <fieldset class="cash-bet-sides">
+                <legend>เลือกฝั่ง</legend>
+                <div class="btn-group">
+                  <button type="button" data-bet-side="คู่" class="btn table-status-pending" aria-pressed="false">คู่</button>
+                  <button type="button" data-bet-side="คี่" class="btn btn-red" aria-pressed="false">คี่</button>
+                </div>
+              </fieldset>
               <label>ยอดลงโต๊ะ <input name="amount" type="number" min="0.01" step="0.01" class="form-control" required></label>
               <label id="cashCorrectionReason" class="hidden">เหตุผล <input name="reason" maxlength="300" class="form-control"></label>
-              <button type="submit" class="btn btn-blue">บันทึกบิล</button>
+              <button type="submit" class="btn btn-blue" disabled>บันทึกบิล</button>
               <button type="button" class="btn btn-outline" onclick="this.form.classList.add('hidden')">ปิด</button>
             </form>
             <div id="selectedTableBills"></div>
+          </div>
+          <aside>
+            <div id="cashierQueue" class="hidden">
+              <h3>คิวรับ–จ่ายเงินสด</h3>
+              <div id="tableQueue"></div>
+              <p id="tableCashStatus" role="status"></p>
+            </div>
           </aside>
         </div>
       </div>
@@ -2027,7 +2047,9 @@
           if(tableError || !t) throw new Error("ไม่พบเบอร์โต๊ะนี้ในระบบ กรุณาตรวจสอบให้แน่ใจว่าได้กด 'เพิ่มโต๊ะ' เบอร์นี้ในระบบแล้ว");
           
           if (t.cash_limit != null) {
-            await recordCashAtTable(tId, type, amountStr);
+            const balance = await recordCashAtTable(tId, type, amountStr);
+            if (balance == null) return;
+            alert('บันทึกเงินสดแล้ว · ยอดโต๊ะ ฿' + Number(balance).toLocaleString('th-TH'));
             document.getElementById('txtTargetId').value = '';
             document.getElementById('txtAmount').value = '';
             return;
@@ -2126,9 +2148,30 @@
       try {
         const { balance } = await _supabase.recordTableCash(table, type, amount, cashPaymentRetry.id);
         cashPaymentRetry = null;
-        alert('บันทึกเงินสดแล้ว · ยอดโต๊ะ ฿' + Number(balance).toLocaleString('th-TH'));
+        await loadTableList();
+        return balance;
       } finally { cashPaymentBusy = false; }
-      await loadTableList();
+    }
+
+    async function confirmTableCashPayment(desk) {
+      if (cashPaymentBusy) return;
+      const balance = Number(desk.credit);
+      const receive = balance < 0;
+      const action = receive ? 'รับเงินสด' : 'จ่ายเงินสด';
+      const amount = prompt(
+        deskName(desk) + ' · ยืนยัน' + action + 'จริง (บาท)',
+        Math.abs(balance).toFixed(2)
+      );
+      if (amount === null) return;
+      const value = amount.trim();
+      if (!/^\d{1,9}(?:\.\d{1,2})?$/.test(value) || Number(value) <= 0) {
+        alert('กรุณาระบุจำนวนเงินให้ถูกต้อง');
+        return;
+      }
+      const balanceAfter = await recordCashAtTable(desk.table_no, receive ? 'deposit' : 'withdraw', value);
+      if (balanceAfter != null) {
+        document.getElementById('tableCashStatus').textContent = deskName(desk) + ' · บันทึก' + action + 'แล้ว';
+      }
     }
 
     async function setCashTableLimit(table, limit) {
@@ -2158,8 +2201,21 @@
       BET_LIMIT: 'ยอดเกินช่วงขั้นต่ำหรือสูงสุดของร้าน',
       BET_INVALID: 'กรุณาตรวจยอดและเหตุผล',
       TABLE_CLOSED: 'โต๊ะนี้ปิดหรือซ่อนอยู่',
+      TABLE_SETTLEMENT_REQUIRED: 'โต๊ะนี้ยังมียอดรอบก่อน กรุณารับหรือจ่ายเงินให้ครบก่อนลงยอดรอบใหม่',
       TABLE_CREDIT_LIMIT: 'ยอดค้างเกินวงเงินของโต๊ะ'
     };
+
+    function selectCashBetSide(form, side) {
+      form.dataset.side = side;
+      for (const button of form.querySelectorAll('[data-bet-side]')) {
+        button.setAttribute('aria-pressed', String(button.dataset.betSide === side));
+      }
+      form.querySelector('[type="submit"]').disabled = !side;
+    }
+
+    for (const button of document.querySelectorAll('#staffCashBetForm [data-bet-side]')) {
+      button.onclick = () => selectCashBetSide(button.form, button.dataset.betSide);
+    }
 
     function openTableBetForm(desk, mode, bet) {
       const form = document.getElementById('staffCashBetForm');
@@ -2171,7 +2227,7 @@
       form.dataset.expectedAmount = bet?.amount ?? '';
       form.elements.amount.value = bet?.amount ?? '';
       form.elements.amount.min = mode === 'normal' ? '0.01' : '100';
-      form.elements.side.value = bet?.bet_type || 'คู่';
+      selectCashBetSide(form, '');
       form.elements.reason.value = '';
       form.elements.reason.required = mode !== 'normal';
       document.getElementById('cashCorrectionReason').classList.toggle('hidden', mode === 'normal');
@@ -2179,12 +2235,12 @@
         (mode === 'edit' ? 'แก้ยอด ' : 'ลงยอดเงินสดให้ ') + deskName(desk);
       form.classList.remove('hidden');
       form.scrollIntoView({ block: 'nearest' });
-      form.elements.amount.focus();
+      form.querySelector('[data-bet-side]').focus();
     }
 
     async function submitTableCorrection(operation, details, bet) {
       if (operation === 'remove') {
-        const reason = prompt('เหตุผลที่เอาบิล ' + bet.bet_type + ' ฿' + bet.amount + ' ออกจากยอดโต๊ะ');
+        const reason = prompt('เหตุผลที่ยกเลิกบิล ' + bet.bet_type + ' ฿' + bet.amount);
         if (reason === null) return;
         details.reason = reason.trim();
       }
@@ -2209,13 +2265,15 @@
       event.preventDefault();
       const form = event.currentTarget;
       const button = form.querySelector('[type="submit"]');
-      if (button.disabled) return;
+      if (button.disabled || !['คู่','คี่'].includes(form.dataset.side)) return;
+      const { table, round, mode, bet, expectedSide, expectedAmount, side } = form.dataset;
+      const sideButtons = form.querySelectorAll('[data-bet-side]');
       button.disabled = true;
+      sideButtons.forEach(option => { option.disabled = true; });
       try {
-        const { table, round, mode, bet, expectedSide, expectedAmount } = form.dataset;
         const details = { table_no: table, round_id: round, amount: form.elements.amount.value };
         if (mode === 'normal') {
-          const normal = { ...details, bet_type: form.elements.side.value };
+          const normal = { ...details, bet_type: side };
           const key = JSON.stringify([currentShopId, normal]);
           if (staffCashBetRetry?.key !== key) staffCashBetRetry = { key, id: crypto.randomUUID() };
           await _supabase.placeTableCashBet({ ...normal, bet_id: staffCashBetRetry.id });
@@ -2223,12 +2281,15 @@
           form.classList.add('hidden');
           await Promise.all([loadTableList(), fetchAdminDashboard()]);
         } else {
-          await submitTableCorrection(mode, { ...details, side: form.elements.side.value, reason: form.elements.reason.value.trim() },
+          await submitTableCorrection(mode, { ...details, side, reason: form.elements.reason.value.trim() },
             bet ? { bet_id: bet, bet_type: expectedSide, amount: expectedAmount } : null);
         }
       } catch (error) {
         alert(tableBetErrors[error.message] || 'ยังยืนยันผลการบันทึกบิลไม่ได้');
-      } finally { button.disabled = false; }
+      } finally {
+        sideButtons.forEach(option => { option.disabled = false; });
+        button.disabled = !form.dataset.side;
+      }
     });
 
     let tableDesks = [];
@@ -2249,12 +2310,20 @@
     function renderTableGrid() {
       const filter = document.getElementById('tableFilter').value;
       const grid = document.getElementById('tableListContainer');
-      const focused = grid.contains(document.activeElement) ? document.activeElement.dataset.table : null;
+      const panel = document.getElementById('selectedTablePanel');
       const actions = document.getElementById('selectedTableActions');
       const bills = document.getElementById('selectedTableBills');
       const cashier = currentUserRole === 'Cashier';
       const status = document.getElementById('selectedTableStatus');
       const pending = new Set(tableRound?.bets.filter(b => b.status === 'Active').map(b => b.table_no));
+      const roundCashDebits = new Map();
+      for (const bet of tableRound?.bets ?? []) {
+        if (bet.cash_table && bet.status === 'Active') {
+          roundCashDebits.set(bet.table_no, (roundCashDebits.get(bet.table_no) ?? 0) + Math.round(Number(bet.amount) * 100));
+        }
+      }
+      const hasPriorBalance = desk => desk.cash_limit != null &&
+        Math.round(Number(desk.credit) * 100) + (roundCashDebits.get(desk.table_no) ?? 0) !== 0;
       const settlementState = desk => {
         const balance = Number(desk.credit);
         if (desk.cash_limit == null || pending.has(desk.table_no) || !balance) return '';
@@ -2284,35 +2353,73 @@
         };
         return element;
       };
-      grid.replaceChildren();
       const desk = shown.find(row => row.table_no === selectedTable);
-      for (const row of shown) {
+      const cardStates = shown.map(row => {
         const activity = pending.has(row.table_no) ? 'pending' : settlementState(row);
         const activityLabel = { pending:'รอผล', receive:'ต้องรับเงิน', pay:'ต้องจ่ายเงิน' }[activity];
         const availability = row.is_hidden ? 'ซ่อน' : !row.is_open ? 'ปิด' : '';
         const state = [availability, activityLabel].filter(Boolean).join(' · ')
           || (row.cash_limit == null ? 'ยังไม่ตั้งวงเงิน' : 'เคลียร์แล้ว');
-        const item = button(deskName(row) + ' · ' + state, () => {
-          selectedTable = row.table_no;
-          renderTableGrid();
-          actions.querySelector('button')?.focus();
-        }, activity ? 'table-status-' + activity : 'btn-outline');
-        item.setAttribute('aria-pressed', String(row.table_no === selectedTable));
-        item.dataset.table = row.table_no;
-        grid.append(item);
-        if (focused === row.table_no) item.focus();
+        return { row, activity, state };
+      });
+      const gridKey = JSON.stringify([desk?.table_no, cardStates.map(({row, activity, state}) =>
+        [row.table_no, deskName(row), activity, state])]);
+      if (grid.dataset.key !== gridKey) {
+        const active = document.activeElement;
+        const focusedTable = grid.contains(active) ? active.dataset.table : null;
+        const focusedPanel = panel.contains(active);
+        grid.after(panel);
+        grid.replaceChildren();
+        grid.dataset.key = gridKey;
+        panel.classList.toggle('hidden', !desk);
+
+        for (const { row, activity, state } of cardStates) {
+          const expanded = row.table_no === desk?.table_no;
+          const card = document.createElement('article');
+          card.classList.add('table-card');
+          card.classList.toggle('is-selected', expanded);
+          const item = button('', () => {
+            selectedTable = expanded ? null : row.table_no;
+            renderTableGrid();
+            for (const toggle of grid.querySelectorAll('[data-table]')) {
+              if (toggle.dataset.table === row.table_no) {
+                toggle.focus();
+                break;
+              }
+            }
+          }, 'table-card-toggle' + (activity ? ' table-status-' + activity : ' btn-outline'));
+          item.setAttribute('aria-expanded', String(expanded));
+          if (expanded) item.setAttribute('aria-controls', panel.id);
+          item.dataset.table = row.table_no;
+          for (const [className, label] of [
+            ['table-card-name', deskName(row)],
+            ['table-card-state', state],
+            ['table-card-command', expanded ? 'ปิดเมนูโต๊ะ' : 'จัดการโต๊ะ'],
+          ]) {
+            const line = document.createElement('span');
+            line.className = className;
+            line.textContent = label;
+            item.append(line);
+          }
+          card.append(item);
+          if (expanded) card.append(panel);
+          grid.append(card);
+          if (focusedTable === row.table_no) item.focus();
+        }
+        if (!shown.length) grid.textContent = 'ไม่มีโต๊ะในตัวกรองนี้';
+        if (focusedPanel && desk && !panel.classList.contains('hidden')) active.focus();
       }
-      if (!shown.length) grid.textContent = 'ไม่มีโต๊ะในตัวกรองนี้';
       if (!document.getElementById('cashierQueue').classList.contains('hidden')) {
         const queue = document.getElementById('tableQueue');
         const unsettled = tableDesks.filter(settlementState);
         queue.replaceChildren(...unsettled.map(row => {
           const amount = Number(row.credit);
           return button(deskName(row) + (amount < 0 ? ' · รับ ฿' : ' · จ่าย ฿') + Math.abs(amount).toLocaleString('th-TH'), () => {
-            document.getElementById('tableFilter').value = row.is_hidden ? 'hidden' : 'visible';
-            selectedTable = row.table_no;
-            renderTableGrid();
-            actions.querySelector('button')?.focus();
+            if (selectedTable !== null) {
+              selectedTable = null;
+              renderTableGrid();
+            }
+            return confirmTableCashPayment(row);
           }, 'table-status-' + settlementState(row));
         }));
         if (!unsettled.length) queue.textContent = 'ไม่มีโต๊ะรอรับหรือจ่ายเงิน';
@@ -2335,6 +2442,8 @@
         + Math.abs(balance).toLocaleString('th-TH')
         + (desk.cash_limit == null ? '' : ' · วงเงิน ฿' + Number(desk.cash_limit).toLocaleString('th-TH'));
       const key = JSON.stringify([desk, current, tableRound?.id, tableRound?.status, tableRound?.locked, isRoundOpen]);
+      const needsSettlement = hasPriorBalance(desk);
+      if (isRoundOpen && needsSettlement) status.textContent += ' · เคลียร์ยอดรอบก่อนเพื่อเล่นรอบใหม่';
       if (actions.dataset.key === key) return;
       actions.dataset.key = key;
       actions.replaceChildren();
@@ -2355,9 +2464,9 @@
         if (!cashier) actions.append(button('วงเงินสด', () => setCashTableLimit(desk.table_no, desk.cash_limit)));
         if (desk.is_open && desk.cash_limit != null) {
           actions.append(button('QR', () => showQrCode(desk.table_no, true, deskName(desk))));
-          if (isRoundOpen) actions.append(button('ลงยอดให้โต๊ะ', () => openTableBetForm(desk, 'normal'), 'btn-blue'));
+          if (isRoundOpen && !needsSettlement) actions.append(button('ลงยอดให้โต๊ะ', () => openTableBetForm(desk, 'normal'), 'btn-blue'));
         }
-        if (desk.cash_limit != null && canCorrectTableRound()) {
+        if (desk.cash_limit != null && !needsSettlement && canCorrectTableRound()) {
           actions.append(button('เพิ่มยอดหลังปิดรับ', () => openTableBetForm(desk, 'add'), 'btn-blue'));
         }
       }
@@ -2366,19 +2475,20 @@
         const row = document.createElement('div');
         row.className = 'table-bill';
         row.textContent = bet.bet_type + ' · ฿' + Number(bet.amount).toLocaleString('th-TH');
-        if (canCorrectTableRound() && bet.cash_table && bet.status === 'Active') {
-          row.append(button('แก้ยอด', () => openTableBetForm(desk, 'edit', bet)),
-            button('เอาออก', () => submitTableCorrection('remove', { table_no: desk.table_no, round_id: tableRound.id }, bet)));
+        if (bet.cash_table && bet.status === 'Active') {
+          if (canCorrectTableRound()) row.append(button('แก้ยอด', () => openTableBetForm(desk, 'edit', bet)));
+          const canCancelLiveBill = isRoundOpen && !tableRound.locked && canCorrectCashBets()
+            && (!cashier || (bet.uid === currentOpId && bet.player_scanned_table === false));
+          if (canCorrectTableRound() || canCancelLiveBill) {
+            row.append(button('ยกเลิกบิล', () => submitTableCorrection('remove', { table_no: desk.table_no, round_id: tableRound.id }, bet), 'btn-red'));
+          }
         }
         bills.append(row);
       }
       const settlement = settlementState(desk);
       if (settlement) {
-        actions.append(button(balance < 0 ? 'รับเงินสด' : 'จ่ายเงินสด', async () => {
-          const amount = prompt(balance < 0 ? 'จำนวนเงินสดที่รับจริง' : 'จำนวนเงินสดที่จ่ายจริง', Math.abs(balance).toFixed(2));
-          if (amount === null || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0) return;
-          await recordCashAtTable(desk.table_no, balance < 0 ? 'deposit' : 'withdraw', amount.trim());
-        }, 'table-status-' + settlement));
+        actions.append(button(balance < 0 ? 'รับเงินสด' : 'จ่ายเงินสด',
+          () => confirmTableCashPayment(desk), 'table-status-' + settlement));
       }
     }
 
