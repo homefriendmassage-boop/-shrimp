@@ -135,10 +135,10 @@ test('query always receives server shop predicate even when omitted by caller', 
   assert.equal(response.status, 200);
   assert(queries[2].calls.some(c => c[0] === 'eq' && c[1] === 'shop_id' && c[2] === 'SHOP_001'));
 });
-test('cross-shop linked insert is rejected before mutation', async () => {
+test('legacy direct backer log inserts are rejected before mutation', async () => {
   const { handler, queries } = setup({ linked: false });
   const response = await handler(request({ action: 'query', table: 'backer_logs', operation: 'insert', values: { uid: 'foreign', round_id: 'r' } }));
-  assert.equal(response.status, 400);
+  assert.equal(response.status, 403);
   assert(!queries.some(q => q.calls.some(c => c[0] === 'insert')));
 });
 test('untrusted origins and database failures fail closed', async () => {
@@ -306,13 +306,12 @@ test('a shop invitation is issued only with the active shop owned by the verifie
   }]);
 });
 
-test('Cashier can close a round and assign the gap resolver but cannot write a result directly', () => {
+test('Cashier can close a round and uses only dedicated APIs for coverage and results', () => {
   const target = { table:'rounds', operation:'update', filters:[{op:'eq', column:'round_id', value:'R-1'}] };
-  for (const values of [{status:'Closed'},{resolver_type:'shop'},{resolver_type:'backer'}]) {
-    assert.equal(validateQuery({ ...target, values }, 'Cashier', 'SHOP_001').operation, 'update');
-    assert.throws(() => validateQuery({ ...target, values }, 'Operator', 'SHOP_001'), /ADMIN_REQUIRED/);
-  }
-  for (const values of [{status:'Open'},{status:'Ended'},{weight:22},{result:'คู่'},{status:'Closed',weight:22}]) {
+  const close = { ...target, values: { status: 'Closed' } };
+  assert.equal(validateQuery(close, 'Cashier', 'SHOP_001').operation, 'update');
+  assert.throws(() => validateQuery(close, 'Operator', 'SHOP_001'), /ADMIN_REQUIRED/);
+  for (const values of [{resolver_type:'shop'},{resolver_type:'backer'},{status:'Open'},{status:'Ended'},{weight:22},{result:'คู่'},{status:'Closed',weight:22}]) {
     assert.throws(() => validateQuery({ ...target, values }, 'Cashier', 'SHOP_001'), /ADMIN_REQUIRED/);
   }
   assert.throws(() => validateQuery({ ...target, operation:'insert', values:{round_id:'R-2'} },
@@ -374,7 +373,8 @@ test('daily report sends to the owner until a group is configured', async () => 
       return query;
     },
     async rpc(name,args) {
-      assert.equal(name,'daily_group_finance_report');
+      assert(['daily_group_finance_report','daily_round_coverage_report'].includes(name));
+      if (name === 'daily_round_coverage_report') return { data:{ settled_bills:0 } };
       assert.deepEqual(args,{ p_shop:'SHOP_001', p_day:'2026-11-13' });
       return { data:{ customer_wallet_liability:500, wallet_as_of:'2026-11-13T13:00:00Z' } };
     },
@@ -398,7 +398,7 @@ test('only verified cashier or admin can correct cash-table bills in their own s
   const payload = {
     action: 'table_correct_bet', operation: 'edit', table_no: '1', round_id: 'round-one',
     request_id: '11111111-1111-1111-1111-111111111111', bet_id: '22222222-2222-2222-2222-222222222222',
-    reason: '  ตรวจยอด  ', side: 'คู่', amount: '150', expected_side: 'คี่', expected_amount: '100',
+    reason: '  ตรวจยอด  ', side: 'คู่', amount: '200', expected_side: 'คี่', expected_amount: '100',
     uid: 'forged', role: 'Admin',
   };
   function handler(role, active = true) {
@@ -428,6 +428,10 @@ test('only verified cashier or admin can correct cash-table bills in their own s
   assert.equal((await handler('Cashier')(request({ ...payload, reason: '  ' }))).status, 400);
   assert.equal((await handler('Cashier')(request({ action: 'player_state' }))).status, 403);
   assert.equal((await handler('Cashier')(request({ action: 'wallet_approve_withdrawal' }))).status, 403);
+  for (const amount of ['90','110','1050','100.50','10010']) {
+    const rejected = await handler('Cashier')(request({ ...payload, amount }));
+    assert.equal((await rejected.json()).code, 'BET_WHOLE_HUNDREDS');
+  }
   assert.equal(calls.length, 0);
   for (const role of ['Cashier','Admin','Superadmin']) {
     assert.equal((await handler(role)(request(payload))).status, 200);
@@ -436,7 +440,7 @@ test('only verified cashier or admin can correct cash-table bills in their own s
   assert.deepEqual(calls[0], ['correct_cash_table_bet', {
     p_shop: 'SHOP_001', p_actor: 'verified-user', p_round: 'round-one', p_table: '1',
     p_request: payload.request_id, p_bet: payload.bet_id, p_operation: 'edit', p_reason: 'ตรวจยอด',
-    p_side: 'คู่', p_amount: '150', p_expected_side: 'คี่', p_expected_amount: '100',
+    p_side: 'คู่', p_amount: '200', p_expected_side: 'คี่', p_expected_amount: '100',
   }]);
 });
 
