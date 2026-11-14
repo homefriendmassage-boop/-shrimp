@@ -342,7 +342,7 @@
 
       <div class="input-group">
         <span>ยอดแทง</span>
-        <input type="number" id="txtAmount" placeholder="฿0" pattern="[0-9]*">
+        <input type="number" id="txtAmount" placeholder="เช่น 100, 200, 1,100" min="100" step="100" inputmode="numeric">
       </div>
 
       <button class="btn-submit" id="btnSubmitBet" onclick="submitBet()">ยืนยันการแทง</button>
@@ -1042,6 +1042,7 @@
         PLAYER_ACCESS_REQUIRED: 'บัญชีนี้ยังไม่มีสิทธิ์ทำรายการในร้านนี้',
         BET_NOT_FOUND: 'ไม่พบบิลส่วนตัวของคุณในร้านนี้',
         BET_INVALID: 'กรุณาตรวจสอบข้อมูลและยอดที่กรอก',
+        BET_WHOLE_HUNDREDS: 'ยอดแทงต้องเป็นจำนวนเต็มร้อย เช่น 100, 200 หรือ 1,100 บาท',
       };
       if (error.message === 'BET_MINIMUM') return 'ยอดเล่นขั้นต่ำ 100 บาทต่อบิล';
       if (error.message === 'BET_LIMIT') return 'ยอดต้องอยู่ระหว่าง ฿' + error.details.min + ' ถึง ฿' + error.details.max;
@@ -1059,8 +1060,8 @@
       const field = document.getElementById('txtAmount');
       const amount = field.value.trim();
       if (!selectedBetType) { alert('กรุณาเลือก คู่ หรือ คี่'); return; }
-      if (!/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || Number(amount) < 100) {
-        alert('ยอดเล่นขั้นต่ำ 100 บาทต่อบิล ทศนิยมไม่เกิน 2 ตำแหน่ง');
+      if (!/^\d{1,9}$/.test(amount) || Number(amount) < 100 || Number(amount) % 100 !== 0) {
+        alert('แทงขั้นต่ำ 100 บาท และเพิ่มทีละ 100 บาท เช่น 200 หรือ 1,100 บาท');
         return;
       }
       const details = {

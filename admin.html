@@ -6,7 +6,7 @@
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=round-name-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=cashier-round-1"></script>
+  <script src="admin-api-client.js?v=round-coverage-1"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -210,9 +210,9 @@
 
   <!-- Modal เลือกว่าใครจะรับความเสี่ยงตอนยอดไม่บาลานซ์ -->
   <div id="gapResolutionModal" class="hidden no-print" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 1000; display: flex; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box;">
-    <div style="background: var(--card-bg); border: 1px solid var(--red-main); border-radius: 16px; padding: 25px; width: 100%; max-width: 400px; text-align: center; position: relative; box-shadow: 0 0 20px rgba(239,68,68,0.3);">
-      <h2 style="margin-top: 0; color: var(--red-main);"><i class="fa-solid fa-triangle-exclamation"></i> ยอดแทงไม่สมดุล!</h2>
-      <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 15px;">ระบบทำการปิดรับแทงแล้ว กรุณาเลือกว่าจะให้ใครรับจบส่วนต่างนี้ก่อนทำการชั่งกุ้ง</p>
+    <div style="background: var(--card-bg); border: 1px solid var(--red-main); border-radius: 16px; padding: 25px; width: 100%; max-width: 540px; max-height: 90vh; overflow:auto; text-align: center; position: relative; box-shadow: 0 0 20px rgba(239,68,68,0.3);">
+      <h2 style="margin-top: 0;">วงเงินรับจบ</h2>
+      <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 15px;">วงเงินนี้ใช้ร่วมกันทั้ง Wallet และบนโต๊ะ วันบัญชีเริ่ม 06:00 น.</p>
       
       <div style="background: #0f111a; border-radius: 12px; padding: 15px; text-align: left; margin-bottom: 20px; border: 1px solid var(--card-border);">
          <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
@@ -230,12 +230,9 @@
       </div>
       
       <div style="display: flex; flex-direction: column; gap: 10px;">
-        <button id="btnGapBacker" onclick="saveGapDecision('backer')" style="background: linear-gradient(135deg, #7c3aed, #8b5cf6); color: white; border: none; padding: 12px; border-radius: 8px; font-family: 'Kanit'; font-size: 1.1rem; font-weight: bold; cursor: pointer;">
-           <i class="fa-solid fa-users"></i> ให้ทีม Backer รับจบ (ตัดทุน)
-        </button>
-        <button id="btnGapShop" onclick="saveGapDecision('shop')" style="background: var(--blue-main); color: white; border: none; padding: 12px; border-radius: 8px; font-family: 'Kanit'; font-size: 1rem; font-weight: bold; cursor: pointer;">
-           <i class="fa-solid fa-store"></i> ร้านรับความเสี่ยงเอง
-        </button>
+        <div id="coverageRecipients"></div>
+        <p id="coverageMessage" role="status"></p>
+        <button id="btnReserveCoverage" class="btn btn-blue" onclick="reserveCoverage()">กันวงเงินรับจบ</button>
         <button onclick="cancelGapDecision()" style="background: transparent; color: var(--text-muted); border: 1px solid var(--text-muted); padding: 10px; border-radius: 8px; font-family: 'Kanit'; cursor: pointer; margin-top: 5px;">
            กลับไปตรวจยอด
         </button>
@@ -369,8 +366,9 @@
       <div class="card" id="cardUserManage">
         <div class="card-title" style="color: var(--blue-main); display: flex; justify-content: space-between; align-items: center;">
             <span><i class="fa-solid fa-users-gear"></i> จัดการสิทธิ์ผู้ใช้งาน</span>
+            <button class="btn btn-outline" onclick="openCoverage()">วงเงินรับจบวันนี้</button>
             <button onclick="openBackerTeamModal()" style="background: transparent; border: 1px solid #8b5cf6; color: #8b5cf6; padding: 5px 10px; border-radius: 6px; font-size: 0.8rem; cursor: pointer;">
-               <i class="fa-solid fa-users"></i> จัดทีมคนรับจบ
+               <i class="fa-solid fa-users"></i> ทีมรับจบเดิม
             </button>
         </div>
         <div class="form-group" style="display: flex; gap: 10px; margin-bottom: 15px;">
@@ -482,7 +480,7 @@
             <form id="staffCashBetForm" class="hidden" style="margin-bottom:12px">
               <p id="staffCashBetTitle"></p>
               <label>ฝั่ง <select name="side" class="form-control"><option>คู่</option><option>คี่</option></select></label>
-              <label>ยอดลงโต๊ะ <input name="amount" type="number" min="0.01" step="0.01" class="form-control" required></label>
+              <label>ยอดลงโต๊ะ <input name="amount" type="number" min="100" step="100" inputmode="numeric" placeholder="เพิ่มทีละ 100 บาท" class="form-control" required></label>
               <label id="cashCorrectionReason" class="hidden">เหตุผล <input name="reason" maxlength="300" class="form-control"></label>
               <button type="submit" class="btn btn-blue">บันทึกบิล</button>
               <button type="button" class="btn btn-outline" onclick="this.form.classList.add('hidden')">ปิด</button>
@@ -549,7 +547,7 @@
             <div style="font-size: 0.8rem; color: var(--text-muted);">ยกเลิกบิล</div><div id="repCancelled" style="font-size: 1.1rem; font-weight: bold; color: var(--text-muted);">฿0</div>
           </div>
           <div style="background: #0f111a; padding: 10px; border-radius: 8px; border: 1px solid var(--card-border);">
-            <div style="font-size: 0.8rem; color: var(--text-muted);">ค่าน้ำหลังหักค่าแนะนำ</div><div id="repNetProfit" style="font-size: 1.1rem; font-weight: bold; color: var(--green-main);">฿0</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">ผลสุทธิรวมหลังหักค่าแนะนำ</div><div id="repNetProfit" style="font-size: 1.1rem; font-weight: bold; color: var(--green-main);">฿0</div>
           </div>
           <div style="background:#0f111a;padding:10px;border-radius:8px;border:1px solid var(--card-border)">
             <div style="font-size:.8rem;color:var(--text-muted)">ค่าแนะนำที่เข้ากระเป๋าโบนัส</div>
@@ -571,6 +569,10 @@
         </div>
       </div>
       
+      <section class="card">
+        <div class="card-title">ค่าน้ำและผลรับจบแยกช่องทาง</div>
+        <div id="dailyCoverageReport" role="status"></div>
+      </section>
       <section class="card">
         <div class="card-title">รายงานเงินสดรายโต๊ะ</div>
         <p style="color:var(--text-muted)">รับและจ่ายเงินสดนับตามเวลาที่บันทึกจริง</p>
@@ -1505,6 +1507,43 @@
     // รายงานผล & พิมพ์
     // ==========================================
     let cachedReportData = {}; 
+    async function loadDailyCoverageReport(day) {
+      const view = document.getElementById('dailyCoverageReport');
+      view.textContent = 'กำลังโหลด…';
+      try {
+        const { coverage } = await _supabase.coverageReport(day);
+        if (document.getElementById('repDateSelector').value !== day) return;
+        view.replaceChildren();
+        if (!coverage.settled_bills) {
+          view.textContent = 'ยังไม่มีบิลที่ตัดผลตามกติกาใหม่ในวันนี้';
+          return;
+        }
+        for (const [key, title] of [['wallet','Wallet'], ['table','บนโต๊ะ']]) {
+          const totals = coverage.channels[key];
+          const heading = document.createElement('h4');
+          heading.textContent = title;
+          const detail = document.createElement('p');
+          detail.textContent = 'ยอดเล่น ' + tableMoney(totals.stake) + ' · จ่ายผู้ชนะ ' + tableMoney(totals.payout)
+            + ' · ' + totals.bills + ' บิล';
+          const fees = document.createElement('p');
+          fees.textContent = 'ค่าน้ำยอดจับคู่ ' + tableMoney(totals.matched_fee) + ' · ค่าน้ำรับจบ ' + tableMoney(totals.coverage_fee)
+            + ' · ค่าแนะนำ ' + tableMoney(totals.referral) + ' · ค่าน้ำสุทธิ ' + tableMoney(totals.net_fee);
+          view.append(heading, detail, fees);
+          for (const person of totals.recipients) {
+            const line = document.createElement('p');
+            line.textContent = person.name + ' · รับจบ ' + tableMoney(person.covered) + ' · ได้ ' + tableMoney(person.won)
+              + ' · เสีย ' + tableMoney(person.lost) + ' · ค่าน้ำที่หัก ' + tableMoney(person.fee) + ' · สุทธิ ' + tableMoney(person.pnl);
+            view.append(line);
+          }
+        }
+        const total = document.createElement('strong');
+        total.textContent = 'รวมค่าน้ำสุทธิ ' + tableMoney(coverage.total_net_fee);
+        view.append(total);
+      } catch (error) {
+        if (document.getElementById('repDateSelector').value === day) view.textContent = 'โหลดรายงานรับจบไม่สำเร็จ';
+      }
+    }
+
     async function generateReport() {
       cachedReportData = {};
       if (currentUserRole === 'Operator') return; 
@@ -1521,6 +1560,7 @@
       const yy = year.slice(-2);
       const [startAt, endAt] = shopAccountingWindow(selDate);
       void loadCashTableReport(selDate);
+      void loadDailyCoverageReport(selDate);
       try {
         const { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId)
           .gte('created_at', startAt).lt('created_at', endAt).order('created_at', { ascending: false });
@@ -1706,7 +1746,7 @@
                   subInfo.innerText = `รอแอดมินใส่ผลกุ้งเพื่อตัดผล`;
                   subInfo.style.color = "var(--text-muted)";
                   document.getElementById('resolverStatusMsg').style.display = 'block';
-                  document.getElementById('txtResolverName').innerText = r.resolver_type === 'backer' ? 'ทีม Backer' : 'ร้านค้ารับเอง';
+                  document.getElementById('txtResolverName').innerText = r.resolver_type === 'backer' ? 'แบงเกอร์ / ร้าน ตามที่จัดสรร' : 'ร้านค้ารับเอง';
               } else {
                   subInfo.innerText = `รอแอดมินยืนยันผู้รับจบยอดส่วนต่าง`;
                   subInfo.style.color = "var(--yellow-main)";
@@ -1833,56 +1873,116 @@
             if (!closed?.length) throw new Error('รอบนี้เริ่มตัดผลแล้ว กรุณาตรวจสถานะล่าสุด');
             if (lr[0].status === 'Open') notifyRoundEvent(roundId, 'closed');
 
-            if (lr[0].resolver_type !== 'none' && lr[0].resolver_type !== null) {
-                fetchAdminDashboard();
-                return;
-            }
-
-            // คำนวณส่วนต่างทันทีที่ปิดรอบ (ยังไม่ได้ชั่งกุ้ง)
-            const { data: bets } = await _supabase.from('bets').select('amount, bet_type').eq('shop_id', currentShopId).eq('round_id', roundId).neq('status', 'Cancelled');
-            let totalEven = 0, totalOdd = 0;
-            if (bets && bets.length > 0) {
-                bets.forEach(b => { if (b.bet_type === 'คู่') totalEven += Math.round(Number(b.amount) * 100); if (b.bet_type === 'คี่') totalOdd += Math.round(Number(b.amount) * 100); });
-            }
-            
-            totalEven /= 100;
-            totalOdd /= 100;
-            let gapAmount = Math.round(Math.abs(totalEven - totalOdd) * 100) / 100;
-            let gapSide = totalEven > totalOdd ? 'คี่' : (totalOdd > totalEven ? 'คู่' : 'none');
-
-            pendingFinalizeData = { roundId, gapAmount, gapSide };
-
-            if (gapAmount > 0) {
-                // โชว์ Modal บังคับเลือกคนรับจบความเสี่ยง
-                document.getElementById('gapModalEven').innerText = `฿${totalEven.toLocaleString()}`;
-                document.getElementById('gapModalOdd').innerText = `฿${totalOdd.toLocaleString()}`;
-                document.getElementById('gapModalMissing').innerText = `ขาดฝั่ง ${gapSide} ฿${gapAmount.toLocaleString()}`;
-                document.getElementById('gapResolutionModal').classList.remove('hidden');
-            } else {
-                // ถ้ายอดบาลานซ์เป๊ะ ข้ามการยืนยันไปเลย
-                await _supabase.from('rounds').update({ resolver_type: 'none' }).eq('shop_id', currentShopId).eq('round_id', roundId);
-                fetchAdminDashboard();
-            }
-
+            await openCoverage(roundId);
         } catch (e) { alert(e.message); }
         finally { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-pause"></i> 2. ปิดรับแทง'; }
     }
 
-    async function saveGapDecision(resolverType) {
-        try {
-            document.getElementById('btnGapBacker').disabled = true; document.getElementById('btnGapShop').disabled = true;
-            
-            let roundId = pendingFinalizeData.roundId;
-            const { data: saved } = await _supabase.from('rounds').update({ resolver_type: resolverType })
-              .eq('shop_id', currentShopId).eq('round_id', roundId).select('round_id');
-            if (!saved?.length) throw new Error('รอบนี้เริ่มตัดผลแล้ว กรุณาตรวจสถานะล่าสุด');
-            
-            document.getElementById('gapResolutionModal').classList.add('hidden');
-            alert("บันทึกข้อมูลการรับจบเรียบร้อยแล้ว!\nกรุณานำกุ้งไปชั่ง และกรอกน้ำหนักเพื่อตัดผลครับ");
-            
-            fetchAdminDashboard();
-        } catch (e) { alert("เกิดข้อผิดพลาด: " + e.message); }
-        finally { document.getElementById('btnGapBacker').disabled = false; document.getElementById('btnGapShop').disabled = false; }
+    const coverageErrors = {
+      COVERAGE_GAP_MISMATCH: 'ยอดรับจบยังไม่ครบหรือยอดรอบเปลี่ยน กรุณาตรวจยอดและกันวงเงินอีกครั้ง',
+      BACKER_BALANCE_INSUFFICIENT: 'วงเงินไม่พอ กรุณาเติมเงินหรือระบุผู้รับส่วนที่เหลือ',
+      COVERAGE_FUNDS_RESERVED: 'เงินส่วนนี้ถูกกันไว้สำหรับรอบที่ยังไม่ตัดผล',
+      COVERAGE_WALLET_TOO_LOW: 'ยอดกระเป๋าแบงเกอร์ไม่พอ กรุณาบันทึกเงินฝากก่อนเพิ่มวงเงิน',
+      COVERAGE_INVALID: 'กรุณาตรวจวงเงินและอัตราค่าน้ำ',
+      ROUND_NOT_CLOSED: 'เปิดการจัดสรรได้หลังปิดรับแทงและก่อนตัดผล',
+      ROUND_MARGIN_INVALID: 'กรุณาตรวจอัตราค่าน้ำร้านก่อนตัดผล',
+    };
+
+    async function openCoverage(roundId = '') {
+      const dialog = document.getElementById('gapResolutionModal');
+      const content = document.getElementById('coverageRecipients');
+      const message = document.getElementById('coverageMessage');
+      const reserve = document.getElementById('btnReserveCoverage');
+      dialog.classList.remove('hidden');
+      reserve.hidden = true;
+      content.replaceChildren();
+      message.textContent = 'กำลังโหลดวงเงิน…';
+      pendingFinalizeData = null;
+      try {
+        const { coverage } = await _supabase.readCoverage(roundId);
+        if (roundId && coverage.even === coverage.odd && !coverage.recipients.some(item => item.assigned > 0)) {
+          cancelGapDecision();
+          return;
+        }
+        const gap = Math.round(Math.abs(coverage.even - coverage.odd) * 100);
+        document.getElementById('gapModalEven').closest('div').parentElement.hidden = !roundId;
+        document.getElementById('gapModalEven').textContent = tableMoney(coverage.even);
+        document.getElementById('gapModalOdd').textContent = tableMoney(coverage.odd);
+        document.getElementById('gapModalMissing').textContent = tableMoney(gap / 100);
+        const canSetFunds = ['Admin','Superadmin'].includes(currentUserRole);
+        const allocations = [];
+        for (const item of coverage.recipients) {
+          const line = document.createElement('fieldset');
+          const legend = document.createElement('legend');
+          legend.textContent = item.name;
+          const info = document.createElement('p');
+          info.textContent = 'พร้อมรับจบ ' + tableMoney(item.available) +
+            (item.wallet == null ? '' : ' · เงินในกระเป๋า ' + tableMoney(item.wallet))
+            + ' · ผลรับจบสุทธิวันนี้ ' + tableMoney(item.pnl);
+          line.append(legend, info);
+          function field(label, value, max) {
+            const wrapper = document.createElement('label');
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.min = '0';
+            input.max = String(max);
+            input.step = '0.01';
+            input.value = value;
+            input.className = 'form-control';
+            wrapper.append(label, input);
+            line.append(wrapper);
+            return input;
+          }
+          if (canSetFunds) {
+            const funded = field('วงเงินที่บันทึกสะสมของวันนี้', item.funded, 999999999);
+            const rate = field('ค่าน้ำรับจบ (%)', item.rate, 100);
+            const save = document.createElement('button');
+            save.className = 'btn btn-outline';
+            save.textContent = 'บันทึกวงเงิน';
+            save.onclick = async () => {
+              if (!funded.value || !rate.value || !funded.reportValidity() || !rate.reportValidity()) return;
+              save.disabled = true;
+              try {
+                await _supabase.setCoverageFund({ recipient: item.recipient, funded: Number(funded.value), rate: Number(rate.value) });
+                await openCoverage(roundId);
+              } catch (error) { message.textContent = coverageErrors[error.message] || error.message; }
+              finally { save.disabled = false; }
+            };
+            line.append(save);
+          }
+          if (roundId) {
+            const input = field('ยอดรับจบรอบนี้', item.assigned, item.available);
+            allocations.push({ recipient: item.recipient, input });
+            input.addEventListener('input', updateCoverageMessage);
+          }
+          content.append(line);
+        }
+        function updateCoverageMessage() {
+          const allocated = allocations.reduce((sum, item) => sum + Math.round(Number(item.input.value) * 100), 0);
+          const difference = gap - allocated;
+          message.textContent = 'วันบัญชี ' + coverage.day + (roundId ?
+            ' · ' + (difference > 0 ? 'ยังขาด ' + tableMoney(difference / 100) :
+              difference < 0 ? 'จัดสรรเกิน ' + tableMoney(-difference / 100) : 'จัดสรรครบแล้ว') : '');
+          reserve.disabled = difference !== 0 || allocations.some(item => !item.input.validity.valid);
+        }
+        pendingFinalizeData = { roundId, allocations };
+        reserve.hidden = !roundId;
+        updateCoverageMessage();
+      } catch (error) { message.textContent = coverageErrors[error.message] || error.message; }
+    }
+
+    async function reserveCoverage() {
+      const button = document.getElementById('btnReserveCoverage');
+      if (!pendingFinalizeData?.roundId || button.disabled) return;
+      button.disabled = true;
+      const { roundId, allocations } = pendingFinalizeData;
+      try {
+        await _supabase.reserveCoverage(roundId, Object.fromEntries(allocations
+          .filter(item => Number(item.input.value) > 0).map(item => [item.recipient, item.input.value])));
+        cancelGapDecision();
+      } catch (error) {
+        document.getElementById('coverageMessage').textContent = coverageErrors[error.message] || error.message;
+      } finally { button.disabled = false; }
     }
 
     function cancelGapDecision() {
@@ -1916,7 +2016,7 @@
         await loadTableList();
       } catch (e) {
         const messages = {
-          BACKER_BALANCE_INSUFFICIENT: 'ยอดของทีมรับจบไม่พอ กรุณาให้ผู้ดูแลตรวจยอดก่อนตัดผล',
+          ...coverageErrors,
           ROUND_RESULT_MISMATCH: 'น้ำหนักที่กรอกให้ผลไม่ตรงกับบิลที่บันทึกไว้ กรุณาตรวจน้ำหนักจริง',
           ROUND_REVIEW_REQUIRED: 'ยอดอาจมีการแก้ไข กรุณากดปิดรับแทงอีกครั้งเพื่อตรวจส่วนต่างล่าสุด',
           ROUND_SETTLEMENT_STARTED: 'รอบนี้เริ่มตัดผลแล้ว กรุณาตรวจสถานะรอบก่อนทำรายการต่อ',
@@ -1944,6 +2044,8 @@
     
     let cashPaymentRetry = null;
     let cashPaymentBusy = false;
+    let backerMovementRetry = null;
+    let backerMovementBusy = false;
 
     async function processCredit(type) {
       let tId = document.getElementById('txtTargetId').value.trim(); 
@@ -1983,14 +2085,19 @@
           if(u.status !== 'Active') throw new Error(`ไม่สามารถทำรายการได้! บัญชีลูกค้ารหัส ${tId} ถูกระงับ`);
           
           if (u.role === 'Backer') {
-              let newBackerBal = type === 'deposit' ? (u.backer_wallet || 0) + amount : (u.backer_wallet || 0) - amount;
-              if (newBackerBal < 0) throw new Error("ยอดกระเป๋าเงินคนรับจบไม่พอให้ถอน");
-              
-              const { error: updErr } = await _supabase.from('users').update({ backer_wallet: newBackerBal }).eq('shop_id', currentShopId).eq('uid', u.uid);
-              if (updErr) throw new Error("อัปเดตยอดเงินคนรับจบไม่สำเร็จ กรุณาเช็คฐานข้อมูล: " + updErr.message);
-
-              // ยกเลิกการใช้ GAS ส่งข้อความ
-              // notifyGAS('adminTopupComplete', { adminName: currentAdminName, type: type, targetUid: u.uid, targetMemberId: tId, amount: amount, newBalance: newBackerBal });
+            if (backerMovementBusy) return;
+            const details = { recipient: u.uid, amount, kind: type };
+            const key = JSON.stringify([currentShopId, details]);
+            if (backerMovementRetry?.key !== key) backerMovementRetry = { key, id: crypto.randomUUID() };
+            backerMovementBusy = true;
+            try {
+              await _supabase.moveBackerFunds({ ...details, request_id: backerMovementRetry.id });
+              backerMovementRetry = null;
+              document.getElementById('txtTargetId').value = '';
+              document.getElementById('txtAmount').value = '';
+              alert('บันทึกเงินในกระเป๋าแบงเกอร์แล้ว ตรวจและปรับวงเงินที่เมนูวงเงินรับจบวันนี้');
+            } finally { backerMovementBusy = false; }
+            return;
           } else {
               let newBal = type === 'deposit' ? u.credit_balance + amount : u.credit_balance - amount;
               if (newBal < 0) throw new Error("ยอดเครดิตลูกค้าไม่พอให้ถอน");
@@ -2012,7 +2119,7 @@
         document.getElementById('txtAmount').value = ""; 
         loadTableList(); 
       } catch(e) {
-        alert(e.message === 'CASH_TABLE_WAITING_RESULT' ? 'กรุณารอผลของโต๊ะก่อนบันทึกเงินสด' : 'ข้อผิดพลาด ' + e.message);
+        alert(e.message === 'CASH_TABLE_WAITING_RESULT' ? 'กรุณารอผลของโต๊ะก่อนบันทึกเงินสด' : coverageErrors[e.message] || 'ข้อผิดพลาด ' + e.message);
       }
     }
 
@@ -2094,6 +2201,8 @@
       BET_CHANGED: 'บิลนี้มีการเปลี่ยนแปลง กรุณาตรวจยอดล่าสุด',
       BET_LIMIT: 'ยอดเกินช่วงขั้นต่ำหรือสูงสุดของร้าน',
       BET_INVALID: 'กรุณาตรวจยอดและเหตุผล',
+      BET_MINIMUM: 'ยอดแทงขั้นต่ำ 100 บาท',
+      BET_WHOLE_HUNDREDS: 'ยอดแทงต้องเป็นจำนวนเต็มร้อย เช่น 100, 200 หรือ 1,100 บาท',
       TABLE_CLOSED: 'โต๊ะนี้ปิดหรือซ่อนอยู่',
       TABLE_CREDIT_LIMIT: 'ยอดค้างเกินวงเงินของโต๊ะ'
     };
@@ -2107,7 +2216,6 @@
       form.dataset.expectedSide = bet?.bet_type || '';
       form.dataset.expectedAmount = bet?.amount ?? '';
       form.elements.amount.value = bet?.amount ?? '';
-      form.elements.amount.min = mode === 'normal' ? '0.01' : '100';
       form.elements.side.value = bet?.bet_type || 'คู่';
       form.elements.reason.value = '';
       form.elements.reason.required = mode !== 'normal';
@@ -2150,7 +2258,11 @@
       button.disabled = true;
       try {
         const { table, round, mode, bet, expectedSide, expectedAmount } = form.dataset;
-        const details = { table_no: table, round_id: round, amount: form.elements.amount.value };
+        const amount = form.elements.amount.value;
+        if (!/^\d{1,9}$/.test(amount) || Number(amount) < 100 || Number(amount) % 100 !== 0) {
+          throw new Error('BET_WHOLE_HUNDREDS');
+        }
+        const details = { table_no: table, round_id: round, amount };
         if (mode === 'normal') {
           const normal = { ...details, bet_type: form.elements.side.value };
           const key = JSON.stringify([currentShopId, normal]);

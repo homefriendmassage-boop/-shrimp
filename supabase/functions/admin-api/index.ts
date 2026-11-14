@@ -13,11 +13,10 @@ const fields = {
   system_settings: 'id shop_id water_margin min_bet max_bet round_duration comm_rate withdrawal_fee_mode created_at'
 };
 const writes = {
-  users: { update: 'role status credit_balance total_deposit commission_balance backer_share backer_water_fee backer_wallet' },
+  users: { update: 'role status credit_balance total_deposit commission_balance backer_share backer_water_fee' },
   tables: { insert: 'shop_id table_no credit', update: 'credit cash_limit table_name is_open is_hidden' },
-  rounds: { insert: 'shop_id round_id status end_time_ms resolver_type', update: 'status end_time_ms resolver_type weight result' },
-  bets: { update: 'status payout' },
-  backer_logs: { insert: 'shop_id round_id uid member_id share_percent gap_amount result_status pnl_amount water_fee_deducted wallet_balance_after' },
+  rounds: { update: 'status' },
+  bets: { update: 'status' },
   transactions: { insert: 'shop_id target_id type amount admin_name target_type' },
   topup_requests: { update: 'status admin_name' },
   system_settings: { update: 'water_margin min_bet max_bet round_duration comm_rate withdrawal_fee_mode' }
@@ -26,6 +25,8 @@ const identity = { users: ['uid', 'member_id'], tables: ['table_no'], rounds: ['
 const fail = (code, status = 400) => { throw Object.assign(new Error(code), { status }); };
 const includes = (words, key) => words.split(' ').includes(key);
 const primitive = value => typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value)) || typeof value === 'boolean';
+const wholeHundredBet = value => Number(value) >= 100 && Number(value) % 100 === 0;
+
 
 function lineProfilePicture(value) {
   if (typeof value !== 'string' || value.length > 1000) return null;
@@ -75,8 +76,7 @@ export function validateQuery(input, role, shopId) {
     const keys = Object.keys(input.values ?? {});
     const tableUpdate = table === 'tables' && keys.length === 1 && allowedTableFields.includes(keys[0]);
     const closeRound = keys.length === 1 && input.values?.status === 'Closed';
-    const assignResolver = keys.length === 1 && ['none','shop','backer'].includes(input.values?.resolver_type);
-    const roundUpdate = role === 'Cashier' && table === 'rounds' && (closeRound || assignResolver);
+    const roundUpdate = role === 'Cashier' && table === 'rounds' && closeRound;
     if (operation !== 'select' && !(operation === 'update' && (tableUpdate || roundUpdate))) fail('ADMIN_REQUIRED', 403);
   }
   if (!['Admin', 'Superadmin', 'Operator', 'Cashier'].includes(role)) fail('ADMIN_REQUIRED', 403);
@@ -108,6 +108,8 @@ export function validateQuery(input, role, shopId) {
         for (const [key, value] of Object.entries(row)) {
           if (!includes(allowed, key) || (!primitive(value) && value !== null)) fail('VALUE_NOT_ALLOWED', 403);
           if (key === 'shop_id' && value !== shopId) fail('SHOP_MISMATCH', 403);
+          if (table === 'rounds' && value !== 'Closed') fail('WRITE_NOT_ALLOWED', 403);
+          if (table === 'bets' && value !== 'Cancelled') fail('WRITE_NOT_ALLOWED', 403);
           if (['credit_balance', 'total_deposit', 'commission_balance', 'backer_wallet', 'credit', 'payout', 'amount'].includes(key) && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) fail('AMOUNT_INVALID');
           if (key === 'cash_limit' && value !== null &&
               (typeof value !== 'number' || value < 0.01 || value > 999999999)) fail('AMOUNT_INVALID');
@@ -237,9 +239,9 @@ export function dailyFinanceFlex(day, shopName, data, preparedBy) {
       row('ยอดเล่นที่ตัดผล', money(data.settled_stake)),
       row('จ่ายผู้ชนะ', signedMoney(-Number(data.payout)), movementColor(-Number(data.payout))),
       row('ผลสุทธิผู้รับจบ', signedMoney(-Number(data.pnl)), movementColor(-Number(data.pnl))),
-      row('ค่าน้ำสุทธิก่อนค่าคอมและค่าใช้จ่าย', signedMoney(margin), movementColor(margin)),
+      row(data.coverage?.settled_bills ? 'ผลสุทธิรวมก่อนค่าแนะนำและค่าใช้จ่าย' : 'ค่าน้ำสุทธิก่อนค่าคอมและค่าใช้จ่าย', signedMoney(margin), movementColor(margin)),
       row('ค่าแนะนำที่เข้าโบนัส', signedMoney(-referral), movementColor(-referral)),
-      row('ค่าน้ำหลังหักค่าแนะนำ ก่อนค่าใช้จ่าย', signedMoney(margin - referral), movementColor(margin - referral), true),
+      row(data.coverage?.settled_bills ? 'ผลสุทธิรวมหลังหักค่าแนะนำ' : 'ค่าน้ำหลังหักค่าแนะนำ ก่อนค่าใช้จ่าย', signedMoney(margin - referral), movementColor(margin - referral), true),
     ]),
     section('การเงินบ่อ', [
       row('รับเงินสดจากโต๊ะ', signedMoney(Number(data.cash_in)), color.green),
@@ -278,6 +280,22 @@ export function dailyFinanceFlex(day, shopName, data, preparedBy) {
   ];
   if (Number(data.unclassified_bills) > 0) {
     sections[5].contents.push(row('บิลเดิมที่ไม่ระบุช่องทาง', count(data.unclassified_bills, 'บิล'), color.amber));
+  }
+  if (data.coverage?.settled_bills) {
+    for (const [key, label] of [['wallet','Wallet'], ['table','บนโต๊ะ']]) {
+      const totals = data.coverage.channels[key];
+      sections.push(section('ค่าน้ำ ' + label, [
+        row('ค่าน้ำยอดจับคู่', money(totals.matched_fee)),
+        row('ค่าน้ำรับจบเข้าร้าน', money(totals.coverage_fee)),
+        row('ค่าแนะนำ', signedMoney(-totals.referral)),
+        row('ค่าน้ำสุทธิ', signedMoney(totals.net_fee), movementColor(totals.net_fee), true),
+        row('ยอดที่รับจบรวม', money(totals.recipients.reduce((sum, item) => sum + Number(item.covered), 0))),
+        row('ผลรับจบสุทธิรวม', signedMoney(totals.recipients.reduce((sum, item) => sum + Number(item.pnl), 0))),
+      ]));
+    }
+    sections.push(section('รวมค่าน้ำสุทธิทั้งสองช่องทาง', [
+      row('ตามกติกาใหม่', signedMoney(data.coverage.total_net_fee), movementColor(data.coverage.total_net_fee), true),
+    ]));
   }
   return { type: 'flex', altText: (title + ' · ' + shopName + ' · ' + day).slice(0, 300), contents: {
     type: 'bubble', size: 'mega',
@@ -377,7 +395,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, board: result.data });
       }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_correct_bet', 'round_begin_settlement', 'round_open', 'round_finalize', 'table_round_summary', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_correct_bet', 'round_begin_settlement', 'coverage_read', 'coverage_move', 'coverage_fund', 'coverage_reserve', 'coverage_report', 'round_open', 'round_finalize', 'table_round_summary', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
@@ -718,6 +736,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           if (typeof input.round_id !== 'string' || !input.round_id || input.round_id.length > 100 ||
             typeof input.amount !== 'string' || !/^\d{1,9}(?:\.\d{1,2})?$/.test(input.amount) ||
             !['คู่', 'คี่'].includes(input.bet_type)) fail('BET_INVALID');
+          if (!wholeHundredBet(input.amount)) fail('BET_WHOLE_HUNDREDS');
           const params = {
             p_shop: shopId, p_uid: claims.sub, p_round: input.round_id, p_id: id, p_type: input.bet_type, p_amount: input.amount,
           };
@@ -730,8 +749,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           const result = table === undefined
             ? await db.rpc('place_player_private_bet', params)
             : await db.rpc('place_player_cash_table_bet', { ...params, p_table: table, p_day: input.table_day, p_staff: false });
-          if (result.error?.message === 'BET_MINIMUM') return reply({ ok: false, code: 'BET_MINIMUM' }, 409);
-        if (result.error) fail('BET_UNAVAILABLE', 500);
+          if (['BET_MINIMUM','BET_WHOLE_HUNDREDS'].includes(result.error?.message)) fail(result.error.message, 409);
+          if (result.error) fail('BET_UNAVAILABLE', 500);
           if (result.data?.code === 'BET_LIMIT') return reply({ ok: false, ...result.data }, 409);
           if (result.data?.code !== 'PLACED') fail(result.data?.code || 'BET_UNAVAILABLE', 409);
           return reply({ ok: true, bet_id: result.data.bet_id });
@@ -811,8 +830,56 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (staff.data.role === 'Operator' && !['access','query','table_qr','table_cash_payment','table_cash_bet'].includes(input.action)) {
         fail('ADMIN_REQUIRED', 403);
       }
-      if (staff.data.role === 'Cashier' && !['access','query','table_qr','table_cash_payment','table_cash_bet','table_correct_bet','round_open','round_finalize','table_round_summary'].includes(input.action)) {
+      if (staff.data.role === 'Cashier' && !['access','query','table_qr','table_cash_payment','table_cash_bet','table_correct_bet','round_open','round_finalize','table_round_summary','coverage_read','coverage_reserve','coverage_report'].includes(input.action)) {
         fail('ADMIN_REQUIRED', 403);
+      }
+      if (input.action === 'coverage_move') {
+        if (!['Admin','Superadmin'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
+        if (typeof input.recipient !== 'string' || !input.recipient || input.recipient.length > 100 ||
+            !Number.isFinite(input.amount) || !shopInviteIdPattern.test(input.request_id) || !['deposit','withdraw'].includes(input.kind)) fail('COVERAGE_INVALID');
+        const result = await db.rpc('move_backer_funds', {
+          p_shop: shopId, p_actor: claims.sub, p_recipient: input.recipient, p_amount: input.amount, p_kind: input.kind, p_request: input.request_id,
+        });
+        if (result.error?.message === 'COVERAGE_FUNDS_RESERVED') fail('COVERAGE_FUNDS_RESERVED', 409);
+        if (result.error) fail('COVERAGE_UNAVAILABLE', 500);
+        if (result.data !== 'RECORDED') fail(result.data || 'COVERAGE_UNAVAILABLE', 409);
+        return reply({ ok: true });
+      }
+      if (['coverage_read','coverage_fund','coverage_reserve','coverage_report'].includes(input.action)) {
+        if (input.action === 'coverage_fund') {
+          if (!['Admin','Superadmin'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
+          if (typeof input.recipient !== 'string' || input.recipient.length > 100 ||
+              !Number.isFinite(input.funded) || !Number.isFinite(input.rate)) fail('COVERAGE_INVALID');
+          const result = await db.rpc('set_coverage_fund', {
+            p_shop: shopId, p_actor: claims.sub, p_recipient: input.recipient, p_funded: input.funded, p_rate: input.rate,
+          });
+          if (result.error) fail('COVERAGE_UNAVAILABLE', 500);
+          if (result.data !== 'SAVED') fail(result.data || 'COVERAGE_UNAVAILABLE', 409);
+          return reply({ ok: true });
+        }
+        if (input.action === 'coverage_report') {
+          if (typeof input.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.day)) fail('TABLE_DATE_INVALID');
+          const result = await db.rpc('daily_round_coverage_report', { p_shop: shopId, p_day: input.day });
+          if (result.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
+          return reply({ ok: true, coverage: result.data });
+        }
+        if (typeof input.round_id !== 'string' || input.round_id.length > 100) fail('INVALID_ROUND');
+        if (input.action === 'coverage_read') {
+          const result = await db.rpc('read_round_coverage', { p_shop: shopId, p_round: input.round_id || null });
+          if (result.error) fail('COVERAGE_UNAVAILABLE', 500);
+          return reply({ ok: true, coverage: result.data });
+        }
+        if (!input.allocations || typeof input.allocations !== 'object' || Array.isArray(input.allocations) ||
+            Object.keys(input.allocations).length > 100 ||
+            Object.entries(input.allocations).some(([key, amount]) => key.length > 100 || typeof amount !== 'string')) {
+          fail('COVERAGE_INVALID');
+        }
+        const result = await db.rpc('reserve_round_coverage', {
+          p_shop: shopId, p_round: input.round_id, p_allocations: input.allocations,
+        });
+        if (result.error) fail('COVERAGE_UNAVAILABLE', 500);
+        if (result.data !== 'RESERVED') fail(result.data || 'COVERAGE_UNAVAILABLE', 409);
+        return reply({ ok: true });
       }
       if (input.action === 'table_correct_bet') {
         if (!['Admin','Superadmin','Cashier'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
@@ -825,6 +892,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             typeof reason !== 'string' || !reason.trim() || reason.trim().length > 300 ||
             (operation !== 'remove' && (!validSide(side) || !validAmount(amount))) ||
             (operation !== 'add' && (!validSide(expected_side) || !validAmount(expected_amount)))) fail('BET_INVALID');
+        if (operation !== 'remove' && !wholeHundredBet(amount)) fail('BET_WHOLE_HUNDREDS');
         const result = await db.rpc('correct_cash_table_bet', {
           p_shop: shopId, p_actor: claims.sub, p_round: round_id, p_table: table_no, p_request: request_id,
           p_bet: bet_id, p_operation: operation, p_reason: reason.trim(),
@@ -890,9 +958,12 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (!settings?.line_oa_token || settings.line_notifications_enabled === false || !validRecipient) {
           fail('TABLE_REPORT_LINE_NOT_READY', 409);
         }
-        const result = await db.rpc('daily_group_finance_report', { p_shop: shopId, p_day: input.day });
-        if (result.error || !result.data) fail('TABLE_REPORT_UNAVAILABLE', 500);
-        const report = dailyFinanceFlex(input.day, settings.shop_name || shopId, result.data, staff.data.display_name);
+        const reportArgs = { p_shop: shopId, p_day: input.day };
+        const [result, coverage] = await Promise.all([
+          db.rpc('daily_group_finance_report', reportArgs), db.rpc('daily_round_coverage_report', reportArgs),
+        ]);
+        if (result.error || !result.data || coverage.error) fail('TABLE_REPORT_UNAVAILABLE', 500);
+        const report = dailyFinanceFlex(input.day, settings.shop_name || shopId, { ...result.data, coverage: coverage.data }, staff.data.display_name);
         if (typeof input.delivery_id !== 'string' || !shopInviteIdPattern.test(input.delivery_id)) fail('TABLE_REPORT_UNAVAILABLE', 400);
         const sent = await fetcher('https://api.line.me/v2/bot/message/push', {
           method: 'POST', headers: { Authorization: 'Bearer ' + settings.line_oa_token,
@@ -908,11 +979,12 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             typeof input.round_id !== 'string' || !input.round_id || input.round_id.length > 100 ||
             !shopInviteIdPattern.test(input.bet_id) || !['คู่','คี่'].includes(input.bet_type) ||
             typeof input.amount !== 'string' || !/^\d{1,9}(?:\.\d{1,2})?$/.test(input.amount)) fail('BET_INVALID');
+        if (!wholeHundredBet(input.amount)) fail('BET_WHOLE_HUNDREDS');
         const result = await db.rpc('place_player_cash_table_bet', {
           p_shop: shopId, p_uid: claims.sub, p_round: input.round_id, p_id: input.bet_id, p_type: input.bet_type,
           p_amount: input.amount, p_table: input.table_no, p_day: tableDay(), p_staff: true,
         });
-        if (result.error?.message === 'BET_MINIMUM') return reply({ ok: false, code: 'BET_MINIMUM' }, 409);
+        if (['BET_MINIMUM','BET_WHOLE_HUNDREDS'].includes(result.error?.message)) fail(result.error.message, 409);
         if (result.error) fail('BET_UNAVAILABLE', 500);
         if (result.data?.code !== 'PLACED') fail(result.data?.code || 'BET_UNAVAILABLE', 409);
         return reply({ ok: true, bet_id: result.data.bet_id });
@@ -955,7 +1027,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const result = await db.rpc(rpc, {
           p_shop: shopId, p_round: input.round_id, p_weight: input.weight,
         });
-        if (result.error?.message === 'BACKER_BALANCE_INSUFFICIENT') fail('BACKER_BALANCE_INSUFFICIENT', 409);
+        if (result.error?.message === 'ROUND_MARGIN_INVALID') fail('ROUND_MARGIN_INVALID', 409);
         if (result.error) fail('ROUND_FINALIZE_UNAVAILABLE', 500);
         if (!['ENDED', 'RECOVERED'].includes(result.data)) fail(result.data || 'ROUND_FINALIZE_UNAVAILABLE', 409);
         return reply({ ok: true, recovered: result.data === 'RECOVERED' });
@@ -967,6 +1039,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const approval = await db.rpc(rpc, {
           p_shop: shopId, p_request: id, p_staff: claims.sub,
         });
+        if (approval.error?.message === 'COVERAGE_FUNDS_RESERVED') fail('COVERAGE_FUNDS_RESERVED', 409);
         if (approval.error) fail('WALLET_REQUEST_UNAVAILABLE', 500);
         if (approval.data?.code !== 'APPROVED') fail(approval.data?.code || 'WALLET_REQUEST_UNAVAILABLE', 409);
         await notifyWalletPlayer(db, fetcher, env, shopId, approval.data);
@@ -1012,11 +1085,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         query = query.eq('status', 'Active');
         if (input.values.status === 'Cancelled') query = query.eq('cash_table', false);
       }
-      if (spec.table === 'rounds' && spec.operation === 'update' &&
-          (input.values.status === 'Closed' || Object.hasOwn(input.values, 'resolver_type'))) {
-        query = query.is('settlement_weight', null);
-        if (input.values.status === 'Closed') query = query.in('status', ['Open','Closed']);
-        else query = query.eq('status', 'Closed');
+      if (spec.table === 'rounds' && spec.operation === 'update') {
+        query = query.is('settlement_weight', null).in('status', ['Open','Closed']);
       }
       const walletDecision = spec.table === 'topup_requests' && spec.operation === 'update' &&
         ['Approved', 'Rejected'].includes(input.values?.status);
@@ -1032,6 +1102,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (input.single) query = query.single();
       const result = await query;
       if (result.error) {
+        if (result.error.message === 'COVERAGE_FUNDS_RESERVED') fail('COVERAGE_FUNDS_RESERVED', 409);
+        if (result.error.message === 'ROUND_LOCKED') fail('ROUND_LOCKED', 409);
         if (result.error.message === 'ROUND_CANNOT_REOPEN') fail('ROUND_CANNOT_REOPEN', 409);
         if (result.error.message === 'CASH_TABLE_OPEN_BALANCE') fail('CASH_TABLE_OPEN_BALANCE', 409);
         if (spec.table === 'tables' && spec.operation === 'insert' && result.error.code === '23505') fail('TABLE_ALREADY_EXISTS', 409);
