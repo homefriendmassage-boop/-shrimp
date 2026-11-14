@@ -63,6 +63,7 @@
 
     .switch-mode { display: flex; background: #0f111a; border-radius: 8px; padding: 4px; margin-bottom: 15px;}
     .switch-btn { flex: 1; text-align: center; padding: 8px; cursor: pointer; border-radius: 6px; font-size: 0.9rem; color: var(--text-muted); transition: 0.2s;}
+    .admin-table-tab { font:inherit; font-size:.9rem; border:0; background:transparent; }
     .switch-btn.active { background: #2a2d3d; color: white; }
     
     .admin-shortcuts { display: flex; gap: 10px; }
@@ -175,10 +176,12 @@
     #tableQueue button, .table-bill { margin-bottom:6px; width:100%; }
     .table-bill { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
     .table-bill .btn { flex:0 0 auto; padding:5px 12px; }
+    .table-workspace #adminContentView > :not(#cardTableManage) { display:none; }
+    .table-workspace.cashier-workspace #adminContentView > #cardRoundControl { display:block; }
     @media (min-width:1000px) {
-      .cashier-workspace .container { max-width:1420px; }
-      .cashier-workspace #tableWorkspace { grid-template-columns:minmax(0, 2fr) minmax(300px, 1fr); }
-      .cashier-workspace #tableListContainer { grid-template-columns:repeat(6, minmax(0,1fr)); }
+      .table-workspace .container { max-width:1420px; }
+      .table-workspace #tableWorkspace { grid-template-columns:minmax(0, 2fr) minmax(300px, 1fr); }
+      .table-workspace #tableListContainer { grid-template-columns:repeat(6, minmax(0,1fr)); }
     }
     #selectedTableActions { display:flex; flex-wrap:wrap; gap:8px; }
   </style>
@@ -250,6 +253,7 @@
 
     <div class="switch-mode no-print" id="adminTabs" style="display: none; margin-bottom: 20px;">
         <div class="switch-btn active" id="tabControl" onclick="switchAdminTab('control')">ควบคุมบ่อ</div>
+        <button type="button" class="switch-btn admin-table-tab hidden" id="tabTables" onclick="switchAdminTab('tables')">ผังโต๊ะ</button>
         <div class="switch-btn" id="tabPending" onclick="switchAdminTab('pending')" style="position: relative;">
             รอดำเนินการ 
             <span id="badgePending" style="background: var(--red-main); color: white; padding: 2px 6px; border-radius: 10px; font-size: 0.7rem; position: absolute; top: -5px; right: 5px; display: none;">0</span>
@@ -716,9 +720,10 @@
           currentOpId = profile.userId; 
           currentAdminName = profile.displayName;
           await checkAdminAccess(currentOpId);
+          const requestedTab = new URLSearchParams(window.location.search).get('tab') || urlParams.get('tab');
           if (document.getElementById('adminTabs').style.display === 'flex' &&
-              (new URLSearchParams(window.location.search).get('tab') || urlParams.get('tab')) === 'pending') {
-            switchAdminTab('pending');
+              ['pending', 'tables'].includes(requestedTab)) {
+            switchAdminTab(requestedTab);
           }
           await loadGeneralMembershipRequests();
 
@@ -779,12 +784,11 @@
           }
           document.getElementById('opProfile').innerHTML = `<i class="fa-solid fa-user-tie"></i> ${roleBadge}`;
           
+          document.getElementById('tabTables').classList.toggle('hidden', !canCorrectCashBets());
           if (currentUserRole === 'Cashier') {
             document.body.classList.add('cashier-workspace');
             document.getElementById('opProfile').textContent = 'แคชเชียร์บ่อ';
-            document.getElementById('cashierQueue').classList.remove('hidden');
-            document.getElementById('tabControl').textContent = 'ผังโต๊ะ';
-            for (const id of ['tabPending','tabReport','cardCreditManage','cardUserManage','cardSettings',
+            for (const id of ['tabControl','tabPending','tabReport','cardCreditManage','cardUserManage','cardSettings',
               'cardCancelBet','cardLiveBets','btnOpenRound','btnCloseBetting','btnFinalize','txtShrimpWeight']) {
               document.getElementById(id).classList.add('hidden');
             }
@@ -946,7 +950,14 @@
     }
 
     function switchAdminTab(tab) {
-        if (currentUserRole === 'Cashier') tab = 'control';
+        if (currentUserRole === 'Cashier') tab = 'tables';
+        if (tab === 'tables' && !canCorrectCashBets()) tab = 'control';
+        const showTables = tab === 'tables';
+        document.body.classList.toggle('table-workspace', showTables);
+        document.getElementById('cashierQueue').classList.toggle('hidden', !showTables);
+        const tablesTab = document.getElementById('tabTables');
+        tablesTab.classList.toggle('active', showTables);
+        tablesTab.setAttribute('aria-pressed', String(showTables));
         document.getElementById('tabControl').classList.remove('active');
         document.getElementById('tabPending').classList.remove('active');
         document.getElementById('tabReport').classList.remove('active');
@@ -955,7 +966,10 @@
         document.getElementById('pendingContentView').classList.add('hidden');
         document.getElementById('reportContentView').classList.add('hidden');
 
-        if (tab === 'control') {
+        if (showTables) {
+            document.getElementById('adminContentView').classList.remove('hidden');
+            renderTableGrid();
+        } else if (tab === 'control') {
             document.getElementById('tabControl').classList.add('active');
             document.getElementById('adminContentView').classList.remove('hidden');
         } else if (tab === 'pending') {
@@ -2221,7 +2235,7 @@
         if (focused === row.table_no) item.focus();
       }
       if (!shown.length) grid.textContent = 'ไม่มีโต๊ะในตัวกรองนี้';
-      if (cashier) {
+      if (!document.getElementById('cashierQueue').classList.contains('hidden')) {
         const queue = document.getElementById('tableQueue');
         const unsettled = tableDesks.filter(row => row.cash_limit != null && Number(row.credit) !== 0 && !pending.has(row.table_no));
         queue.replaceChildren(...unsettled.map(row => {
