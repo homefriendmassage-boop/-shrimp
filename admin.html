@@ -2238,8 +2238,7 @@
         else {
           const difference = Math.round((totals.stake - totals.payout) * 100) / 100;
           const sign = difference < 0 ? '−' : difference > 0 ? '+' : '';
-          net.textContent = sign + tableMoney(Math.abs(difference)) + ' (' + sign
-            + (Math.abs(difference) / totals.stake * 100).toLocaleString('th-TH', { maximumFractionDigits:2 }) + '%)';
+          net.textContent = sign + tableMoney(Math.abs(difference));
         }
       }
       document.getElementById('tableGridRound').textContent = tableRound ? 'รอบ ' + tableRound.id : 'ยังไม่มีรอบ';
