@@ -6,7 +6,7 @@ const fields = {
   users: 'uid shop_id member_id display_name profile_pic role status credit_balance total_deposit commission_balance referrer_uid backer_share backer_water_fee backer_wallet created_at',
   tables: 'id shop_id table_no credit created_at cash_limit table_name is_open is_hidden',
   rounds: 'round_id shop_id status weight result created_at end_time_ms resolver_type settlement_weight',
-  bets: 'bet_id shop_id round_id uid table_no bet_type amount status play_mode payout created_at cash_table',
+  bets: 'bet_id shop_id round_id uid table_no bet_type amount status play_mode payout created_at cash_table player_scanned_table',
   backer_logs: 'id shop_id round_id uid member_id share_percent gap_amount result_status pnl_amount water_fee_deducted wallet_balance_after created_at',
   transactions: 'id shop_id target_id type amount admin_name target_type created_at cash_table_no',
   topup_requests: 'id shop_id uid member_id display_name type amount method fee_option slip_url status admin_name created_at',
@@ -645,6 +645,13 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
               : { data: 0 },
           ]);
           if (desk.error || total.error) fail('PLAYER_STATE_UNAVAILABLE', 500);
+          if (desk.data?.cash_limit != null && result.data.round?.status === 'Open') {
+            const settlement = await db.rpc('cash_table_requires_settlement', {
+              p_shop: shopId, p_table: table, p_round: result.data.round.round_id, p_credit: null,
+            });
+            if (settlement.error) fail('PLAYER_STATE_UNAVAILABLE', 500);
+            result.data.table_settlement_required = settlement.data === true;
+          }
           result.data.table_round_total = total.data;
           result.data.table_name = desk.data?.table_name ?? null;
           result.data.table_open = Boolean(desk.data?.is_open && !desk.data?.is_hidden && desk.data?.cash_limit);
@@ -727,8 +734,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           const result = table === undefined
             ? await db.rpc('place_player_private_bet', params)
             : await db.rpc('place_player_cash_table_bet', { ...params, p_table: table, p_day: input.table_day, p_staff: false });
-          if (result.error?.message === 'BET_MINIMUM') return reply({ ok: false, code: 'BET_MINIMUM' }, 409);
-        if (result.error) fail('BET_UNAVAILABLE', 500);
+          if (['BET_MINIMUM','TABLE_SETTLEMENT_REQUIRED'].includes(result.error?.message)) fail(result.error.message, 409);
+          if (result.error) fail('BET_UNAVAILABLE', 500);
           if (result.data?.code === 'BET_LIMIT') return reply({ ok: false, ...result.data }, 409);
           if (result.data?.code !== 'PLACED') fail(result.data?.code || 'BET_UNAVAILABLE', 409);
           return reply({ ok: true, bet_id: result.data.bet_id });
@@ -826,6 +833,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           p_expected_side: operation === 'add' ? null : expected_side,
           p_expected_amount: operation === 'add' ? null : expected_amount,
         });
+        if (result.error?.message === 'TABLE_SETTLEMENT_REQUIRED') fail('TABLE_SETTLEMENT_REQUIRED', 409);
         if (result.error) fail('BET_UNAVAILABLE', 500);
         if (result.data !== 'RECORDED') fail(result.data || 'BET_UNAVAILABLE', result.data === 'ADMIN_REQUIRED' ? 403 : 409);
         return reply({ ok: true });
@@ -894,7 +902,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           p_shop: shopId, p_uid: claims.sub, p_round: input.round_id, p_id: input.bet_id, p_type: input.bet_type,
           p_amount: input.amount, p_table: input.table_no, p_day: tableDay(), p_staff: true,
         });
-        if (result.error?.message === 'BET_MINIMUM') return reply({ ok: false, code: 'BET_MINIMUM' }, 409);
+        if (['BET_MINIMUM','TABLE_SETTLEMENT_REQUIRED'].includes(result.error?.message)) fail(result.error.message, 409);
         if (result.error) fail('BET_UNAVAILABLE', 500);
         if (result.data?.code !== 'PLACED') fail(result.data?.code || 'BET_UNAVAILABLE', 409);
         return reply({ ok: true, bet_id: result.data.bet_id });

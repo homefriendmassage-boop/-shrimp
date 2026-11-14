@@ -809,6 +809,7 @@
 
     function setMode(mode) {
       playMode = mode;
+      lockBettingUI(!isRoundOpen);
       document.getElementById('creditLabel').textContent = mode === 'table' ? 'ยอดเงินสดของโต๊ะ' : 'Wallet ส่วนตัว';
       document.getElementById('playerWalletAction').hidden = mode === 'table';
       document.getElementById('playerTableRound').hidden = true;
@@ -827,7 +828,7 @@
     }
 
     function selectBet(type) {
-      if(!isRoundOpen) return; 
+      if(!isRoundOpen || (playMode === 'table' && tableSettlementRequired)) return;
       if (currentUserRole === 'Promoter') {
           alert("สิทธิ์ผู้แนะนำ (Promoter) ไม่สามารถร่วมเดิมพันได้ครับ");
           return;
@@ -895,6 +896,7 @@
       const btnEven = document.getElementById('btnEven');
       const btnOdd = document.getElementById('btnOdd');
       const btnSubmit = document.getElementById('btnSubmitBet');
+      const needsSettlement = playMode === 'table' && tableSettlementRequired;
       
       if (currentUserRole === 'Promoter') {
           btnEven.classList.add('disabled'); btnOdd.classList.add('disabled'); 
@@ -903,8 +905,8 @@
           return;
       }
 
-      if (isLocked) {
-        btnEven.classList.add('disabled'); btnOdd.classList.add('disabled'); btnSubmit.classList.add('disabled'); btnSubmit.innerText = "ปิดรับแทงชั่วคราว"; selectedBetType = ""; btnEven.classList.remove('selected'); btnOdd.classList.remove('selected');
+      if (isLocked || needsSettlement) {
+        btnEven.classList.add('disabled'); btnOdd.classList.add('disabled'); btnSubmit.classList.add('disabled'); btnSubmit.innerText = needsSettlement ? "กรุณาเคลียร์ยอดรอบก่อน" : "ปิดรับแทงชั่วคราว"; selectedBetType = ""; btnEven.classList.remove('selected'); btnOdd.classList.remove('selected');
       } else {
         btnEven.classList.remove('disabled'); btnOdd.classList.remove('disabled'); btnSubmit.classList.remove('disabled'); btnSubmit.innerText = "ยืนยันการแทง";
       }
@@ -929,11 +931,14 @@
     let liveRequest = false;
     let refreshAfterRequest = false;
     let displayedRoundId;
+    let tableSettlementRequired = false;
 
     function renderLiveSnapshot(snapshot, table) {
       const credit = playMode === 'table' ? (table ? snapshot.table_credit : null) : snapshot.credit;
       const amount = credit == null ? '—' : '฿' + (playMode === 'table' ? Math.abs(Number(credit)) : Number(credit)).toLocaleString('th-TH');
       const tableMode = playMode === 'table';
+      const wasSettlementRequired = tableSettlementRequired;
+      tableSettlementRequired = Boolean(tableMode && table && snapshot.table_settlement_required);
       document.getElementById('creditDisplay').textContent = !tableMode || credit == null ? amount
         : Number(credit) < 0 ? 'ต้องจ่ายร้าน ' + amount
         : Number(credit) > 0 ? 'ร้านต้องจ่าย ' + amount : 'เคลียร์แล้ว';
@@ -945,7 +950,7 @@
       }
       if (tableMode && table) {
         const heading = snapshot.table_name || 'โต๊ะ ' + table;
-        document.getElementById('tableDisplay').textContent = snapshot.table_open ? heading : heading + ' · ปิดรับยอด';
+        document.getElementById('tableDisplay').textContent = tableSettlementRequired ? heading + ' · รอเคลียร์ยอดรอบก่อน' : snapshot.table_open ? heading : heading + ' · ปิดรับยอด';
       }
       const round = snapshot.round;
       const result = snapshot.last_result;
@@ -958,7 +963,7 @@
         lockBettingUI(true);
         displayedRoundId = round?.round_id ?? null;
         if (isRoundOpen) lockBettingUI(false);
-      } else if (wasOpen !== isRoundOpen) {
+      } else if (wasOpen !== isRoundOpen || wasSettlementRequired !== tableSettlementRequired) {
         lockBettingUI(!isRoundOpen);
       }
       document.getElementById('roundIdDisplay').textContent = round ? 'รอบ ' + formatRoundName(round.round_id) : '-';
@@ -1037,6 +1042,7 @@
         TABLE_QR_INVALID: 'QR โต๊ะนี้ใช้ไม่ได้ กรุณาขอสแกนจากร้านอีกครั้ง',
         TABLE_CLOSED: 'โต๊ะนี้ปิดรับยอด กรุณาติดต่อแคชเชียร์',
         CASH_TABLE_REQUIRED: 'โต๊ะนี้ยังไม่ได้เปิดโหมดเงินสด กรุณาแจ้งพนักงาน',
+        TABLE_SETTLEMENT_REQUIRED: 'กรุณาเคลียร์ยอดรอบก่อนกับพนักงาน แล้วจึงลงยอดรอบใหม่',
         TABLE_CREDIT_LIMIT: 'ยอดค้างจะเกินวงเงินของโต๊ะ กรุณาติดต่อพนักงาน',
         CREDIT_INSUFFICIENT: 'เครดิตส่วนตัวไม่พอ กรุณาเติมเงิน',
         PLAYER_ACCESS_REQUIRED: 'บัญชีนี้ยังไม่มีสิทธิ์ทำรายการในร้านนี้',
@@ -1051,6 +1057,10 @@
     async function submitBet() {
       if (betSubmitting) return;
       if (currentUserRole === 'Promoter') { alert('ผู้แนะนำไม่สามารถแทงได้ครับ'); return; }
+      if (playMode === 'table' && tableSettlementRequired) {
+        alert('กรุณาเคลียร์ยอดรอบก่อนกับพนักงาน แล้วจึงลงยอดรอบใหม่');
+        return;
+      }
       if (!isRoundOpen || !displayedRoundId) { alert('ขณะนี้ปิดรับแทงแล้วครับ'); return; }
       if (playMode === 'table' && (!cashTableQr || cashTableQr.table_day !== shopAccountingDay())) {
         alert('กรุณาสแกน QR โต๊ะเงินสดของรอบบัญชีปัจจุบัน');
