@@ -151,6 +151,10 @@
     .last-result-weight { font-size:clamp(1.3rem,2.2vw,2rem); }
     .board-tools { display:flex; gap:12px; align-items:center; margin-top:16px; color:var(--text-muted); }
     .board-tools button { background:#252e42; border:1px solid #465472; color:white; padding:8px 12px; border-radius:8px; font:inherit; cursor:pointer; }
+    .board-table-totals { margin-top:12px; max-height:300px; overflow:auto; }
+    .board-table-totals table { width:100%; }
+    .board-table-totals .even-total { color:#84b9ff; }
+    .board-table-totals .odd-total { color:#ff8c96; }
     .board-tables { padding:12px 0 0; color:var(--text-muted); overflow-wrap:anywhere; }
     .board-tables span { color:var(--text-main); }
     .history-panel { min-width:0; border:1px solid var(--card-border); background:#171925; border-radius:16px; overflow:hidden; }
@@ -262,7 +266,15 @@
           </div>
           <div class="winner-badge" id="lastWinner">-</div>
         </div>
-        <div class="board-tables">โต๊ะในรอบนี้ <span id="boardTables">—</span></div>
+        <details open>
+          <summary class="board-tables">ยอดตามโต๊ะในรอบนี้</summary>
+          <div class="board-table-totals">
+            <table class="round-table">
+              <thead><tr><th scope="col">โต๊ะ</th><th scope="col">คู่</th><th scope="col">คี่</th><th scope="col">รวม</th></tr></thead>
+              <tbody id="boardTableTotals"></tbody>
+            </table>
+          </div>
+        </details>
       </section>
       <aside class="history-panel" aria-labelledby="historyHeading">
         <div class="history-heading">
@@ -429,6 +441,30 @@
 
     document.getElementById('boardLock').onclick = () => lockBoard();
 
+    function renderTableTotals(totals) {
+      const list = document.getElementById('boardTableTotals');
+      list.replaceChildren();
+      if (!totals.length) {
+        const empty = list.insertRow().insertCell();
+        empty.colSpan = 4;
+        empty.textContent = 'ยังไม่มียอดในรอบนี้';
+        return;
+      }
+      totals.sort((a, b) => a.table_no == null ? Number(b.table_no != null)
+        : b.table_no == null ? -1 : a.table_no.localeCompare(b.table_no, 'th', { numeric: true }));
+      for (const item of totals) {
+        const row = list.insertRow();
+        row.insertCell().textContent = item.name;
+        const even = row.insertCell();
+        even.className = 'even-total';
+        even.textContent = money(item.even);
+        const odd = row.insertCell();
+        odd.className = 'odd-total';
+        odd.textContent = money(item.odd);
+        row.insertCell().textContent = money(Number(item.even) + Number(item.odd));
+      }
+    }
+
     async function refreshBoard() {
       const session = boardSession;
       if (!session) return;
@@ -452,7 +488,7 @@
         set('lastWeight', board.last_result ? board.last_result.weight + ' กรัม' : '—');
         set('lastWinner', board.last_result?.result || '—');
         document.getElementById('lastWinner').classList.toggle('odd', board.last_result?.result === 'คี่');
-        set('boardTables', totals.tables.length ? totals.tables.sort((a, b) => a.localeCompare(b, 'th', { numeric: true })).join(' · ') : '—');
+        renderTableTotals(board.table_totals ?? []);
         if (board.accounting_day) {
           document.getElementById('boardDay').dateTime = board.accounting_day;
           set('boardDay', dateFormat.format(new Date(board.accounting_day + 'T06:00:00+07:00')));

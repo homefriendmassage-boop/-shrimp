@@ -386,3 +386,65 @@ test('daily report sends to the owner until a group is configured', async () => 
   assert.equal((await send()).status,409);
   assert.deepEqual(sent,[owner,group]);
 });
+
+test('only verified cashier or admin can correct cash-table bills in their own shop', async () => {
+  const calls = [];
+  const payload = {
+    action: 'table_correct_bet', operation: 'edit', table_no: '1', round_id: 'round-one',
+    request_id: '11111111-1111-1111-1111-111111111111', bet_id: '22222222-2222-2222-2222-222222222222',
+    reason: '  ตรวจยอด  ', side: 'คู่', amount: '150', expected_side: 'คี่', expected_amount: '100',
+    uid: 'forged', role: 'Admin',
+  };
+  function handler(role, active = true) {
+    const values = { LINE_CHANNEL_ID_ADMIN: 'channel', LINE_CHANNEL_ID_PLAYER: 'channel',
+      SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'server-only' };
+    return makeHandler({
+      env: name => values[name],
+      fetcher: async () => Response.json({ sub: 'verified-user', aud: 'channel', exp: Date.now() / 1000 + 60 }),
+      createDb: () => ({
+        from(table) {
+          const filters = {};
+          const chain = { select: () => chain, eq(key, value) { filters[key] = value; return chain; },
+            maybeSingle: async () => ({ data: table === 'shops' ? { status: 'active' }
+              : filters.shop_id === 'SHOP_001' && filters.uid === 'verified-user'
+                ? { role, status: active ? 'Active' : 'Inactive' } : null }) };
+          return chain;
+        },
+        async rpc(name, args) { calls.push([name,args]); return { data: 'RECORDED' }; },
+      }),
+    });
+  }
+  for (const role of ['Operator','Customer','Promoter']) {
+    assert.equal((await handler(role)(request(payload))).status, 403);
+  }
+  assert.equal((await handler('Cashier', false)(request(payload))).status, 403);
+  assert.equal((await handler('Cashier')(request({ ...payload, shop_id: 'SHOP_002' }))).status, 403);
+  assert.equal((await handler('Cashier')(request({ ...payload, reason: '  ' }))).status, 400);
+  assert.equal((await handler('Cashier')(request({ action: 'player_state' }))).status, 403);
+  assert.equal((await handler('Cashier')(request({ action: 'wallet_approve_withdrawal' }))).status, 403);
+  assert.equal(calls.length, 0);
+  for (const role of ['Cashier','Admin','Superadmin']) {
+    assert.equal((await handler(role)(request(payload))).status, 200);
+  }
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[0], ['correct_cash_table_bet', {
+    p_shop: 'SHOP_001', p_actor: 'verified-user', p_round: 'round-one', p_table: '1',
+    p_request: payload.request_id, p_bet: payload.bet_id, p_operation: 'edit', p_reason: 'ตรวจยอด',
+    p_side: 'คู่', p_amount: '150', p_expected_side: 'คี่', p_expected_amount: '100',
+  }]);
+});
+
+test('cashier can open or close their own table, and cannot use generic financial writes', () => {
+  const shop = 'SHOP_001';
+  const request = { table: 'tables', operation: 'update', values: { is_open: false },
+    filters: [{ op: 'eq', column: 'table_no', value: '1' }] };
+  assert.equal(validateQuery(request, 'Cashier', shop).operation, 'update');
+  for (const values of [{ cash_limit: 999 }, { is_open: true, credit: 999 }, { table_name: 'rename' }]) {
+    assert.throws(() => validateQuery({ ...request, values }, 'Cashier', shop), /ADMIN_REQUIRED/);
+  }
+  for (const table of ['users','system_settings','transactions','topup_requests']) {
+    assert.throws(() => validateQuery({ table }, 'Cashier', shop), /ADMIN_REQUIRED/);
+  }
+  assert.throws(() => validateQuery({ ...request, table: 'bets', values: { status: 'Cancelled' } }, 'Cashier', shop),
+    /ADMIN_REQUIRED/);
+});
