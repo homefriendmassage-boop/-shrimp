@@ -176,8 +176,7 @@
     #tableQueue button, .table-bill { margin-bottom:6px; width:100%; }
     .table-bill { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
     .table-bill .btn { flex:0 0 auto; padding:5px 12px; }
-    .table-workspace #adminContentView > :not(#cardTableManage) { display:none; }
-    .table-workspace.cashier-workspace #adminContentView > #cardRoundControl { display:block; }
+    .cashier-workspace #adminContentView > :not(#cardRoundControl) { display:none; }
     @media (min-width:1000px) {
       .table-workspace .container { max-width:1420px; }
       .table-workspace #tableWorkspace { grid-template-columns:minmax(0, 2fr) minmax(300px, 1fr); }
@@ -337,46 +336,6 @@
         </div>
       </div>
       
-      <div class="card" id="cardTableManage">
-        <div class="card-title" style="color: var(--blue-main);"><i class="fa-solid fa-qrcode"></i> จัดการโต๊ะ & สแกนเข้าเล่น</div>
-        <div class="form-group" style="display: flex; gap: 10px; margin-bottom: 20px;">
-          <input type="text" id="txtNewTable" class="form-control" placeholder="ระบุเบอร์โต๊ะใหม่" style="flex: 2;">
-          <button class="btn btn-green" id="btnAddTable" style="flex: 1;" onclick="addNewTable()"><i class="fa-solid fa-plus"></i> เพิ่มโต๊ะ</button>
-        </div>
-        <p style="color:var(--text-muted)">เปิดวงเงินโต๊ะเพื่อให้ผู้เล่นจ่ายทีหลังได้ QR เปลี่ยนทุกวันเวลา 06:00 น.</p>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0">
-          <button type="button" class="btn btn-outline" onclick="createTableRange(this)">สร้างโต๊ะชุด</button>
-          <a class="btn btn-outline" id="cashBoardLink" target="_blank" rel="noopener">จอทีวีและ MC</a>
-          <button class="btn btn-outline hidden" id="boardPasswordSettings" type="button">ตั้งรหัสผ่านจอ MC</button>
-          <label>แสดงโต๊ะ <select class="form-control" id="tableFilter">
-            <option value="visible">ทุกโต๊ะที่แสดง</option><option value="open">เปิดรับยอด</option>
-            <option value="pending">รอผล</option><option value="receive">ต้องรับเงิน</option>
-            <option value="pay">ต้องจ่ายเงิน</option><option value="closed">ปิดรับยอด</option><option value="hidden">โต๊ะที่ซ่อน</option>
-          </select></label>
-        </div>
-        <p id="tableGridRound" aria-live="polite"></p>
-        <div id="tableWorkspace">
-          <div id="tableListContainer"></div>
-          <aside>
-            <div id="cashierQueue" class="hidden">
-              <h3>คิวรับ–จ่ายเงินสด</h3>
-              <div id="tableQueue"></div>
-            </div>
-            <p id="selectedTableStatus"></p>
-            <div id="selectedTableActions"></div>
-            <form id="staffCashBetForm" class="hidden" style="margin-bottom:12px">
-              <p id="staffCashBetTitle"></p>
-              <label>ฝั่ง <select name="side" class="form-control"><option>คู่</option><option>คี่</option></select></label>
-              <label>ยอดลงโต๊ะ <input name="amount" type="number" min="0.01" step="0.01" class="form-control" required></label>
-              <label id="cashCorrectionReason" class="hidden">เหตุผล <input name="reason" maxlength="300" class="form-control"></label>
-              <button type="submit" class="btn btn-blue">บันทึกบิล</button>
-              <button type="button" class="btn btn-outline" onclick="this.form.classList.add('hidden')">ปิด</button>
-            </form>
-            <div id="selectedTableBills"></div>
-          </aside>
-        </div>
-      </div>
-
       <div class="card" id="cardUserManage">
         <div class="card-title" style="color: var(--blue-main); display: flex; justify-content: space-between; align-items: center;">
             <span><i class="fa-solid fa-users-gear"></i> จัดการสิทธิ์ผู้ใช้งาน</span>
@@ -456,6 +415,48 @@
     </div>
 
     <!-- View 2: คิวรอดำเนินการ -->
+    <div id="tableContentView" class="hidden no-print">
+      <div class="card" id="cardTableManage">
+        <div class="card-title" style="color: var(--blue-main);"><i class="fa-solid fa-qrcode"></i> จัดการโต๊ะ & สแกนเข้าเล่น</div>
+        <div class="form-group" style="display: flex; gap: 10px; margin-bottom: 20px;">
+          <input type="text" id="txtNewTable" class="form-control" placeholder="ระบุเบอร์โต๊ะใหม่" style="flex: 2;">
+          <button class="btn btn-green" id="btnAddTable" style="flex: 1;" onclick="addNewTable()"><i class="fa-solid fa-plus"></i> เพิ่มโต๊ะ</button>
+        </div>
+        <p style="color:var(--text-muted)">เปิดวงเงินโต๊ะเพื่อให้ผู้เล่นจ่ายทีหลังได้ QR เปลี่ยนทุกวันเวลา 06:00 น.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0">
+          <button type="button" class="btn btn-outline" onclick="createTableRange(this)">สร้างโต๊ะชุด</button>
+          <a class="btn btn-outline" id="cashBoardLink" target="_blank" rel="noopener">จอทีวีและ MC</a>
+          <button class="btn btn-outline hidden" id="boardPasswordSettings" type="button">ตั้งรหัสผ่านจอ MC</button>
+          <label>แสดงโต๊ะ <select class="form-control" id="tableFilter">
+            <option value="visible">ทุกโต๊ะที่แสดง</option><option value="open">เปิดรับยอด</option>
+            <option value="pending">รอผล</option><option value="receive">ต้องรับเงิน</option>
+            <option value="pay">ต้องจ่ายเงิน</option><option value="closed">ปิดรับยอด</option><option value="hidden">โต๊ะที่ซ่อน</option>
+          </select></label>
+        </div>
+        <p id="tableGridRound" aria-live="polite"></p>
+        <div id="tableWorkspace">
+          <div id="tableListContainer"></div>
+          <aside>
+            <div id="cashierQueue" class="hidden">
+              <h3>คิวรับ–จ่ายเงินสด</h3>
+              <div id="tableQueue"></div>
+            </div>
+            <p id="selectedTableStatus"></p>
+            <div id="selectedTableActions"></div>
+            <form id="staffCashBetForm" class="hidden" style="margin-bottom:12px">
+              <p id="staffCashBetTitle"></p>
+              <label>ฝั่ง <select name="side" class="form-control"><option>คู่</option><option>คี่</option></select></label>
+              <label>ยอดลงโต๊ะ <input name="amount" type="number" min="0.01" step="0.01" class="form-control" required></label>
+              <label id="cashCorrectionReason" class="hidden">เหตุผล <input name="reason" maxlength="300" class="form-control"></label>
+              <button type="submit" class="btn btn-blue">บันทึกบิล</button>
+              <button type="button" class="btn btn-outline" onclick="this.form.classList.add('hidden')">ปิด</button>
+            </form>
+            <div id="selectedTableBills"></div>
+          </aside>
+        </div>
+      </div>
+    </div>
+
     <div id="pendingContentView" class="hidden no-print">
     <!-- แผงสมาชิกทั่วไป: สิทธิ์แยกจาก Admin Panel เดิม -->
     <section id="generalMembershipPanel" class="card hidden no-print">
@@ -763,6 +764,7 @@
         if (!user || user.status !== 'Active' || !['Admin', 'Superadmin', 'Operator', 'Cashier'].includes(currentUserRole)) {
           document.getElementById('adminTabs').style.display = 'none';
           document.getElementById('adminContentView').classList.add('hidden');
+          document.getElementById('tableContentView').classList.add('hidden');
           document.getElementById('reportContentView').classList.add('hidden');
           document.getElementById('pendingContentView').classList.add('hidden');
           document.getElementById('accessDeniedView').classList.remove('hidden');
@@ -784,7 +786,7 @@
           }
           document.getElementById('opProfile').innerHTML = `<i class="fa-solid fa-user-tie"></i> ${roleBadge}`;
           
-          document.getElementById('tabTables').classList.toggle('hidden', !canCorrectCashBets());
+          document.getElementById('tabTables').classList.toggle('hidden', !canOpenTableWorkspace());
           if (currentUserRole === 'Cashier') {
             document.body.classList.add('cashier-workspace');
             document.getElementById('opProfile').textContent = 'แคชเชียร์บ่อ';
@@ -825,7 +827,7 @@
         saasAdminLink.classList.add('hidden');
         currentUserRole = 'Customer';
         document.getElementById('adminTabs').style.display = 'none';
-        for (const id of ['adminContentView', 'reportContentView', 'pendingContentView']) document.getElementById(id).classList.add('hidden');
+        for (const id of ['adminContentView', 'tableContentView', 'reportContentView', 'pendingContentView']) document.getElementById(id).classList.add('hidden');
         document.getElementById('accessDeniedView').classList.remove('hidden');
         document.getElementById('opProfile').textContent = 'ยังไม่ผ่านการตรวจสิทธิ์ Admin';
         showAdminApiError(error.message);
@@ -949,12 +951,17 @@
         }
     }
 
+    function canOpenTableWorkspace() {
+        return ['Admin', 'Superadmin', 'Cashier', 'Operator'].includes(currentUserRole);
+    }
+
     function switchAdminTab(tab) {
+        if (document.getElementById('adminTabs').style.display !== 'flex') return;
         if (currentUserRole === 'Cashier') tab = 'tables';
-        if (tab === 'tables' && !canCorrectCashBets()) tab = 'control';
+        if (tab === 'tables' && !canOpenTableWorkspace()) tab = 'control';
         const showTables = tab === 'tables';
         document.body.classList.toggle('table-workspace', showTables);
-        document.getElementById('cashierQueue').classList.toggle('hidden', !showTables);
+        document.getElementById('cashierQueue').classList.toggle('hidden', !showTables || !canCorrectCashBets());
         const tablesTab = document.getElementById('tabTables');
         tablesTab.classList.toggle('active', showTables);
         tablesTab.setAttribute('aria-pressed', String(showTables));
@@ -963,11 +970,12 @@
         document.getElementById('tabReport').classList.remove('active');
         
         document.getElementById('adminContentView').classList.add('hidden');
+        document.getElementById('tableContentView').classList.toggle('hidden', !showTables);
         document.getElementById('pendingContentView').classList.add('hidden');
         document.getElementById('reportContentView').classList.add('hidden');
 
         if (showTables) {
-            document.getElementById('adminContentView').classList.remove('hidden');
+            if (currentUserRole === 'Cashier') document.getElementById('adminContentView').classList.remove('hidden');
             renderTableGrid();
         } else if (tab === 'control') {
             document.getElementById('tabControl').classList.add('active');
