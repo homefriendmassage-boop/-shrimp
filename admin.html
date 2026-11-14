@@ -171,7 +171,14 @@
     #walletDecisionDialog button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
     #tableListContainer { display:grid; grid-template-columns:repeat(auto-fill,minmax(122px,1fr)); gap:8px; }
     #tableListContainer button { width:100%; min-height:76px; white-space:normal; overflow-wrap:anywhere; }
-    #tableListContainer button[aria-pressed="true"] { border-color:var(--blue-main); background:#192d4e; }
+    #tableListContainer button[aria-pressed="true"] {
+      outline:2px solid #fff;
+      outline-offset:-4px;
+    }
+    #tableWorkspace .table-status-pending { background:#1d4280; border:1px solid #69a5ff; color:#fff; }
+    #tableWorkspace .table-status-receive { background:#12523a; border:1px solid #49cf95; color:#fff; }
+    #tableWorkspace .table-status-pay { background:#73360d; border:1px solid #ffac61; color:#fff; }
+    #tableWorkspace button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
     #tableWorkspace { display:grid; gap:16px; }
     #tableQueue button, .table-bill { margin-bottom:6px; width:100%; }
     .table-bill { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -2200,7 +2207,12 @@
       const bills = document.getElementById('selectedTableBills');
       const cashier = currentUserRole === 'Cashier';
       const status = document.getElementById('selectedTableStatus');
-      const pending = new Set(tableRound?.bets.filter(b => b.cash_table && b.status === 'Active').map(b => b.table_no));
+      const pending = new Set(tableRound?.bets.filter(b => b.status === 'Active').map(b => b.table_no));
+      const settlementState = desk => {
+        const balance = Number(desk.credit);
+        if (desk.cash_limit == null || pending.has(desk.table_no) || !balance) return '';
+        return balance < 0 ? 'receive' : 'pay';
+      };
       document.getElementById('tableGridRound').textContent = tableRound ? 'รอบ ' + tableRound.id : 'ยังไม่มีรอบ';
       const shown = tableDesks.filter(desk => {
         if (filter === 'hidden') return desk.is_hidden;
@@ -2208,8 +2220,7 @@
         if (filter === 'open') return desk.is_open && desk.cash_limit != null;
         if (filter === 'closed') return !desk.is_open;
         if (filter === 'pending') return pending.has(desk.table_no);
-        if (filter === 'receive') return desk.cash_limit != null && Number(desk.credit) < 0 && !pending.has(desk.table_no);
-        if (filter === 'pay') return desk.cash_limit != null && Number(desk.credit) > 0 && !pending.has(desk.table_no);
+        if (filter === 'receive' || filter === 'pay') return settlementState(desk) === filter;
         return true;
       });
       const button = (label, action, style = 'btn-outline') => {
@@ -2229,14 +2240,16 @@
       grid.replaceChildren();
       const desk = shown.find(row => row.table_no === selectedTable);
       for (const row of shown) {
-        const balance = Number(row.credit);
-        const state = row.is_hidden ? 'ซ่อน' : !row.is_open ? 'ปิด' : row.cash_limit == null ? 'ยังไม่ตั้งวงเงิน'
-          : pending.has(row.table_no) ? 'รอผล' : balance < 0 ? 'ต้องรับเงิน' : balance > 0 ? 'ต้องจ่ายเงิน' : 'เคลียร์แล้ว';
+        const activity = pending.has(row.table_no) ? 'pending' : settlementState(row);
+        const activityLabel = { pending:'รอผล', receive:'ต้องรับเงิน', pay:'ต้องจ่ายเงิน' }[activity];
+        const availability = row.is_hidden ? 'ซ่อน' : !row.is_open ? 'ปิด' : '';
+        const state = [availability, activityLabel].filter(Boolean).join(' · ')
+          || (row.cash_limit == null ? 'ยังไม่ตั้งวงเงิน' : 'เคลียร์แล้ว');
         const item = button(deskName(row) + ' · ' + state, () => {
           selectedTable = row.table_no;
           renderTableGrid();
           actions.querySelector('button')?.focus();
-        });
+        }, activity ? 'table-status-' + activity : 'btn-outline');
         item.setAttribute('aria-pressed', String(row.table_no === selectedTable));
         item.dataset.table = row.table_no;
         grid.append(item);
@@ -2245,7 +2258,7 @@
       if (!shown.length) grid.textContent = 'ไม่มีโต๊ะในตัวกรองนี้';
       if (!document.getElementById('cashierQueue').classList.contains('hidden')) {
         const queue = document.getElementById('tableQueue');
-        const unsettled = tableDesks.filter(row => row.cash_limit != null && Number(row.credit) !== 0 && !pending.has(row.table_no));
+        const unsettled = tableDesks.filter(settlementState);
         queue.replaceChildren(...unsettled.map(row => {
           const amount = Number(row.credit);
           return button(deskName(row) + (amount < 0 ? ' · รับ ฿' : ' · จ่าย ฿') + Math.abs(amount).toLocaleString('th-TH'), () => {
@@ -2253,7 +2266,7 @@
             selectedTable = row.table_no;
             renderTableGrid();
             actions.querySelector('button')?.focus();
-          });
+          }, 'table-status-' + settlementState(row));
         }));
         if (!unsettled.length) queue.textContent = 'ไม่มีโต๊ะรอรับหรือจ่ายเงิน';
       }
@@ -2312,12 +2325,13 @@
         }
         bills.append(row);
       }
-      if (desk.cash_limit != null && balance !== 0 && !pending.has(desk.table_no)) {
+      const settlement = settlementState(desk);
+      if (settlement) {
         actions.append(button(balance < 0 ? 'รับเงินสด' : 'จ่ายเงินสด', async () => {
           const amount = prompt(balance < 0 ? 'จำนวนเงินสดที่รับจริง' : 'จำนวนเงินสดที่จ่ายจริง', Math.abs(balance).toFixed(2));
           if (amount === null || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0) return;
           await recordCashAtTable(desk.table_no, balance < 0 ? 'deposit' : 'withdraw', amount.trim());
-        }, 'btn-green'));
+        }, 'table-status-' + settlement));
       }
     }
 
