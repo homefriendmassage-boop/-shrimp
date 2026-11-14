@@ -48,9 +48,13 @@ function createAdminApiClient(config, getShopId) {
   return {
     from,
     correctTableCashBet: details => call({ action: 'table_correct_bet', ...details }),
+    openRound: () => call({ action: 'round_open' }),
+    finalizeRound: (roundId, weight) => call({ action: 'round_finalize', round_id: roundId, weight }),
+    tableRoundSummary: roundId => call({ action: 'table_round_summary', round_id: roundId }),
     beginRoundSettlement: (roundId, weight, resolver) => call({
       action: 'round_begin_settlement', round_id: roundId, weight, resolver,
     }),
+    finalizeBalancedRound: (roundId, weight) => call({ action: 'round_finalize_balanced', round_id: roundId, weight }),
     placeTableCashBet: details => call({ action: 'table_cash_bet', ...details }),
     setBoardPassword: password => call({ action: 'set_password', password }, 'mc-board'),
     createCashTables: (count, limit) => call({ action: 'table_bulk_create', count, cash_limit: limit }),
@@ -61,7 +65,6 @@ function createAdminApiClient(config, getShopId) {
     sendTableCashReport: (day, id) => call({ action: 'table_send_cash_report', day, delivery_id: id }),
     dailyReferralCommission: day => call({ action: 'daily_referral_commission', day }),
     tableCashReport: day => call({ action: 'table_cash_report', day }),
-    finalizeBalancedRound: (roundId, weight) => call({ action: 'round_finalize_balanced', round_id: roundId, weight }),
     approveWalletDeposit: requestId => call({ action: 'wallet_approve_deposit', request_id: String(requestId) }),
     approveWalletWithdrawal: requestId => call({ action: 'wallet_approve_withdrawal', request_id: String(requestId) }),
     access: () => call({ action: 'access' }),

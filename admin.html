@@ -6,7 +6,7 @@
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=round-name-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=table-corrections-1"></script>
+  <script src="admin-api-client.js?v=cashier-round-1"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -179,7 +179,21 @@
     #tableWorkspace .table-status-receive { background:#12523a; border:1px solid #49cf95; color:#fff; }
     #tableWorkspace .table-status-pay { background:#73360d; border:1px solid #ffac61; color:#fff; }
     #tableWorkspace button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
-    #tableWorkspace { display:grid; gap:16px; }
+    #tableWorkspace { display:grid; gap:16px; align-items:start; }
+    #tableListContainer button { display:grid; align-content:center; gap:3px; }
+    .table-tile-state { font-size:.85rem; }
+    .table-tile-amount { font-size:1.12rem; }
+    .table-cash-totals { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin:0 0 14px; }
+    .table-cash-totals > div { padding:10px 12px; border-radius:10px; background:#252d42; }
+    .table-cash-totals > div:last-child { grid-column:1 / -1; }
+    .table-cash-totals dt { color:#dce5f6; font-size:.86rem; }
+    .table-cash-totals dd { margin:2px 0 0; font-size:1.12rem; font-weight:700; overflow-wrap:anywhere; }
+    .cash-total-receive dd { color:#7ce5b4; }
+    .cash-total-pay dd { color:#ffc38d; }
+    @media (min-width:1000px) {
+      .table-cash-totals { grid-template-columns:repeat(3,minmax(0,1fr)); }
+      .table-cash-totals > div:last-child { grid-column:auto; }
+    }
     #tableQueue button, .table-bill { margin-bottom:6px; width:100%; }
     .table-bill { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
     .table-bill .btn { flex:0 0 auto; padding:5px 12px; }
@@ -451,6 +465,11 @@
           </select></label>
         </div>
         <p id="tableGridRound" aria-live="polite"></p>
+        <dl id="tableCashTotals" class="table-cash-totals hidden">
+          <div class="cash-total-receive"><dt>รวมค้างเก็บ</dt><dd id="tableTotalReceive">฿0</dd></div>
+          <div class="cash-total-pay"><dt>รวมค้างจ่าย</dt><dd id="tableTotalPay">฿0</dd></div>
+          <div><dt>ส่วนต่างรอบนี้จากยอดบนโต๊ะ (ก่อนแบ่งรับจบ)</dt><dd id="tableRoundNet">—</dd></div>
+        </dl>
         <div id="tableWorkspace">
           <div id="tableListContainer"></div>
           <aside>
@@ -854,7 +873,7 @@
             document.body.classList.add('cashier-workspace');
             document.getElementById('opProfile').textContent = 'แคชเชียร์บ่อ';
             for (const id of ['tabControl','tabPending','tabReport','cardCreditManage','cardUserManage','cardSettings',
-              'cardCancelBet','cardLiveBets','btnOpenRound','btnCloseBetting','btnFinalize','txtShrimpWeight']) {
+              'cardCancelBet','cardLiveBets']) {
               document.getElementById(id).classList.add('hidden');
             }
             document.getElementById('txtNewTable').parentElement.classList.add('hidden');
@@ -1646,7 +1665,7 @@
         if (dist <= 0 && isRoundOpen) { 
             el.innerText = 'หมดเวลา · ปิดรับยอดลูกค้า';
             el.style.color = "var(--red-main)"; 
-            if (['Admin','Superadmin'].includes(currentUserRole)) prepareCloseBetting();
+            if (canCorrectCashBets()) prepareCloseBetting();
             else {
               isRoundOpen = false;
               renderTableGrid();
@@ -1664,8 +1683,8 @@
     async function fetchAdminDashboard() {
       const request = ++dashboardRequest;
       try {
-        let { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).in('status', ['Open', 'Closed']).order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1);
-        if(!rounds || rounds.length === 0) { let { data: endedRounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId).eq('status', 'Ended').order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1); rounds = endedRounds; }
+        const { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId)
+          .order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1);
 
         if (request !== dashboardRequest) return;
         if(rounds && rounds.length > 0) {
@@ -1706,6 +1725,9 @@
           tableRound = { id: r.round_id, status: r.status,
             locked: r.settlement_weight != null || (bets || []).some(b => ['Win','Lose'].includes(b.status)), bets: (bets || []).filter(b => b.play_mode === 'table') };
           renderTableGrid();
+          if (canCorrectCashBets() && r.status === 'Ended' && tableRoundTotals?.id !== r.round_id) {
+            void loadTableRoundTotals(r.round_id);
+          }
           if (r.settlement_weight != null) document.getElementById('gapResolutionModal').classList.add('hidden');
           let ea=0, oa=0; let et=new Set(), ot=new Set(); let fl = document.getElementById('liveBetsFeedList'); fl.innerHTML = '';
           if(bets && bets.length > 0) {
@@ -1767,16 +1789,6 @@
       } catch (error) { status.textContent = 'บันทึก' + label + 'แล้ว แต่แจ้งเตือนไม่สำเร็จ [' + error.message + ']'; }
     }
 
-    function nextShopRoundId(shop, previousId, time = Date.now()) {
-      const shopNumber = /^SHOP_([0-9]{3,24})$/.exec(shop)?.[1];
-      if (!shopNumber) throw new Error('รหัสร้านไม่ถูกต้อง');
-      const date = shopAccountingDay(time).slice(2).replaceAll('-', '');
-      const previous = /^R-([0-9]{6})-(?:([0-9]{3,24})-)?([0-9]+)$/.exec(formatRoundName(previousId));
-      const sameShop = !previous?.[2] || previous[2] === shopNumber;
-      const number = previous?.[1] === date && sameShop ? Number(previous[3]) + 1 : 1;
-      return 'R-' + date + '-' + shopNumber + '-' + number;
-    }
-
     async function controlRound(cmd) {
       if (cmd !== 'createRound') return;
       const button = document.getElementById('btnOpenRound');
@@ -1786,28 +1798,15 @@
       button.disabled = true;
       button.textContent = 'กำลังเปิด...';
       try {
-        const { data: rounds } = await _supabase.from('rounds').select('status, round_id').eq('shop_id', shop)
-          .order('created_at', { ascending: false }).order('round_id', { ascending: false }).limit(1);
-        const latest = rounds?.[0];
-        if (latest?.status === 'Closed') throw new Error('รอบ ' + formatRoundName(latest.round_id) + ' ปิดรับแล้ว กรุณากรอกน้ำหนักจริงแล้วกด คำนวณ + ตัดผล ก่อนเปิดรอบใหม่');
-        if (latest && latest.status !== 'Ended') throw new Error('กรุณาปิดรับและตัดผลรอบ ' + formatRoundName(latest.round_id) + ' ก่อนเปิดรอบใหม่');
-        const { data: [settings] } = await _supabase.from('system_settings').select('round_duration').eq('shop_id', shop).limit(1);
-        const duration = Number(settings?.round_duration) || 15;
-        if (shop !== currentShopId) return;
-        const now = Date.now();
-        const roundId = nextShopRoundId(shop, latest?.round_id, now);
-        const { data: opened } = await _supabase.from('rounds').insert([{
-          shop_id: shop, round_id: roundId, status: 'Open', end_time_ms: now + duration * 60000, resolver_type: 'none'
-        }]).select('round_id');
-        if (opened?.[0]?.round_id !== roundId) throw new Error('ยังยืนยันผลการเปิดรอบไม่ได้ กรุณาตรวจสถานะรอบล่าสุด');
+        const { round_id: roundId } = await _supabase.openRound();
         if (shop !== currentShopId) return;
         void notifyRoundEvent(roundId, 'opened');
         document.getElementById('resolverStatusMsg').style.display = 'none';
         alert('เปิดรอบ ' + roundId + ' สำเร็จ!');
       } catch (error) {
-        alert(error.message === 'ADMIN_DATABASE_ERROR'
-          ? 'เปิดรอบไม่ได้ กรุณาตรวจสถานะรอบล่าสุด หากยังไม่มีรอบเปิดให้ลองอีกครั้ง'
-          : error.message);
+        alert(error.message === 'ROUND_PREVIOUS_UNFINISHED'
+          ? 'กรุณาปิดรับและตัดผลรอบเดิมก่อนเปิดรอบใหม่'
+          : 'เปิดรอบไม่สำเร็จ กรุณาตรวจสถานะรอบล่าสุด [' + error.message + ']');
       } finally {
         button.innerHTML = label;
         button.disabled = false;
@@ -1843,10 +1842,12 @@
             const { data: bets } = await _supabase.from('bets').select('amount, bet_type').eq('shop_id', currentShopId).eq('round_id', roundId).neq('status', 'Cancelled');
             let totalEven = 0, totalOdd = 0;
             if (bets && bets.length > 0) {
-                bets.forEach(b => { if (b.bet_type === 'คู่') totalEven += b.amount; if (b.bet_type === 'คี่') totalOdd += b.amount; });
+                bets.forEach(b => { if (b.bet_type === 'คู่') totalEven += Math.round(Number(b.amount) * 100); if (b.bet_type === 'คี่') totalOdd += Math.round(Number(b.amount) * 100); });
             }
             
-            let gapAmount = Math.abs(totalEven - totalOdd); 
+            totalEven /= 100;
+            totalOdd /= 100;
+            let gapAmount = Math.round(Math.abs(totalEven - totalOdd) * 100) / 100;
             let gapSide = totalEven > totalOdd ? 'คี่' : (totalOdd > totalEven ? 'คู่' : 'none');
 
             pendingFinalizeData = { roundId, gapAmount, gapSide };
@@ -1906,92 +1907,16 @@
         if(lr[0].status === 'Open') throw new Error("กรุณารอหมดเวลา หรือ กด 'ปิดรับแทง' และยืนยันยอดส่วนต่างก่อนใส่น้ำหนักกุ้งครับ!");
         if(lr[0].resolver_type === null) throw new Error("ยังไม่ได้ยืนยันว่าใครรับความเสี่ยงส่วนต่าง!\nโปรดเลือกผู้รับจบก่อน");
 
-        const roundId = lr[0].round_id; const res = (w % 2 === 0) ? 'คู่' : 'คี่';
-        const resolverType = lr[0].resolver_type;
-        const { data: [set] } = await _supabase.from('system_settings').select('water_margin').eq('shop_id', currentShopId).limit(1);
-        const margin = set ? set.water_margin : 0.05;
-        await _supabase.beginRoundSettlement(roundId, w, resolverType);
-
-        const { data: bets, error: betsError } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('round_id', roundId).neq('status', 'Cancelled');
-        if (betsError) throw new Error("ดึงข้อมูลบิลไม่ได้: " + betsError.message);
-
-        let totalEven = 0, totalOdd = 0;
-        if (bets && bets.length > 0) {
-            bets.forEach(b => { if (b.bet_type === 'คู่') totalEven += b.amount; if (b.bet_type === 'คี่') totalOdd += b.amount; });
-        }
-        
-        let gapAmount = Math.abs(totalEven - totalOdd); let gapSide = totalEven > totalOdd ? 'คี่' : (totalOdd > totalEven ? 'คู่' : 'none');
-        if (resolverType === 'none' && gapAmount === 0) {
-          const finalized = await _supabase.finalizeBalancedRound(roundId, w);
-          notifyRoundEvent(roundId, 'result');
-          alert(finalized.recovered ? 'บันทึกผลรอบที่ค้างแล้ว เครดิตของบิลเดิมไม่ได้ถูกจ่ายซ้ำ' : 'ตัดผลสำเร็จ! ผลคือ ' + res);
-          document.getElementById('txtShrimpWeight').value = '';
-          return;
-        }
-        if (bets.some(bet => bet.status === 'Win' || bet.status === 'Lose')) {
-          throw new Error('รอบนี้มีบิลที่ตัดผลไปแล้วบางส่วน กรุณาตรวจยอดก่อนทำรายการต่อ');
-        }
-        let backerNotifies = [];
-        
-        // ถ้าแอดมินเลือก 'backer' ระบบจะคิดเงินคนรับจบ
-        if (resolverType === 'backer' && gapAmount > 0 && gapSide !== 'none') {
-            const { data: backers } = await _supabase.from('users').select('*').eq('shop_id', currentShopId).eq('role', 'Backer');
-            if (backers && backers.length > 0) {
-                for (let backer of backers) {
-                    let share = backer.backer_share || 0; if (share <= 0) continue;
-                    let myGap = gapAmount * (share / 100); let pnl = 0; let feePaid = 0; let isWin = false;
-                    if (res === gapSide) {
-                        let feeRate = (backer.backer_water_fee !== undefined && backer.backer_water_fee !== null) ? backer.backer_water_fee : 10;
-                        feePaid = myGap * (feeRate / 100); pnl = myGap - feePaid; isWin = true;
-                    } else { pnl = -myGap; isWin = false; }
-                    
-                    let newWalletBal = (backer.backer_wallet || 0) + pnl;
-                    
-                    // ดักจับ Error ตอนอัปเดตกระเป๋า Backer
-                    const { error: updErr } = await _supabase.from('users').update({ backer_wallet: newWalletBal }).eq('shop_id', currentShopId).eq('uid', backer.uid);
-                    if(updErr) throw new Error(`ไม่สามารถอัปเดตเงินคนรับจบ (${backer.display_name}) ได้ โปรดตรวจสอบฐานข้อมูล: ` + updErr.message);
-
-                    await _supabase.from('backer_logs').insert([{ shop_id: currentShopId, round_id: roundId, uid: backer.uid, member_id: backer.member_id, share_percent: share, gap_amount: myGap, result_status: isWin ? 'Win' : 'Lose', pnl_amount: pnl, water_fee_deducted: feePaid, wallet_balance_after: newWalletBal }]);
-                    backerNotifies.push({ uid: backer.uid, pnl: pnl, walletBalance: newWalletBal });
-                }
-            }
-        }
-
-        let targetUids = new Set(); let winCount = 0;
-        if (bets && bets.length > 0) {
-          for (let bet of bets) {
-            if (bet.uid) targetUids.add(bet.uid); 
-            if (bet.status === 'Win' || bet.status === 'Lose') { if (bet.status === 'Win') winCount++; continue; }
-            if (bet.bet_type === res) {
-              winCount++; let profit = bet.amount * (1 - margin); let payout = bet.amount + profit;
-              if (bet.cash_table) payout = Math.round((payout + Number.EPSILON) * 100) / 100;
-              
-              const { error: betUpdErr } = await _supabase.from('bets').update({ status: 'Win', payout: payout }).eq('shop_id', currentShopId).eq('bet_id', bet.bet_id);
-              if (betUpdErr) throw new Error("อัปเดตบิลล้มเหลว: " + betUpdErr.message);
-
-              if (bet.cash_table) continue;
-              if (bet.play_mode === 'table') {
-                  const { data: tData } = await _supabase.from('tables').select('credit').eq('shop_id', currentShopId).eq('table_no', bet.table_no).single();
-                  if(tData) await _supabase.from('tables').update({ credit: tData.credit + payout }).eq('shop_id', currentShopId).eq('table_no', bet.table_no);
-              } else {
-                  const { data: uData } = await _supabase.from('users').select('credit_balance').eq('shop_id', currentShopId).eq('uid', bet.uid).single();
-                  if (uData) await _supabase.from('users').update({ credit_balance: uData.credit_balance + payout }).eq('shop_id', currentShopId).eq('uid', bet.uid);
-              }
-            } else { await _supabase.from('bets').update({ status: 'Lose', payout: 0 }).eq('shop_id', currentShopId).eq('bet_id', bet.bet_id); }
-          }
-        }
-        
-        await _supabase.from('rounds').update({ status: 'Ended', weight: w, result: res }).eq('shop_id', currentShopId).eq('round_id', roundId);
-        notifyRoundEvent(roundId, 'result');
-        let d = new Date(); let tzOffset = d.getTimezoneOffset() * 60000; let localISOTime = (new Date(d - tzOffset)).toISOString().slice(0, -1); let todayStr = localISOTime.split('T')[0];
-        
-        // ยกเลิกใช้ GAS
-        // if(targetUids.size > 0) notifyGAS('notifyUsersResult', { roundId: roundId, weight: w, result: res, winCount: winCount, targetUids: Array.from(targetUids) });
-        // if (backerNotifies.length > 0) { notifyGAS('notifyBackerRoundResult', { roundId: roundId, weight: w, result: res, backerUids: backerNotifies }); }
-        
-        alert(`ตัดผลสำเร็จ! ผลคือ: ${res} (ชนะ ${winCount} บิล)`); document.getElementById('txtShrimpWeight').value = '';
+        const roundId = lr[0].round_id;
+        const finalized = await _supabase.finalizeRound(roundId, w);
+        void notifyRoundEvent(roundId, 'result');
+        alert(finalized.recovered ? 'บันทึกผลรอบที่ค้างแล้ว เครดิตของบิลเดิมไม่ได้ถูกจ่ายซ้ำ'
+          : 'ตัดผลสำเร็จ! ผลคือ ' + (w % 2 === 0 ? 'คู่' : 'คี่'));
+        document.getElementById('txtShrimpWeight').value = '';
+        await loadTableList();
       } catch (e) {
         const messages = {
+          BACKER_BALANCE_INSUFFICIENT: 'ยอดของทีมรับจบไม่พอ กรุณาให้ผู้ดูแลตรวจยอดก่อนตัดผล',
           ROUND_RESULT_MISMATCH: 'น้ำหนักที่กรอกให้ผลไม่ตรงกับบิลที่บันทึกไว้ กรุณาตรวจน้ำหนักจริง',
           ROUND_REVIEW_REQUIRED: 'ยอดอาจมีการแก้ไข กรุณากดปิดรับแทงอีกครั้งเพื่อตรวจส่วนต่างล่าสุด',
           ROUND_SETTLEMENT_STARTED: 'รอบนี้เริ่มตัดผลแล้ว กรุณาตรวจสถานะรอบก่อนทำรายการต่อ',
@@ -2245,6 +2170,25 @@
 
     let tableDesks = [];
     let tableRound = null;
+    let tableRoundTotals = null;
+    let loadingRoundTotals = null;
+    const tableMoney = amount => '฿' + Number(amount).toLocaleString('th-TH', { maximumFractionDigits:2 });
+
+    async function loadTableRoundTotals(roundId) {
+      if (loadingRoundTotals === roundId) return;
+      loadingRoundTotals = roundId;
+      try {
+        const { totals } = await _supabase.tableRoundSummary(roundId);
+        if (tableRound?.id === roundId && totals) {
+          tableRoundTotals = { id:roundId, stake:Number(totals.stake), payout:Number(totals.payout) };
+          renderTableGrid();
+        }
+      } catch {
+        if (tableRound?.id === roundId) document.getElementById('tableRoundNet').textContent = 'โหลดส่วนต่างไม่สำเร็จ';
+      } finally {
+        if (loadingRoundTotals === roundId) loadingRoundTotals = null;
+      }
+    }
     let selectedTable = null;
     let tableRequest = 0;
     const deskName = desk => desk.table_name || 'โต๊ะ ' + desk.table_no;
@@ -2273,6 +2217,31 @@
         if (desk.cash_limit == null || pending.has(desk.table_no) || !balance) return '';
         return balance < 0 ? 'receive' : 'pay';
       };
+      const unsettled = tableDesks.filter(settlementState);
+      const totalsView = document.getElementById('tableCashTotals');
+      totalsView.classList.toggle('hidden', !canCorrectCashBets());
+      if (canCorrectCashBets()) {
+        let receive = 0;
+        let pay = 0;
+        for (const desk of unsettled) {
+          const cents = Math.round(Number(desk.credit) * 100);
+          if (cents < 0) receive -= cents;
+          else pay += cents;
+        }
+        document.getElementById('tableTotalReceive').textContent = tableMoney(receive / 100);
+        document.getElementById('tableTotalPay').textContent = tableMoney(pay / 100);
+        const net = document.getElementById('tableRoundNet');
+        const totals = tableRoundTotals?.id === tableRound?.id ? tableRoundTotals : null;
+        if (tableRound?.status !== 'Ended') net.textContent = tableRound ? 'รอตัดผล' : '—';
+        else if (!totals) net.textContent = 'กำลังโหลดยอดรอบนี้…';
+        else if (!totals.stake) net.textContent = 'ไม่มียอดเล่นบนโต๊ะ';
+        else {
+          const difference = Math.round((totals.stake - totals.payout) * 100) / 100;
+          const sign = difference < 0 ? '−' : difference > 0 ? '+' : '';
+          net.textContent = sign + tableMoney(Math.abs(difference)) + ' (' + sign
+            + (Math.abs(difference) / totals.stake * 100).toLocaleString('th-TH', { maximumFractionDigits:2 }) + '%)';
+        }
+      }
       document.getElementById('tableGridRound').textContent = tableRound ? 'รอบ ' + tableRound.id : 'ยังไม่มีรอบ';
       const shown = tableDesks.filter(desk => {
         if (filter === 'hidden') return desk.is_hidden;
@@ -2305,11 +2274,22 @@
         const availability = row.is_hidden ? 'ซ่อน' : !row.is_open ? 'ปิด' : '';
         const state = [availability, activityLabel].filter(Boolean).join(' · ')
           || (row.cash_limit == null ? 'ยังไม่ตั้งวงเงิน' : 'เคลียร์แล้ว');
-        const item = button(deskName(row) + ' · ' + state, () => {
+        const item = button('', () => {
           selectedTable = row.table_no;
           renderTableGrid();
           actions.querySelector('button')?.focus();
         }, activity ? 'table-status-' + activity : 'btn-outline');
+        for (const [className, label] of [
+          ['table-tile-name', deskName(row)],
+          ['table-tile-state', state],
+          ['table-tile-amount', settlementState(row) ? tableMoney(Math.abs(Number(row.credit))) : ''],
+        ]) {
+          if (!label) continue;
+          const line = document.createElement('span');
+          line.className = className;
+          line.textContent = label;
+          item.append(line);
+        }
         item.setAttribute('aria-pressed', String(row.table_no === selectedTable));
         item.dataset.table = row.table_no;
         grid.append(item);
@@ -2318,7 +2298,6 @@
       if (!shown.length) grid.textContent = 'ไม่มีโต๊ะในตัวกรองนี้';
       if (!document.getElementById('cashierQueue').classList.contains('hidden')) {
         const queue = document.getElementById('tableQueue');
-        const unsettled = tableDesks.filter(settlementState);
         queue.replaceChildren(...unsettled.map(row => {
           const amount = Number(row.credit);
           return button(deskName(row) + (amount < 0 ? ' · รับ ฿' : ' · จ่าย ฿') + Math.abs(amount).toLocaleString('th-TH'), () => {
