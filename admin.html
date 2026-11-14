@@ -269,8 +269,10 @@
 
     <div id="accessDeniedView" class="hidden no-print" style="text-align: center; padding: 60px 20px; background: var(--card-bg); border-radius: 16px; border: 1px solid var(--card-border);">
       <i class="fa-solid fa-triangle-exclamation" style="font-size: 4rem; color: var(--red-main); margin-bottom: 20px;"></i>
-      <h2 style="margin: 0; color: var(--text-main);">ไม่มีสิทธิ์เข้าถึง</h2>
-      <p style="color: var(--text-muted); margin-top: 10px;">คุณไม่มีสิทธิ์เข้าถึงหน้านี้ กรุณาติดต่อเจ้าของร้าน</p>
+      <h2 id="adminAccessHeading" style="margin: 0; color: var(--text-main);">ไม่มีสิทธิ์เข้าถึง</h2>
+      <p id="adminAccessMessage" style="color: var(--text-muted); margin-top: 10px;">คุณไม่มีสิทธิ์เข้าถึงหน้านี้ กรุณาติดต่อเจ้าของร้าน</p>
+      <button id="adminSignInAgain" class="btn btn-blue hidden" type="button">เข้าสู่ระบบ LINE ใหม่</button>
+      <a id="adminLiffLink" class="btn btn-outline hidden">เปิดผ่าน LINE LIFF</a>
     </div>
 
     <div class="admin-shortcuts no-print">
@@ -684,17 +686,51 @@
       } catch { /* A shop name lookup must not delay sign-in. */ }
     }
 
+    const adminLoginParams = ['shop', 'tab', 'shop_invite', 'shop_portal', 'saas'];
+
+    function adminLoginTarget(params) {
+      const target = new URL(location.pathname, location.origin);
+      for (const key of adminLoginParams) {
+        if (params.has(key)) target.searchParams.set(key, params.get(key));
+      }
+      if (/^#[^&=]+_[^&=]+_[^&=]+$/.test(location.hash)) target.hash = location.hash;
+      return target;
+    }
+
+    function showAdminSignInError(target) {
+      const appUrl = new URL('https://liff.line.me/' + APP_CONFIG.LIFF_ID_ADMIN);
+      appUrl.search = target.search;
+      appUrl.hash = target.hash;
+      const link = document.getElementById('adminLiffLink');
+      link.href = appUrl.href;
+      link.classList.remove('hidden');
+      document.getElementById('adminAccessHeading').textContent = 'ยืนยันบัญชี LINE ไม่สำเร็จ';
+      document.getElementById('adminAccessMessage').textContent = 'กรุณาเข้าสู่ระบบด้วยบัญชี LINE ที่ใช้ดูแลร้าน';
+      document.getElementById('accessDeniedView').classList.remove('hidden');
+      const retry = document.getElementById('adminSignInAgain');
+      retry.classList.toggle('hidden', !window.liff || liff.isInClient());
+      retry.onclick = () => {
+        try {
+          if (liff.isLoggedIn()) liff.logout();
+          liff.login({ redirectUri: target.href });
+        } catch {
+          showAdminApiError('LINE_AUTH_INVALID');
+        }
+      };
+    }
+
     async function initializeApp() {
       const urlParams = new URLSearchParams(window.location.search);
       const state = urlParams.get('liff.state');
       if (state) {
         const restored = new URL(state, location.origin);
         if (restored.origin === location.origin) {
-          for (const key of ['shop', 'tab', 'shop_invite', 'shop_portal', 'saas']) if (!urlParams.has(key) && restored.searchParams.has(key)) {
+          for (const key of adminLoginParams) if (!urlParams.has(key) && restored.searchParams.has(key)) {
             urlParams.set(key, restored.searchParams.get(key));
           }
         }
       }
+      const loginTarget = adminLoginTarget(urlParams);
       if (urlParams.get('shop')) {
           currentShopId = urlParams.get('shop');
       }
@@ -724,10 +760,11 @@
             location.replace('shop-create.html?shop=' + encodeURIComponent(currentShopId));
             return;
           }
-          const profile = await liff.getProfile();
-          currentOpId = profile.userId; 
-          currentAdminName = profile.displayName;
-          await checkAdminAccess(currentOpId);
+          const accessError = await checkAdminAccess();
+          if (accessError === 'LINE_AUTH_INVALID') {
+            showAdminSignInError(loginTarget);
+            return;
+          }
           const requestedTab = new URLSearchParams(window.location.search).get('tab') || urlParams.get('tab');
           if (document.getElementById('adminTabs').style.display === 'flex' &&
               ['pending', 'tables'].includes(requestedTab)) {
@@ -750,12 +787,19 @@
                  history.replaceState(null, null, ' '); 
              }
           }
-        } else { liff.login({ redirectUri: window.location.href }); }
-      } catch (e) { alert("LIFF Error: " + e.message); }
+        } else {
+          if (liff.isInClient()) showAdminSignInError(loginTarget);
+          else liff.login({ redirectUri: loginTarget.href });
+          return;
+        }
+      } catch {
+        showAdminSignInError(loginTarget);
+        return;
+      }
       startAdminTimer();
     }
 
-    async function checkAdminAccess(uid) {
+    async function checkAdminAccess() {
       const shopPortalLink = document.getElementById('shopPortalLink');
       const saasAdminLink = document.getElementById('saasAdminLink');
       saasAdminLink.classList.add('hidden');
@@ -765,8 +809,10 @@
       try {
         const access = await _supabase.access();
         const user = access.staff;
-        if (!user || user.uid !== uid) throw new Error('LINE_AUTH_INVALID');
-        if (user) currentUserRole = user.role;
+        if (!user?.uid) throw new Error('LINE_AUTH_INVALID');
+        currentOpId = user.uid;
+        currentAdminName = user.display_name || user.member_id || 'พนักงานร้าน';
+        currentUserRole = user.role;
         
         if (!user || user.status !== 'Active' || !['Admin', 'Superadmin', 'Operator', 'Cashier'].includes(currentUserRole)) {
           document.getElementById('adminTabs').style.display = 'none';
@@ -837,7 +883,8 @@
         for (const id of ['adminContentView', 'tableContentView', 'reportContentView', 'pendingContentView']) document.getElementById(id).classList.add('hidden');
         document.getElementById('accessDeniedView').classList.remove('hidden');
         document.getElementById('opProfile').textContent = 'ยังไม่ผ่านการตรวจสิทธิ์ Admin';
-        showAdminApiError(error.message);
+        if (error.message !== 'LINE_AUTH_INVALID') showAdminApiError(error.message);
+        return error.message;
       }
     }
 
