@@ -254,7 +254,7 @@
             <span id="gapModalOdd" style="font-weight: bold; color: white;">฿0</span>
          </div>
          <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-            <span style="color: var(--yellow-main);">ขาดส่วนต่าง:</span>
+            <span style="color: var(--yellow-main);">ส่วนต่างที่ต้องรับจบ</span>
             <span id="gapModalMissing" style="font-weight: bold; color: var(--yellow-main); font-size: 1.1rem;">-</span>
          </div>
       </div>
@@ -262,7 +262,9 @@
       <div style="display: flex; flex-direction: column; gap: 10px;">
         <div id="coverageRecipients"></div>
         <p id="coverageMessage" role="status"></p>
-        <button id="btnRetryCoverage" class="btn btn-blue" type="button" hidden onclick="prepareCloseBetting()">ลองกันวงเงินอีกครั้ง</button>
+        <button id="btnOpenCoverageFunds" class="btn btn-outline" type="button" hidden onclick="openCoverage(coverageRoundId)">เปิดหน้าวงเงินและบันทึกเงินฝาก</button>
+        <button id="btnRetryCoverage" class="btn btn-blue" type="button" hidden onclick="prepareCloseBetting(coverageRoundId)">ลองกันวงเงินอีกครั้ง</button>
+        <button id="btnCoverageReady" class="btn btn-blue" type="button" hidden onclick="cancelGapDecision(); document.getElementById('txtShrimpWeight').focus()">ไปกรอกน้ำหนักกุ้ง</button>
         <button onclick="cancelGapDecision()" style="background: transparent; color: var(--text-muted); border: 1px solid var(--text-muted); padding: 10px; border-radius: 8px; font-family: 'Kanit'; cursor: pointer; margin-top: 5px;">
            กลับไปตรวจยอด
         </button>
@@ -1954,24 +1956,32 @@
     }
 
     // ฟังก์ชันนี้จะถูกเรียกเมื่อกด "ปิดรับแทง" หรือ "หมดเวลา"
-    async function prepareCloseBetting() {
+    async function prepareCloseBetting(roundId = '') {
       const btn = document.getElementById('btnCloseBetting');
       const retry = document.getElementById('btnRetryCoverage');
       if (btn.disabled) return;
       btn.disabled = retry.disabled = true;
       btn.textContent = 'กำลังปิดรับและกันวงเงิน…';
+      const onRetry = Boolean(roundId);
+      const viewRequest = coverageViewRequest;
+      if (onRetry) document.getElementById('coverageMessage').textContent = 'กำลังตรวจและกันวงเงินของรอบเดิม…';
       isRoundOpen = false;
       try {
-        const { data: rounds } = await _supabase.from('rounds').select('round_id,status')
-          .eq('shop_id', currentShopId).order('created_at', { ascending: false })
-          .order('round_id', { ascending: false }).limit(1);
-        const round = rounds?.[0];
-        if (!round || round.status === 'Ended') throw new Error('ROUND_NOT_CLOSED');
-        const result = await _supabase.closeRoundWithCoverage(round.round_id);
-        if (result.closed_now) void notifyRoundEvent(round.round_id, 'closed');
-        showCoverageResult(result);
+        if (!roundId) {
+          const { data: rounds } = await _supabase.from('rounds').select('round_id,status')
+            .eq('shop_id', currentShopId).order('created_at', { ascending: false })
+            .order('round_id', { ascending: false }).limit(1);
+          const round = rounds?.[0];
+          if (!round || round.status === 'Ended') throw new Error('ROUND_NOT_CLOSED');
+          roundId = round.round_id;
+        }
+        const result = await _supabase.closeRoundWithCoverage(roundId);
+        if (result.closed_now) void notifyRoundEvent(roundId, 'closed');
+        if (viewRequest === coverageViewRequest) showCoverageResult(roundId, result);
       } catch (error) {
-        alert(coverageErrors[error.message] || 'ปิดรับหรือกันวงเงินไม่สำเร็จ กรุณาตรวจสถานะแล้วลองอีกครั้ง');
+        const message = coverageErrors[error.message] || 'ปิดรับหรือกันวงเงินไม่สำเร็จ กรุณาตรวจสถานะแล้วลองอีกครั้ง';
+        if (!onRetry) alert(message);
+        else if (viewRequest === coverageViewRequest) document.getElementById('coverageMessage').textContent = message;
       } finally {
         btn.disabled = retry.disabled = false;
         btn.innerHTML = '<i class="fa-solid fa-pause"></i> 2. ปิดรับแทง';
@@ -1983,16 +1993,21 @@
       COVERAGE_GAP_MISMATCH: 'ยอดรอบเปลี่ยน กรุณากดปิดรับแทงอีกครั้งเพื่อกันวงเงินตามยอดล่าสุด',
       BACKER_BALANCE_INSUFFICIENT: 'วงเงินรับจบไม่พอ กรุณาเพิ่มวงเงินแล้วลองอีกครั้ง',
       COVERAGE_FUNDS_RESERVED: 'เงินส่วนนี้ถูกกันไว้สำหรับรอบที่ยังไม่ตัดผล',
-      COVERAGE_WALLET_TOO_LOW: 'ยอดกระเป๋าแบงเกอร์ไม่พอ กรุณาบันทึกเงินฝากก่อนเพิ่มวงเงิน',
+      COVERAGE_WALLET_TOO_LOW: 'ยอดกระเป๋าแบงเกอร์ไม่พอ ให้ใช้ช่องเงินฝากของทีมนี้ แล้วบันทึกวงเงินอีกครั้ง',
+      COVERAGE_UNAVAILABLE: 'ติดต่อระบบวงเงินไม่สำเร็จ กรุณาลองอีกครั้ง',
+      COVERAGE_MOVEMENT_BUSY: 'กำลังบันทึกเงินฝากหรือถอน กรุณารอสักครู่',
       COVERAGE_INVALID: 'กรุณาตรวจยอดวงเงินที่กรอก',
       ROUND_NOT_CLOSED: 'ไม่พบรอบที่ปิดรับได้ หรือรอบเริ่มตัดผลแล้ว',
       ROUND_MARGIN_INVALID: 'กรุณาตรวจอัตราค่าน้ำร้านก่อนตัดผล',
     };
 
     let coverageViewRequest = 0;
+    let coverageRoundId = '';
+    const canFundCoverage = () => ['Admin','Superadmin'].includes(currentUserRole);
 
-    function showCoverageResult({ coverage, shortfall }) {
+    function showCoverageResult(roundId, { coverage, shortfall }) {
       coverageViewRequest++;
+      coverageRoundId = roundId;
       const dialog = document.getElementById('gapResolutionModal');
       const content = document.getElementById('coverageRecipients');
       const message = document.getElementById('coverageMessage');
@@ -2002,33 +2017,40 @@
       document.getElementById('gapModalOdd').textContent = tableMoney(coverage.odd);
       document.getElementById('gapModalMissing').textContent = tableMoney(gap);
       content.replaceChildren();
-      for (const team of coverage.recipients.filter(item => Number(item.assigned) > 0)) {
+      const missing = Number(shortfall);
+      const recipients = missing > 0 ? coverage.recipients : coverage.recipients.filter(item => Number(item.assigned) > 0);
+      for (const team of recipients) {
         const row = document.createElement('p');
-        row.textContent = team.name + ' รับจบ ' + tableMoney(team.assigned);
+        row.textContent = team.name + (missing > 0 ? ' · พร้อมรับจบ ' + tableMoney(team.available)
+          : ' รับจบ ' + tableMoney(team.assigned));
         content.append(row);
       }
-      const missing = Number(shortfall);
       message.textContent = missing > 0
-        ? 'ปิดรับแล้ว · วงเงินขาด ' + tableMoney(missing) + ' กรุณาเพิ่มวงเงินก่อนตัดผล'
+        ? 'ตรวจแล้ว · วงเงินขาด ' + tableMoney(missing)
+          + (canFundCoverage() ? ' ให้บันทึกวงเงินก่อนลองอีกครั้ง' : ' ให้เจ้าของร้านบันทึกวงเงินก่อนลองอีกครั้ง')
         : gap > 0 ? 'ปิดรับแล้ว · กันวงเงินรับจบเรียบร้อย' : 'ปิดรับแล้ว · ยอดคู่และคี่เท่ากัน';
+      document.getElementById('btnOpenCoverageFunds').hidden = missing === 0 || !canFundCoverage();
       document.getElementById('btnRetryCoverage').hidden = missing === 0;
+      document.getElementById('btnCoverageReady').hidden = missing > 0;
       dialog.classList.remove('hidden');
     }
 
-    async function openCoverage() {
+    async function openCoverage(roundId = '', notice = '', draft) {
       const request = ++coverageViewRequest;
+      coverageRoundId = roundId;
       const dialog = document.getElementById('gapResolutionModal');
       const content = document.getElementById('coverageRecipients');
       const message = document.getElementById('coverageMessage');
       document.getElementById('gapModalEven').closest('div').parentElement.hidden = true;
-      document.getElementById('btnRetryCoverage').hidden = true;
+      document.getElementById('btnOpenCoverageFunds').hidden = true;
+      document.getElementById('btnCoverageReady').hidden = true;
+      document.getElementById('btnRetryCoverage').hidden = !roundId;
       content.replaceChildren();
       message.textContent = 'กำลังโหลดวงเงิน…';
       dialog.classList.remove('hidden');
       try {
-        const { coverage } = await _supabase.readCoverage();
+        const { coverage } = await _supabase.readCoverage(roundId);
         if (request !== coverageViewRequest) return;
-        const canSetFunds = ['Admin','Superadmin'].includes(currentUserRole);
         for (const team of coverage.recipients) {
           const line = document.createElement('fieldset');
           const title = document.createElement('legend');
@@ -2038,7 +2060,7 @@
             + (team.wallet == null ? '' : ' · เงินในกระเป๋า ' + tableMoney(team.wallet))
             + ' · ผลรับจบสุทธิวันนี้ ' + tableMoney(team.pnl);
           line.append(title, info);
-          if (canSetFunds) {
+          if (canFundCoverage()) {
             const label = document.createElement('label');
             label.textContent = 'วงเงินรับจบวันนี้';
             const amount = document.createElement('input');
@@ -2047,7 +2069,7 @@
             amount.max = '999999999';
             amount.step = '0.01';
             amount.required = true;
-            amount.value = team.funded;
+            amount.value = draft?.recipient === team.recipient && draft.day === coverage.day ? draft.value : team.funded;
             amount.className = 'form-control';
             label.append(amount);
             const save = document.createElement('button');
@@ -2059,16 +2081,49 @@
               save.disabled = true;
               try {
                 await _supabase.setCoverageFund({ recipient: team.recipient, funded: Number(amount.value) });
-                if (request === coverageViewRequest) await openCoverage();
+                if (request === coverageViewRequest) await openCoverage(roundId,
+                  'บันทึกวงเงิน ' + team.name + ' แล้ว' + (roundId ? ' · กดลองกันวงเงินอีกครั้ง' : ''));
               } catch (error) {
                 if (request === coverageViewRequest) message.textContent = coverageErrors[error.message] || 'บันทึกวงเงินไม่สำเร็จ';
               } finally { save.disabled = false; }
             };
             line.append(label, save);
+            if (team.recipient) {
+              const depositLabel = document.createElement('label');
+              depositLabel.textContent = 'เงินฝากเข้ากระเป๋าแบงเกอร์ (บาท)';
+              const depositAmount = document.createElement('input');
+              depositAmount.type = 'number';
+              depositAmount.inputMode = 'decimal';
+              depositAmount.min = '100';
+              depositAmount.max = '999999999';
+              depositAmount.step = '0.01';
+              depositAmount.required = true;
+              depositAmount.className = 'form-control';
+              depositLabel.append(depositAmount);
+              const deposit = document.createElement('button');
+              deposit.type = 'button';
+              deposit.className = 'btn btn-green';
+              deposit.textContent = 'บันทึกเงินฝากแบงเกอร์';
+              deposit.onclick = async () => {
+                if (!depositAmount.reportValidity() || deposit.disabled) return;
+                const value = Number(depositAmount.value);
+                if (!confirm('ยืนยันบันทึกเงินฝาก ' + tableMoney(value) + ' ให้ ' + team.name + '?')) return;
+                deposit.disabled = save.disabled = true;
+                try {
+                  await moveBackerWallet(team.recipient, value, 'deposit');
+                  if (request === coverageViewRequest) await openCoverage(roundId,
+                    'บันทึกเงินฝาก ' + tableMoney(value) + ' ให้ ' + team.name + ' แล้ว · กดบันทึกวงเงินที่ต้องการ',
+                    { recipient: team.recipient, day: coverage.day, value: amount.value });
+                } catch (error) {
+                  if (request === coverageViewRequest) message.textContent = coverageErrors[error.message] || 'บันทึกเงินฝากไม่สำเร็จ';
+                } finally { deposit.disabled = save.disabled = false; }
+              };
+              line.append(depositLabel, deposit);
+            }
           }
           content.append(line);
         }
-        message.textContent = 'วันบัญชี ' + coverage.day;
+        message.textContent = 'วันบัญชี ' + coverage.day + (notice ? ' · ' + notice : '');
       } catch (error) {
         if (request === coverageViewRequest) message.textContent = coverageErrors[error.message] || 'โหลดวงเงินไม่สำเร็จ';
       }
@@ -2076,6 +2131,7 @@
 
     function cancelGapDecision() {
       coverageViewRequest++;
+      coverageRoundId = '';
       document.getElementById('gapResolutionModal').classList.add('hidden');
       void fetchAdminDashboard();
     }
@@ -2165,6 +2221,18 @@
     let backerMovementRetry = null;
     let backerMovementBusy = false;
 
+    async function moveBackerWallet(recipient, amount, kind) {
+      if (backerMovementBusy) throw new Error('COVERAGE_MOVEMENT_BUSY');
+      const details = { recipient, amount, kind };
+      const key = JSON.stringify([currentShopId, details]);
+      if (backerMovementRetry?.key !== key) backerMovementRetry = { key, id: crypto.randomUUID() };
+      backerMovementBusy = true;
+      try {
+        await _supabase.moveBackerFunds({ ...details, request_id: backerMovementRetry.id });
+        backerMovementRetry = null;
+      } finally { backerMovementBusy = false; }
+    }
+
     async function processCredit(type) {
       let tId = document.getElementById('txtTargetId').value.trim(); 
       let amountStr = document.getElementById('txtAmount').value;
@@ -2215,18 +2283,10 @@
           if(u.status !== 'Active') throw new Error(`ไม่สามารถทำรายการได้! บัญชีลูกค้ารหัส ${tId} ถูกระงับ`);
           
           if (u.role === 'Backer') {
-            if (backerMovementBusy) return;
-            const details = { recipient: u.uid, amount, kind: type };
-            const key = JSON.stringify([currentShopId, details]);
-            if (backerMovementRetry?.key !== key) backerMovementRetry = { key, id: crypto.randomUUID() };
-            backerMovementBusy = true;
-            try {
-              await _supabase.moveBackerFunds({ ...details, request_id: backerMovementRetry.id });
-              backerMovementRetry = null;
-              document.getElementById('txtTargetId').value = '';
-              document.getElementById('txtAmount').value = '';
-              alert('บันทึกเงินในกระเป๋าแบงเกอร์แล้ว ตรวจและปรับวงเงินที่เมนูวงเงินรับจบวันนี้');
-            } finally { backerMovementBusy = false; }
+            await moveBackerWallet(u.uid, amount, type);
+            document.getElementById('txtTargetId').value = '';
+            document.getElementById('txtAmount').value = '';
+            alert('บันทึกเงินในกระเป๋าแบงเกอร์แล้ว ตรวจและปรับวงเงินที่เมนูวงเงินรับจบวันนี้');
             return;
           } else {
               let newBal = type === 'deposit' ? u.credit_balance + amount : u.credit_balance - amount;
