@@ -198,7 +198,7 @@
       .table-cash-totals { grid-template-columns:repeat(3,minmax(0,1fr)); }
       .table-cash-totals > div:last-child { grid-column:auto; }
     }
-    #tableQueue button, .table-bill { margin-bottom:6px; width:100%; }
+    .table-bill { margin-bottom:6px; width:100%; }
     .table-bet-side { display:grid; grid-template-columns:1fr 1fr; gap:8px; border:0; padding:0; margin:0 0 8px; }
     .table-bet-side label { position:relative; cursor:pointer; }
     .table-bet-side input { position:absolute; opacity:0; }
@@ -222,12 +222,14 @@
     .table-bill-side-odd { background:#752d43; }
     .table-bill-amount { flex:1; font-weight:700; }
     .cashier-workspace #adminContentView > :not(#cardRoundControl) { display:none; }
-    #cashRoundDialog { background:var(--card-bg); color:var(--text-main); border:1px solid #465472;
-      border-radius:14px; width:min(540px,calc(100% - 32px)); max-width:none; max-height:85vh; box-sizing:border-box; }
-    #cashRoundDialog::backdrop { background:#080b13b3; }
-    #cashRoundDialog h2 { margin:0 0 12px; font-size:1.25rem; }
-    #cashRoundDialog .report-table { margin-bottom:14px; }
-    #cashRoundDialog .report-table td:first-child { overflow-wrap:anywhere; }
+    #cashierCashSummary { padding:12px; border:1px solid #465472; border-radius:12px; background:var(--bg-panel); }
+    #cashierCashSummary h2 { margin:0 0 10px; font-size:1.1rem; }
+    #cashierCashSummary .report-table { margin-bottom:12px; }
+    #cashierCashSummary .report-table td:first-child { overflow-wrap:anywhere; }
+    #cashierCashSummary .cashier-pending-totals { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    #cashierCashSummary .cashier-pending-totals > div { grid-column:auto; }
+    #cashRoundHistory summary { cursor:pointer; margin:0 0 8px; font-weight:600; }
+    #cashRoundMessage:empty { display:none; }
     @media (min-width:1000px) {
       .table-workspace .container { max-width:1420px; }
       .table-workspace #tableWorkspace { grid-template-columns:minmax(0, 2fr) minmax(300px, 1fr); }
@@ -497,19 +499,37 @@
           </select></label>
         </div>
         <p id="tableGridRound" aria-live="polite"></p>
-        <button id="openCashRoundSummary" class="btn btn-outline hidden" type="button" onclick="openCashRoundSummary()">สรุปเงินสดรายรอบ</button>
-        <dl id="tableCashTotals" class="table-cash-totals hidden">
-          <div class="cash-total-receive"><dt>รวมค้างเก็บ</dt><dd id="tableTotalReceive">฿0</dd></div>
-          <div class="cash-total-pay"><dt>รวมค้างจ่าย</dt><dd id="tableTotalPay">฿0</dd></div>
-          <div><dt>ส่วนต่างรอบนี้จากยอดบนโต๊ะ (ก่อนแบ่งรับจบ)</dt><dd id="tableRoundNet">—</dd></div>
-        </dl>
         <div id="tableWorkspace">
           <div id="tableListContainer"></div>
           <aside>
-            <div id="cashierQueue" class="hidden">
-              <h3>คิวรับ–จ่ายเงินสด</h3>
-              <div id="tableQueue"></div>
-            </div>
+            <section id="cashierCashSummary" class="hidden" aria-labelledby="cashRoundTitle">
+              <h2 id="cashRoundTitle" tabindex="-1">รับ–จ่ายเงินสด</h2>
+              <dl class="table-cash-totals cashier-pending-totals">
+                <div class="cash-total-pay"><dt>ยอดค้างจ่ายทุกโต๊ะ</dt><dd id="tableTotalPay">—</dd></div>
+                <div class="cash-total-receive"><dt>ยอดค้างเก็บทุกโต๊ะ</dt><dd id="tableTotalReceive">—</dd></div>
+              </dl>
+              <details id="cashRoundHistory" open>
+                <summary>สรุปเงินสดรายรอบ</summary>
+                <p id="cashRoundRecovery" hidden>บันทึกผลรอบที่ค้างแล้ว เครดิตของบิลเดิมจ่ายเพียงครั้งเดียว</p>
+                <label for="cashRoundSelect">รอบที่ตัดผลแล้ว</label>
+                <select id="cashRoundSelect" class="form-control"></select>
+                <p id="cashRoundMessage" role="status"></p>
+                <div id="cashRoundDetail" hidden>
+                  <dl class="table-cash-totals">
+                    <div class="cash-total-pay"><dt>ยอดต้องจ่ายของรอบ</dt><dd id="cashRoundPay"></dd></div>
+                    <div class="cash-total-receive"><dt>ยอดต้องเก็บของรอบ</dt><dd id="cashRoundReceive"></dd></div>
+                    <div><dt>ส่วนต่างเงินสดของรอบ</dt><dd id="cashRoundNet"></dd></div>
+                  </dl>
+                  <table class="report-table" style="width:100%">
+                    <thead><tr><th scope="col">โต๊ะ</th><th scope="col" class="text-right">จ่าย</th><th scope="col" class="text-right">เก็บ</th></tr></thead>
+                    <tbody id="cashRoundRows"></tbody>
+                  </table>
+                  <p id="cashRoundWallet"></p>
+                  <p style="color:var(--text-muted)">ยอดค้างเก็บและค้างจ่ายจะอัปเดตเมื่อบันทึกที่โต๊ะ</p>
+                </div>
+                <button id="retryCashRoundSummary" class="btn btn-outline" type="button" hidden>ลองโหลดยอดอีกครั้ง</button>
+              </details>
+            </section>
             <p id="selectedTableStatus"></p>
             <section id="selectedTableBillDetails" aria-labelledby="selectedTableBillTitle" hidden>
               <h3 id="selectedTableBillTitle" tabindex="-1"></h3>
@@ -709,30 +729,7 @@
     <div id="printQrExpires"></div>
   </div>
 
-  <dialog id="cashRoundDialog" class="no-print" aria-labelledby="cashRoundTitle">
-    <h2 id="cashRoundTitle">สรุปเงินสดรายรอบ</h2>
-    <p id="cashRoundRecovery" hidden>บันทึกผลรอบที่ค้างแล้ว เครดิตของบิลเดิมจ่ายเพียงครั้งเดียว</p>
-    <label for="cashRoundSelect">รอบที่ตัดผลแล้ว</label>
-    <select id="cashRoundSelect" class="form-control"></select>
-    <p id="cashRoundMessage" role="status"></p>
-    <div id="cashRoundDetail" hidden>
-      <dl class="table-cash-totals">
-        <div class="cash-total-pay"><dt>เงินสดที่ต้องเตรียมจ่าย</dt><dd id="cashRoundPay"></dd></div>
-        <div class="cash-total-receive"><dt>เงินสดที่ต้องเก็บ</dt><dd id="cashRoundReceive"></dd></div>
-        <div><dt>ส่วนต่างเงินสดของรอบ</dt><dd id="cashRoundNet"></dd></div>
-      </dl>
-      <table class="report-table" style="width:100%">
-        <thead><tr><th scope="col">โต๊ะ</th><th scope="col" class="text-right">จ่าย</th><th scope="col" class="text-right">เก็บ</th></tr></thead>
-        <tbody id="cashRoundRows"></tbody>
-      </table>
-      <p id="cashRoundWallet"></p>
-      <p style="color:var(--text-muted)">ยอดเฉพาะบิลของรอบนี้ ส่วนเงินสดที่ยังค้างรับ–จ่ายให้ดูในคิวของโต๊ะ</p>
-    </div>
-    <div class="btn-group">
-      <form method="dialog"><button class="btn btn-outline" type="submit">ปิด</button></form>
-      <button class="btn btn-blue" type="button" onclick="openCashierQueue()">เปิดคิวรับ–จ่ายเงินสด</button>
-    </div>
-  </dialog>
+
 
   <dialog id="boardPasswordDialog" aria-labelledby="boardPasswordTitle" style="background:#171925;color:white;border:1px solid #465472;border-radius:14px;max-width:min(400px,85vw)">
     <form id="boardPasswordForm">
@@ -1127,7 +1124,7 @@
         if (tab === 'tables' && !canOpenTableWorkspace()) tab = 'control';
         const showTables = tab === 'tables';
         document.body.classList.toggle('table-workspace', showTables);
-        document.getElementById('cashierQueue').classList.toggle('hidden', !showTables || !canCorrectCashBets());
+        document.getElementById('cashierCashSummary').classList.toggle('hidden', !showTables || !canCorrectCashBets());
         const tablesTab = document.getElementById('tabTables');
         tablesTab.classList.toggle('active', showTables);
         tablesTab.setAttribute('aria-pressed', String(showTables));
@@ -1143,6 +1140,7 @@
         if (showTables) {
             if (currentUserRole === 'Cashier') document.getElementById('adminContentView').classList.remove('hidden');
             renderTableGrid();
+            if (canCorrectCashBets() && !cashRoundListLoaded && !cashRoundListLoading) void openCashRoundSummary();
         } else if (tab === 'control') {
             document.getElementById('tabControl').classList.add('active');
             document.getElementById('adminContentView').classList.remove('hidden');
@@ -1867,8 +1865,9 @@
           tableRound = { id: r.round_id, status: r.status,
             locked: r.settlement_weight != null || (bets || []).some(b => ['Win','Lose'].includes(b.status)), bets: (bets || []).filter(b => b.play_mode === 'table') };
           renderTableGrid();
-          if (canCorrectCashBets() && r.status === 'Ended' && tableRoundTotals?.id !== r.round_id) {
-            void loadTableRoundTotals(r.round_id);
+          if (canCorrectCashBets() && r.status === 'Ended' && cashRoundNewestId !== r.round_id
+            && !cashRoundListLoading && document.body.classList.contains('table-workspace')) {
+            void openCashRoundSummary(r);
           }
           let ea=0, oa=0; let et=new Set(), ot=new Set(); let fl = document.getElementById('liveBetsFeedList'); fl.innerHTML = '';
           if(bets && bets.length > 0) {
@@ -2156,6 +2155,9 @@
         const finalized = await _supabase.finalizeRound(roundId, w);
         void notifyRoundEvent(roundId, 'result');
         void openCashRoundSummary({ round_id: roundId, weight: w, recovered: finalized.recovered });
+        switchAdminTab('tables');
+        document.getElementById('cashRoundHistory').open = true;
+        document.getElementById('cashRoundTitle').focus();
         document.getElementById('txtShrimpWeight').value = '';
         await loadTableList();
       } catch (e) {
@@ -2481,15 +2483,18 @@
 
     let tableDesks = [];
     let tableRound = null;
-    let tableRoundTotals = null;
-    let loadingRoundTotals = null;
     const tableMoney = amount => '฿' + Number(amount).toLocaleString('th-TH', { maximumFractionDigits:2 });
 
-    const cashRoundDialog = document.getElementById('cashRoundDialog');
     const cashRoundSelect = document.getElementById('cashRoundSelect');
     const cashRoundMessage = document.getElementById('cashRoundMessage');
     const cashRoundDetail = document.getElementById('cashRoundDetail');
+    const retryCashRoundSummary = document.getElementById('retryCashRoundSummary');
     let cashRoundSummaryRequest = 0;
+    let cashRoundListLoaded = false;
+    let cashRoundListLoading = false;
+    let cashRoundNewestId = '';
+    let cashRoundRetry = openCashRoundSummary;
+    retryCashRoundSummary.addEventListener('click', () => void cashRoundRetry());
 
     async function openCashRoundSummary(finalizedRound) {
       if (!canCorrectCashBets()) return;
@@ -2499,7 +2504,8 @@
       document.getElementById('cashRoundRecovery').hidden = !finalizedRound?.recovered;
       cashRoundDetail.hidden = true;
       cashRoundMessage.textContent = 'กำลังโหลดรอบที่ตัดผลแล้ว…';
-      if (!cashRoundDialog.open) cashRoundDialog.showModal();
+      cashRoundListLoading = true;
+      retryCashRoundSummary.hidden = true;
       let rounds;
       try {
         ({ data: rounds } = await _supabase.from('rounds').select('round_id,result,weight')
@@ -2507,15 +2513,21 @@
           .order('round_id', { ascending: false }).limit(50));
       } catch {
         rounds = [];
-        if (!finalizedRound && request === cashRoundSummaryRequest && cashRoundDialog.open) {
-          cashRoundMessage.textContent = 'โหลดรายการรอบไม่สำเร็จ กรุณาปิดแล้วเปิดสรุปอีกครั้ง';
+        if (!finalizedRound && request === cashRoundSummaryRequest) {
+          cashRoundMessage.textContent = 'โหลดรายการรอบไม่สำเร็จ';
+          cashRoundRetry = openCashRoundSummary;
+          retryCashRoundSummary.hidden = false;
           return;
         }
+      } finally {
+        if (request === cashRoundSummaryRequest) cashRoundListLoading = false;
       }
-      if (request !== cashRoundSummaryRequest || !cashRoundDialog.open) return;
+      if (request !== cashRoundSummaryRequest) return;
+      cashRoundListLoaded = true;
       if (finalizedRound && !rounds.some(round => round.round_id === finalizedRound.round_id)) {
         rounds.unshift(finalizedRound);
       }
+      cashRoundNewestId = rounds[0]?.round_id || '';
       if (!rounds.length) {
         cashRoundMessage.textContent = 'ยังไม่มีรอบที่ตัดผลแล้ว';
         return;
@@ -2532,11 +2544,12 @@
 
     async function showCashRoundSummary() {
       const request = ++cashRoundSummaryRequest;
+      retryCashRoundSummary.hidden = true;
       cashRoundMessage.textContent = 'กำลังโหลดยอดเงินสดของรอบ…';
       cashRoundDetail.hidden = true;
       try {
         const { totals } = await _supabase.tableRoundSummary(cashRoundSelect.value);
-        if (request !== cashRoundSummaryRequest || !cashRoundDialog.open) return;
+        if (request !== cashRoundSummaryRequest) return;
         if (!Array.isArray(totals?.tables)) throw new Error('ROUND_SUMMARY_UNAVAILABLE');
         document.getElementById('cashRoundPay').textContent = tableMoney(totals.cash_pay);
         document.getElementById('cashRoundReceive').textContent = tableMoney(totals.cash_receive);
@@ -2558,35 +2571,19 @@
         cashRoundMessage.textContent = totals.tables.length ? '' : 'รอบนี้ไม่มีบิลเงินสดบนโต๊ะ';
         cashRoundDetail.hidden = false;
       } catch {
-        if (request === cashRoundSummaryRequest && cashRoundDialog.open) {
-          cashRoundMessage.textContent = 'โหลดยอดรอบนี้ไม่สำเร็จ กรุณาเปิดสรุปอีกครั้ง';
+        if (request === cashRoundSummaryRequest) {
+          cashRoundMessage.textContent = 'โหลดยอดรอบนี้ไม่สำเร็จ';
+          cashRoundRetry = showCashRoundSummary;
+          retryCashRoundSummary.hidden = false;
         }
       }
     }
 
-    cashRoundSelect.addEventListener('change', showCashRoundSummary);
+    cashRoundSelect.addEventListener('change', () => {
+      document.getElementById('cashRoundRecovery').hidden = true;
+      void showCashRoundSummary();
+    });
 
-    function openCashierQueue() {
-      cashRoundDialog.close();
-      switchAdminTab('tables');
-      document.getElementById('cashierQueue').scrollIntoView({ block: 'nearest' });
-    }
-
-    async function loadTableRoundTotals(roundId) {
-      if (loadingRoundTotals === roundId) return;
-      loadingRoundTotals = roundId;
-      try {
-        const { totals } = await _supabase.tableRoundSummary(roundId);
-        if (tableRound?.id === roundId && totals) {
-          tableRoundTotals = { id:roundId, stake:Number(totals.stake), payout:Number(totals.payout) };
-          renderTableGrid();
-        }
-      } catch {
-        if (tableRound?.id === roundId) document.getElementById('tableRoundNet').textContent = 'โหลดส่วนต่างไม่สำเร็จ';
-      } finally {
-        if (loadingRoundTotals === roundId) loadingRoundTotals = null;
-      }
-    }
     let selectedTable = null;
     let tableRequest = 0;
     const deskName = desk => desk.table_name || 'โต๊ะ ' + desk.table_no;
@@ -2619,9 +2616,6 @@
         return balance < 0 ? 'receive' : 'pay';
       };
       const unsettled = tableDesks.filter(settlementState);
-      const totalsView = document.getElementById('tableCashTotals');
-      totalsView.classList.toggle('hidden', !canCorrectCashBets());
-      document.getElementById('openCashRoundSummary').classList.toggle('hidden', !canCorrectCashBets());
       if (canCorrectCashBets()) {
         let receive = 0;
         let pay = 0;
@@ -2632,16 +2626,6 @@
         }
         document.getElementById('tableTotalReceive').textContent = tableMoney(receive / 100);
         document.getElementById('tableTotalPay').textContent = tableMoney(pay / 100);
-        const net = document.getElementById('tableRoundNet');
-        const totals = tableRoundTotals?.id === tableRound?.id ? tableRoundTotals : null;
-        if (tableRound?.status !== 'Ended') net.textContent = tableRound ? 'รอตัดผล' : '—';
-        else if (!totals) net.textContent = 'กำลังโหลดยอดรอบนี้…';
-        else if (!totals.stake) net.textContent = 'ไม่มียอดเล่นบนโต๊ะ';
-        else {
-          const difference = Math.round((totals.stake - totals.payout) * 100) / 100;
-          const sign = difference < 0 ? '−' : difference > 0 ? '+' : '';
-          net.textContent = sign + tableMoney(Math.abs(difference));
-        }
       }
       document.getElementById('tableGridRound').textContent = tableRound ? 'รอบ ' + tableRound.id : 'ยังไม่มีรอบ';
       const shown = tableDesks.filter(desk => {
@@ -2696,19 +2680,6 @@
         if (focused === row.table_no) item.focus();
       }
       if (!shown.length) grid.textContent = 'ไม่มีโต๊ะในตัวกรองนี้';
-      if (!document.getElementById('cashierQueue').classList.contains('hidden')) {
-        const queue = document.getElementById('tableQueue');
-        queue.replaceChildren(...unsettled.map(row => {
-          const amount = Number(row.credit);
-          return button(deskName(row) + (amount < 0 ? ' · รับ ฿' : ' · จ่าย ฿') + Math.abs(amount).toLocaleString('th-TH'), () => {
-            document.getElementById('tableFilter').value = row.is_hidden ? 'hidden' : 'visible';
-            selectedTable = row.table_no;
-            renderTableGrid();
-            billTitle.focus();
-          }, 'table-status-' + settlementState(row));
-        }));
-        if (!unsettled.length) queue.textContent = 'ไม่มีโต๊ะรอรับหรือจ่ายเงิน';
-      }
       if (!desk) {
         status.textContent = '';
         actions.replaceChildren();
