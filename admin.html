@@ -2368,6 +2368,8 @@
         if (reason === null) return;
         details.reason = reason.trim();
         if (!details.reason || details.reason.length > 300) throw new Error('BET_REMOVE_REASON_REQUIRED');
+      } else {
+        details.reason = operation === 'add' ? 'เพิ่มยอดหลังปิดรับ' : 'แก้ยอดโต๊ะ';
       }
       const expected = bet ? {
         bet_id: bet.bet_id, expected_side: bet.bet_type, expected_amount: String(bet.amount),

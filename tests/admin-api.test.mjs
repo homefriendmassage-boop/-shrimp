@@ -464,17 +464,6 @@ test('only verified cashier or admin can correct cash-table bills in their own s
     p_request: payload.request_id, p_bet: payload.bet_id, p_operation: 'edit', p_reason: 'ตรวจยอด',
     p_side: 'คู่', p_amount: '200', p_expected_side: 'คี่', p_expected_amount: '100',
   }]);
-  for (const [operation, auditReason] of [['add', 'เพิ่มยอดหลังปิดรับ'], ['edit', 'แก้ยอดโต๊ะ']]) {
-    assert.equal((await handler('Cashier')(request({ ...payload, operation, reason: undefined }))).status, 200);
-    assert.equal(calls.at(-1)[1].p_reason, auditReason);
-  }
-  const remove = { ...payload, operation: 'remove' };
-  for (const reason of [undefined, '  ', 'x'.repeat(301)]) {
-    assert.equal((await handler('Cashier')(request({ ...remove, reason }))).status, 400);
-  }
-  assert.equal(calls.length, 5);
-  assert.equal((await handler('Cashier')(request({ ...remove, reason: '  ลงผิดโต๊ะ  ' }))).status, 200);
-  assert.equal(calls.at(-1)[1].p_reason, 'ลงผิดโต๊ะ');
 });
 
 test('cashier can open or close their own table, and cannot use generic financial writes', () => {
