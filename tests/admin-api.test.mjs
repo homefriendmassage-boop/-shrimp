@@ -339,6 +339,28 @@ test('only authorized shop staff can open or finalize a round through the round 
   ]);
 });
 
+test('automatic coverage uses the verified shop and exposes shortfall to the cashier', async () => {
+  const close = { action:'round_close_with_coverage', round_id:'R-1', allocations:{ forged:'999' } };
+  for (const role of ['Operator', 'Customer', 'Backer']) {
+    const {handler} = setup({ role, rpc: () => assert.fail('must not reach RPC') });
+    assert.equal((await handler(request(close))).status,403);
+  }
+  const outcome = { code:'BACKER_BALANCE_INSUFFICIENT', closed_now:true, shortfall:200 };
+  const {handler} = setup({ role:'Cashier', rpc:async (name, args) => {
+    assert.equal(name,'close_round_with_coverage');
+    assert.deepEqual(args,{p_shop:'SHOP_001',p_round:'R-1'});
+    return {data:outcome};
+  } });
+  assert.deepEqual(await (await handler(request(close))).json(),{ok:true,...outcome});
+  const admin = setup({ role:'Admin', rpc:async (name, args) => {
+    assert.equal(name,'set_coverage_fund');
+    assert.equal(args.p_rate,null);
+    assert.equal(args.p_funded,300);
+    return {data:'SAVED'};
+  } });
+  assert.equal((await admin.handler(request({action:'coverage_fund',recipient:'team',funded:300}))).status,200);
+});
+
 test('daily report labels cash movements separately from wallet credit and performance', () => {
   return import('data:text/javascript;base64,' + Buffer.from(source).toString('base64')).then(({ dailyFinanceFlex }) => {
     const message = dailyFinanceFlex('2026-11-13', 'บ่อทดสอบ', {
