@@ -45,15 +45,15 @@
         <div id="promoterWallet" style="font-size: 2.5rem; font-weight: bold; color: #10b981; margin-top: 5px;">฿0.00</div>
         <div style="font-size: 0.8rem; color: #ec4899; margin-top: 8px;">ผู้แนะนำ: <span id="promoterName">กำลังโหลด...</span></div>
       </div>
-      <p>ค่าแนะนำเข้ากระเป๋าโบนัสเมื่อตัดผล ถอนขั้นต่ำ 100 บาท ค่าบริการ 10%</p>
+      <p>ค่าแนะนำเข้ากระเป๋าโบนัสเมื่อตัดผล ถอนเป็นจำนวนเต็มร้อยบาท วันบัญชีละ 1 ครั้ง (เริ่ม 06:00 น.) ค่าบริการ 10%</p>
       <button id="withdrawBonusOpen" class="btn bg-pink" type="button" aria-expanded="false" aria-controls="withdrawBonusForm" disabled>ถอนเงิน</button>
       <form id="withdrawBonusForm" class="withdraw-form" hidden>
-        <label>ยอดเงินที่ต้องการรับ (บาท)<input name="amount" type="number" min="100" step="0.01" inputmode="decimal" required></label>
+        <label>ยอดเงินที่ต้องการรับ (บาท)<input name="amount" type="number" min="100" step="100" inputmode="numeric" required></label>
         <label>ชื่อผู้รับเงิน<input name="recipient_name" maxlength="120" autocomplete="off" required></label>
         <label>ช่องทางรับเงิน<select name="destination_kind"><option value="bank">บัญชีธนาคาร</option><option value="promptpay">พร้อมเพย์</option></select></label>
         <label id="withdrawBonusBankField">ธนาคาร<select name="bank_code" required><option value="">เลือกธนาคาร</option></select></label>
         <label><span id="withdrawBonusNumberLabel">เลขบัญชีธนาคาร</span><input name="bank_number" inputmode="numeric" maxlength="24" autocomplete="off" required></label>
-        <output id="withdrawBonusTotal" aria-live="polite">ถอนขั้นต่ำ ฿100 · ค่าบริการ 10%</output>
+        <output id="withdrawBonusTotal" aria-live="polite">ถอนเป็นจำนวนเต็มร้อยบาท · ค่าบริการ 10%</output>
         <button class="btn bg-pink" type="submit">ส่ง Flex เพื่อยืนยันถอนเงิน</button>
         <p id="withdrawBonusStatus" class="feedback" role="status"></p>
       </form>
@@ -102,9 +102,9 @@
       byId('withdrawBonusNumberLabel').textContent = promptpay ? 'เลขพร้อมเพย์' : 'เลขบัญชีธนาคาร';
       const cents = Math.round(Number(form.elements.amount.value) * 100);
       const fee = Math.round(cents / 10);
-      byId('withdrawBonusTotal').textContent = cents >= 10000
+      byId('withdrawBonusTotal').textContent = cents >= 10000 && cents % 10000 === 0
         ? 'รับ ' + money(cents / 100) + ' · ค่าบริการ ' + money(fee / 100) + ' · หักรวม ' + money((cents + fee) / 100)
-        : 'ถอนขั้นต่ำ ฿100 · ค่าบริการ 10%';
+        : 'ถอนเป็นจำนวนเต็มร้อยบาท · ค่าบริการ 10%';
     }
 
     openWithdraw.onclick = () => {
@@ -136,6 +136,8 @@
         if (error.message === 'WITHDRAWAL_INVALID') withdrawal = undefined;
         status.textContent = ({
           WALLET_MINIMUM: 'ถอนขั้นต่ำ 100 บาท',
+          WITHDRAWAL_WHOLE_HUNDREDS: 'ถอนเป็นจำนวนเต็มร้อยบาท เช่น 100, 200 หรือ 300 บาท',
+          WITHDRAWAL_DAILY_LIMIT: 'ใช้สิทธิ์ถอนโบนัสของวันบัญชีนี้แล้ว วันบัญชีใหม่เริ่ม 06:00 น.',
           WALLET_INSUFFICIENT_BALANCE: 'โบนัสคงเหลือไม่พอรวมค่าบริการ',
           WITHDRAWAL_INVALID: 'กรุณาตรวจชื่อผู้รับและเลขบัญชีหรือเลขพร้อมเพย์',
           LINE_OA_LINK_REQUIRED: 'กรุณาผูกบัญชีกับ LINE OA ของร้านเพื่อรับ Flex',

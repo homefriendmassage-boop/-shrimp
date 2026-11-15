@@ -193,6 +193,7 @@
       </div>
 
       <p id="withdrawalSummary" hidden role="status"></p>
+      <p id="withdrawalRules" hidden></p>
       <div id="withdrawOptionsSection" style="display:none;color:var(--text-muted);margin-bottom:16px;">
         <label for="withdrawBank">ธนาคารรับเงิน</label>
         <select id="withdrawBank" style="display:block;width:100%;padding:10px;margin:4px 0 10px;font:inherit"><option value="">เลือกธนาคาร</option></select>
@@ -1158,15 +1159,15 @@
       summary.hidden = type === 'ฝากเงิน';
       if (summary.hidden) return;
       const cents = Math.round(Number(document.getElementById('txtTopupAmount').value) * 100);
-      const valid = Number.isFinite(cents) && cents >= 10000;
+      const valid = cents >= 10000 && cents % 10000 === 0;
       if (type === 'ถอนเงิน') {
         summary.textContent = valid
           ? 'รับ ' + moneyTHB(cents / 100) + ' · ค่าธรรมเนียม ฿0 · หัก Wallet ' + moneyTHB(cents / 100)
-          : 'ถอนขั้นต่ำ ฿100 · ค่าธรรมเนียม ฿0';
+          : 'ถอนเป็นจำนวนเต็มร้อยบาท · ค่าธรรมเนียม ฿0';
         return;
       }
       if (!valid) {
-        summary.textContent = 'ถอนขั้นต่ำ ฿100 · ค่าบริการ 10% · โบนัสคงเหลือ ' + moneyTHB(bonusBalance);
+        summary.textContent = 'ถอนเป็นจำนวนเต็มร้อยบาท · ค่าบริการ 10% · โบนัสคงเหลือ ' + moneyTHB(bonusBalance);
         return;
       }
       const fee = Math.round(cents / 10);
@@ -1252,6 +1253,9 @@
         LINE_CONFIRM_UNAVAILABLE: 'ส่งข้อความยืนยันไม่สำเร็จ กรุณาลองใหม่',
         WALLET_MINIMUM: 'ฝากหรือถอนขั้นต่ำ 100 บาทต่อรายการ',
         WITHDRAWAL_EXPIRED: 'ลิงก์ยืนยันหมดอายุ กรุณาส่งคำขอถอนใหม่',
+        WITHDRAWAL_WHOLE_HUNDREDS: 'ถอนเป็นจำนวนเต็มร้อยบาท เช่น 100, 200 หรือ 300 บาท',
+        WITHDRAWAL_DAILY_LIMIT: 'กระเป๋านี้ใช้สิทธิ์ถอนของวันบัญชีนี้แล้ว วันบัญชีใหม่เริ่ม 06:00 น.',
+        WITHDRAWAL_PLAY_REQUIRED: 'หลังเติม Wallet ครั้งล่าสุด ต้องเล่นด้วย Wallet และรอตัดผลอย่างน้อย 1 รอบก่อนถอน',
         WITHDRAWAL_INVALID: 'ข้อมูลบัญชีรับเงินหรือลิงก์ยืนยันไม่ถูกต้อง',
         WALLET_INSUFFICIENT_BALANCE: 'ยอดเงินในกระเป๋าที่เลือกไม่พอรวมค่าบริการ',
       })[error.message] || error.message;
@@ -1340,6 +1344,13 @@
     function toggleOptions() {
       const type = document.getElementById('selTransactionType').value; const method = document.getElementById('selTopupMethod').value;
       const withdrawal = type !== 'ฝากเงิน';
+      const amountInput = document.getElementById('txtTopupAmount');
+      amountInput.step = withdrawal ? '100' : '0.01';
+      amountInput.inputMode = withdrawal ? 'numeric' : 'decimal';
+      const rules = document.getElementById('withdrawalRules');
+      rules.hidden = !withdrawal;
+      rules.textContent = 'ถอนได้กระเป๋าละ 1 ครั้งต่อวันบัญชี เริ่มวันใหม่ 06:00 น.'
+        + (type === 'ถอนเงิน' ? ' หลังเติม Wallet ต้องเล่นด้วย Wallet และรอตัดผลอย่างน้อย 1 รอบก่อนถอน' : '');
       if (withdrawal) { document.getElementById('withdrawOptionsSection').style.display = 'block'; document.getElementById('paymentMethodSection').style.display = 'none'; }
       else { document.getElementById('withdrawOptionsSection').style.display = 'none'; document.getElementById('paymentMethodSection').style.display = 'block'; }
       if (type === 'ฝากเงิน' && method === 'โอนเงิน') document.getElementById('slipUploadSection').style.display = 'block';
@@ -1423,6 +1434,11 @@
       const amountValue = Number(amount);
       if (!/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || amountValue < 100) {
         alert('ฝากหรือถอนขั้นต่ำ 100 บาทต่อรายการ');
+        return;
+      }
+
+      if (type !== 'ฝากเงิน' && amountValue % 100 !== 0) {
+        alert(walletPaymentError(new Error('WITHDRAWAL_WHOLE_HUNDREDS')));
         return;
       }
 

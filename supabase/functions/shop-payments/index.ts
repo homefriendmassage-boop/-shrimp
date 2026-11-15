@@ -240,11 +240,17 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
           (name !== null && (!name || name.length > 120 || /[\r\n]/.test(name))) ||
           (input.destination_kind != null && !name)) return fail('WITHDRAWAL_INVALID');
       if (Number(amount) < 100) return fail('WALLET_MINIMUM');
+      if (Number(amount) % 100 !== 0) return fail('WITHDRAWAL_WHOLE_HUNDREDS');
       const amountCents = Math.round(Number(amount) * 100);
       const feeCents = bonus ? Math.round(amountCents / 10) : 0;
       const balance = bonus ? member.data.commission_balance
         : member.data.role === 'Backer' ? member.data.backer_wallet : member.data.credit_balance;
       if (amountCents + feeCents > Math.round(Number(balance || 0) * 100)) return fail('WALLET_INSUFFICIENT_BALANCE', 409);
+      const eligibility = await db.rpc('wallet_withdrawal_eligibility', {
+        p_shop: shop, p_uid: uid, p_kind: walletKind, p_amount: amount,
+      });
+      if (eligibility.error) return fail('PAYMENTS_UNAVAILABLE', 503);
+      if (eligibility.data !== 'ELIGIBLE') return fail(eligibility.data || 'PAYMENTS_UNAVAILABLE', 409);
       const [target, oa] = await Promise.all([
         db.rpc('resolve_shop_oa_recipient', { p_shop: shop, p_member: uid }),
         db.from('shop_oa_runtime').select('line_oa_token').eq('shop_id', shop).maybeSingle(),

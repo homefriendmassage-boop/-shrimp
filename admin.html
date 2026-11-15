@@ -86,14 +86,14 @@
     @media print {
         body { background: white !important; color: black !important; padding: 0 !important; margin: 0 !important; }
         .no-print { display: none !important; }
-        .print-only { display: block !important; }
+        .print-only:not(.print-active) { display: none !important; }
         .card, .container { box-shadow: none !important; border: none !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; }
         .layout-a4 { font-family: 'Sarabun', 'Kanit', sans-serif; }
         .layout-a4 .report-header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
         .layout-a4 .report-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 14px; }
         .layout-a4 .report-table th, .layout-a4 .report-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         .layout-a4 .report-table th { background-color: #f2f2f2 !important; color: black !important; font-weight: bold; }
-        .layout-slip { width: 72mm; margin: 0 auto; font-family: 'Courier New', Courier, monospace; font-size: 12px; color: black; }
+        .layout-slip { width: 70mm; max-width: 100%; margin: 0 auto; font-family: 'Courier New', Courier, monospace; font-size: 12px; color: black; }
         .layout-slip .report-header { text-align: center; margin-bottom: 10px; border-bottom: 1px dashed #000; padding-bottom: 5px; }
         .layout-slip .slip-section { margin-bottom: 10px; border-bottom: 1px dashed #000; padding-bottom: 10px; }
         .layout-slip .slip-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
@@ -600,6 +600,7 @@
           <tr><td>ยอดคืนบิลยกเลิก (Cancelled)</td><td class="text-right" id="p_cancelledA4">0</td></tr>
           <tr><td>หักค่าคอมมิชชั่นผู้แนะนำ (Commission)</td><td class="text-right" style="color: red;" id="p_commA4">0</td></tr>
           <tr class="grand-total"><td>รายได้ค่าน้ำสุทธิเข้าร้าน (Shop Net Profit)</td><td class="text-right" id="p_netProfitA4">0</td></tr>
+          <tr><td>ค่าบริการถอนโบนัส (รายได้ร้าน)</td><td class="text-right" id="p_bonusFeeA4">0</td></tr>
       </table>
       <h3>2. สรุปรายการฝาก-ถอนเครดิต</h3>
       <table class="report-table">
@@ -634,6 +635,7 @@
           <div class="slip-row slip-bold" style="margin-top: 5px; font-size: 14px;">
               <span>ค่าน้ำสุทธิ(Net):</span> <span id="p_netProfitSlip">0</span>
           </div>
+          <div class="slip-row"><span>ค่าบริการถอนโบนัส (รายได้ร้าน)</span> <span id="p_bonusFeeSlip">0</span></div>
       </div>
       <div class="slip-section">
           <div class="slip-bold" style="margin-bottom: 5px;">-- รายการฝาก/ถอน --</div>
@@ -1627,7 +1629,8 @@
         const money = value => value.toLocaleString('th-TH', { maximumFractionDigits: 2 });
         document.getElementById('repReferralCommission').textContent = '฿' + money(commission)
           + ' · ' + referral.referral_recipients + ' ผู้แนะนำ';
-        document.getElementById('repBonusFee').textContent = '฿' + money(Number(referral.bonus_fee_revenue ?? 0));
+        const bonusFee = Number(referral.bonus_fee_revenue ?? 0);
+        document.getElementById('repBonusFee').textContent = '฿' + money(bonusFee);
         document.getElementById('repBonusWithdrawn').textContent = '฿' + money(Number(referral.bonus_withdrawn ?? 0));
         document.getElementById('repBonusLiability').textContent = '฿' + money(Number(referral.bonus_wallet_liability ?? 0));
         gNet -= commission;
@@ -1636,7 +1639,7 @@
         document.getElementById('repCancelled').innerText = `฿${gCancel.toLocaleString()}`; document.getElementById('repNetProfit').innerText = `฿${gNet.toLocaleString()}`;
         document.getElementById('repNetProfit').style.color = gNet >= 0 ? 'var(--green-main)' : 'var(--red-main)';
         
-        cachedReportData = { dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, adminName: currentAdminName, backerSummaries: backerSummaries };
+        cachedReportData = { dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, bonusFee, adminName: currentAdminName, backerSummaries: backerSummaries };
       } catch (e) { listDiv.innerHTML = '<div style="text-align:center; color:red; padding: 15px;">การดึงรายงานขัดข้อง: ' + e.message + '</div>'; }
     }
 
@@ -1647,14 +1650,14 @@
         let styleSheet = document.getElementById('printPageStyle');
         if(!styleSheet) { styleSheet = document.createElement('style'); styleSheet.id = 'printPageStyle'; document.head.appendChild(styleSheet); }
         if (paperType === 'A4') { styleSheet.innerHTML = "@media print { @page { size: A4; margin: 1cm; } }"; } 
-        else { styleSheet.innerHTML = "@media print { @page { size: 80mm auto; margin: 2mm 5mm; } }"; }
+        else { styleSheet.innerHTML = "@media print { @page { size: auto; margin: 2mm 5mm; } }"; }
         
         document.getElementById(`printDate${paperType}`).innerText = rd.dateStr; document.getElementById(`printAdminName${paperType}`).innerText = currentAdminName;
-        if(paperType === 'A4') document.getElementById('signAdminNameA4').innerText = currentAdminName;
         
         document.getElementById(`p_grossBet${paperType}`).innerText = rd.grossBet.toLocaleString(); document.getElementById(`p_payout${paperType}`).innerText = rd.payout.toLocaleString();
         document.getElementById(`p_cancelled${paperType}`).innerText = rd.cancelled.toLocaleString(); document.getElementById(`p_comm${paperType}`).innerText = rd.comm.toLocaleString('th-TH', { maximumFractionDigits: 2 });
         document.getElementById(`p_netProfit${paperType}`).innerText = rd.netProfit.toLocaleString();
+        document.getElementById(`p_bonusFee${paperType}`).innerText = rd.bonusFee.toLocaleString('th-TH', { maximumFractionDigits: 2 });
         document.getElementById(`p_depCount${paperType}`).innerText = rd.countDep + (paperType === 'A4' ? " รายการ" : ""); document.getElementById(`p_totalDep${paperType}`).innerText = rd.totalDep.toLocaleString();
         document.getElementById(`p_wdCount${paperType}`).innerText = rd.countWd + (paperType === 'A4' ? " รายการ" : ""); document.getElementById(`p_totalWd${paperType}`).innerText = rd.totalWd.toLocaleString();
         document.getElementById(`p_drawerNet${paperType}`).innerText = rd.drawerNet.toLocaleString();
@@ -1668,11 +1671,21 @@
           cash.prepend(title);
         }
 
-        document.getElementById('mainAppContainer').style.display = 'none'; document.getElementById('printAreaA4').classList.remove('layout-a4'); document.getElementById('printAreaA4').style.display = 'none'; document.getElementById('printAreaSlip').classList.remove('layout-slip'); document.getElementById('printAreaSlip').style.display = 'none';
-        document.getElementById(targetDivId).style.display = 'block';
-        if(paperType === 'A4') document.getElementById(targetDivId).classList.add('layout-a4'); else document.getElementById(targetDivId).classList.add('layout-slip');
-        
-        setTimeout(() => { window.print(); document.getElementById('mainAppContainer').style.display = 'block'; document.getElementById(targetDivId).style.display = 'none'; }, 500);
+        const report = document.getElementById(targetDivId);
+        const app = document.getElementById('mainAppContainer');
+        const appDisplay = app.style.display;
+        app.style.display = 'none';
+        report.classList.add('print-active');
+        report.style.display = 'block';
+
+        setTimeout(() => {
+          try { window.print(); }
+          finally {
+            app.style.display = appDisplay;
+            report.classList.remove('print-active');
+            report.style.display = 'none';
+          }
+        }, 500);
     }
 
     let cashReportDelivery = null;
