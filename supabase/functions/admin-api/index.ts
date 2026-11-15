@@ -889,13 +889,15 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (!['add','edit','remove'].includes(operation) || !shopInviteIdPattern.test(request_id) ||
             !shopInviteIdPattern.test(bet_id) || typeof table_no !== 'string' || !/^\d{1,8}$/.test(table_no) ||
             typeof round_id !== 'string' || !round_id || round_id.length > 100 ||
-            typeof reason !== 'string' || !reason.trim() || reason.trim().length > 300 ||
+            ((operation === 'remove' || reason !== undefined) &&
+              (typeof reason !== 'string' || !reason.trim() || reason.trim().length > 300)) ||
             (operation !== 'remove' && (!validSide(side) || !validAmount(amount))) ||
             (operation !== 'add' && (!validSide(expected_side) || !validAmount(expected_amount)))) fail('BET_INVALID');
         if (operation !== 'remove' && !wholeHundredBet(amount)) fail('BET_WHOLE_HUNDREDS');
+        const auditReason = reason?.trim() ?? (operation === 'add' ? 'เพิ่มยอดหลังปิดรับ' : 'แก้ยอดโต๊ะ');
         const result = await db.rpc('correct_cash_table_bet', {
           p_shop: shopId, p_actor: claims.sub, p_round: round_id, p_table: table_no, p_request: request_id,
-          p_bet: bet_id, p_operation: operation, p_reason: reason.trim(),
+          p_bet: bet_id, p_operation: operation, p_reason: auditReason,
           p_side: operation === 'remove' ? null : side, p_amount: operation === 'remove' ? null : amount,
           p_expected_side: operation === 'add' ? null : expected_side,
           p_expected_amount: operation === 'add' ? null : expected_amount,
