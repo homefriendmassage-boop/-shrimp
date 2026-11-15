@@ -86,14 +86,14 @@
     @media print {
         body { background: white !important; color: black !important; padding: 0 !important; margin: 0 !important; }
         .no-print { display: none !important; }
-        .print-only { display: block !important; }
+        .print-only:not(.print-active) { display: none !important; }
         .card, .container { box-shadow: none !important; border: none !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; }
         .layout-a4 { font-family: 'Sarabun', 'Kanit', sans-serif; }
         .layout-a4 .report-header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
         .layout-a4 .report-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 14px; }
         .layout-a4 .report-table th, .layout-a4 .report-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         .layout-a4 .report-table th { background-color: #f2f2f2 !important; color: black !important; font-weight: bold; }
-        .layout-slip { width: 72mm; margin: 0 auto; font-family: 'Courier New', Courier, monospace; font-size: 12px; color: black; }
+        .layout-slip { width: 70mm; max-width: 100%; margin: 0 auto; font-family: 'Courier New', Courier, monospace; font-size: 12px; color: black; }
         .layout-slip .report-header { text-align: center; margin-bottom: 10px; border-bottom: 1px dashed #000; padding-bottom: 5px; }
         .layout-slip .slip-section { margin-bottom: 10px; border-bottom: 1px dashed #000; padding-bottom: 10px; }
         .layout-slip .slip-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
@@ -1650,7 +1650,7 @@
         let styleSheet = document.getElementById('printPageStyle');
         if(!styleSheet) { styleSheet = document.createElement('style'); styleSheet.id = 'printPageStyle'; document.head.appendChild(styleSheet); }
         if (paperType === 'A4') { styleSheet.innerHTML = "@media print { @page { size: A4; margin: 1cm; } }"; } 
-        else { styleSheet.innerHTML = "@media print { @page { size: 80mm auto; margin: 2mm 5mm; } }"; }
+        else { styleSheet.innerHTML = "@media print { @page { size: auto; margin: 2mm 5mm; } }"; }
         
         document.getElementById(`printDate${paperType}`).innerText = rd.dateStr; document.getElementById(`printAdminName${paperType}`).innerText = currentAdminName;
         
@@ -1672,11 +1672,21 @@
           cash.prepend(title);
         }
 
-        document.getElementById('mainAppContainer').style.display = 'none'; document.getElementById('printAreaA4').classList.remove('layout-a4'); document.getElementById('printAreaA4').style.display = 'none'; document.getElementById('printAreaSlip').classList.remove('layout-slip'); document.getElementById('printAreaSlip').style.display = 'none';
-        document.getElementById(targetDivId).style.display = 'block';
-        if(paperType === 'A4') document.getElementById(targetDivId).classList.add('layout-a4'); else document.getElementById(targetDivId).classList.add('layout-slip');
-        
-        setTimeout(() => { window.print(); document.getElementById('mainAppContainer').style.display = 'block'; document.getElementById(targetDivId).style.display = 'none'; }, 500);
+        const report = document.getElementById(targetDivId);
+        const app = document.getElementById('mainAppContainer');
+        const appDisplay = app.style.display;
+        app.style.display = 'none';
+        report.classList.add('print-active');
+        report.style.display = 'block';
+
+        setTimeout(() => {
+          try { window.print(); }
+          finally {
+            app.style.display = appDisplay;
+            report.classList.remove('print-active');
+            report.style.display = 'none';
+          }
+        }, 500);
     }
 
     let cashReportDelivery = null;
