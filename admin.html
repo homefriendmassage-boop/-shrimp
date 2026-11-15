@@ -351,15 +351,16 @@
 
         <div class="form-group">
           <label id="targetLabel">รหัสสมาชิก</label>
-          <input type="text" id="txtTargetId" class="form-control" placeholder="ระบุเบอร์โต๊ะหรือรหัสสมาชิก">
+          <input type="text" id="txtTargetId" class="form-control" placeholder="ระบุรหัสสมาชิก" oninput="renderCreditActions()">
         </div>
         <div class="form-group">
           <label>จำนวนเงิน (บาท)</label>
           <input type="number" id="txtAmount" class="form-control" placeholder="0">
         </div>
+        <p id="creditTableStatus" role="status" hidden></p>
         <div class="btn-group">
-          <button class="btn btn-green" onclick="processCredit('deposit')"><i class="fa-solid fa-arrow-up"></i> เติมเงิน (ฝาก)</button>
-          <button class="btn btn-red" onclick="processCredit('withdraw')"><i class="fa-solid fa-arrow-down"></i> ถอนเงิน (คืน)</button>
+          <button class="btn btn-green" id="creditDepositButton" onclick="processCredit('deposit')">เติมเงิน (ฝาก)</button>
+          <button class="btn btn-red" id="creditWithdrawButton" onclick="processCredit('withdraw')">ถอนเงิน (คืน)</button>
         </div>
       </div>
       
@@ -416,7 +417,7 @@
         <div id="settingsContent" class="settings-content">
           <div class="form-group"><label>เวลาจับเวลาต่อรอบ (นาที)</label><input type="number" id="settingRoundDuration" class="form-control"></div>
           <div class="form-group"><label>อัตราค่าน้ำทั่วไป (เช่น 0.05 คือ 5%)</label><input type="number" step="0.01" id="settingWaterMargin" class="form-control"></div>
-          <div class="form-group"><label>เงื่อนไขค่าน้ำตอนถอน</label><select id="settingWithdrawalFee" class="form-control"><option value="deduct">หักค่าน้ำ</option><option value="none">ไม่หักค่าน้ำ</option></select></div>
+          <div class="form-group" id="settingWithdrawalFee">ค่าธรรมเนียมถอน Wallet เงินสด ฿0 · ค่าบริการถอนโบนัส 10%</div>
           <div class="form-group"><label>เปอร์เซ็นต์ค่าคอมมิชชั่น</label><input type="number" step="0.001" id="settingCommRate" class="form-control"></div>
           <div class="form-group"><label>ยอดแทงขั้นต่ำ (บาท)</label><input type="number" id="settingMinBet" min="100" class="form-control"></div>
           <div class="form-group"><label>ยอดแทงสูงสุด (บาท)</label><input type="number" id="settingMaxBet" class="form-control"></div>
@@ -1356,7 +1357,7 @@
              
              card.innerHTML = `
                 <div style="display: flex; justify-content: space-between;"><div style="color: white; font-weight: bold;">${r.display_name} <span style="color: var(--text-muted); font-size: 0.8rem;">(${formatMemberCode(currentShopId, r.member_id)})</span></div><div style="color: ${typeColor}; font-weight: bold; font-size: 1.1rem;">${r.type} ฿${r.amount}</div></div>
-                <div style="font-size: 0.85rem; color: var(--text-muted);"><div>ช่องทาง: ${r.method}</div>${r.type === 'ถอนเงิน' ? '<div>เงื่อนไข: ' + (r.fee_option === 'ไม่หักค่าน้ำ' ? 'ไม่หักค่าน้ำ' : 'หักค่าน้ำ') + '</div>' : ''}<div>เวลา: ${new Date(r.created_at).toLocaleTimeString('th-TH')}</div></div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);"><div>ช่องทาง: ${r.method}</div>${r.type === 'ถอนเงิน' ? '<div>ค่าธรรมเนียม ฿0</div>' : ''}<div>เวลา: ${new Date(r.created_at).toLocaleTimeString('th-TH')}</div></div>
                 ${slipBtn}
                 <div style="display: flex; gap: 10px; margin-top: 10px;">
                     <button class="btn btn-red" style="padding: 8px;" data-reject-wallet>ปฏิเสธ</button>
@@ -1388,7 +1389,7 @@
         ? [bankDisplay, 'โอนให้สมาชิก ฿' + Number(request.amount).toFixed(2), 'ค่าบริการ ฿' + bonusFee.toFixed(2),
           'หักโบนัสรวม ฿' + (Number(request.amount) + bonusFee).toFixed(2)].filter(Boolean).join(' · ')
         : request.type === 'ถอนค่าคอม' ? 'กดยืนยันหลังจากโอนค่าคอมให้สมาชิกแล้ว'
-        : request.type === 'ถอนเงิน' ? [bankDisplay, 'ระบบจะหักยอด Wallet ตามจำนวนที่ยืนยัน'].filter(Boolean).join(' · ') : '';
+        : request.type === 'ถอนเงิน' ? [bankDisplay, 'ค่าธรรมเนียม ฿0', 'หัก Wallet ตามยอดที่โอน'].filter(Boolean).join(' · ') : '';
       document.getElementById('walletDecisionTitle').textContent = 'ยืนยัน' + action;
       document.getElementById('walletDecisionMember').textContent = 'สมาชิก ' + formatMemberCode(currentShopId, request.member_id) + ' · ' + request.display_name;
       document.getElementById('walletDecisionAmount').textContent = '฿' + Number(request.amount).toLocaleString('th-TH', {
@@ -2040,6 +2041,36 @@
         
         document.getElementById('txtTargetId').value = "";
         document.getElementById('txtAmount').value = "";
+        renderCreditActions();
+    }
+
+    function renderCreditActions() {
+      const target = document.getElementById('txtTargetId').value.trim();
+      const tableMode = creditMode === 'table';
+      const desk = tableMode ? tableDesks.find(row => row.table_no === target) : null;
+      const cash = desk?.cash_limit != null;
+      const balance = Number(desk?.credit ?? 0);
+      const pending = cash && tableRound?.bets.some(bet =>
+        bet.table_no === target && bet.cash_table && bet.status === 'Active');
+      const status = document.getElementById('creditTableStatus');
+      const deposit = document.getElementById('creditDepositButton');
+      const withdraw = document.getElementById('creditWithdrawButton');
+      status.hidden = !tableMode;
+      deposit.textContent = cash ? 'รับชำระยอดค้าง' : 'เติมเงิน (ฝาก)';
+      withdraw.textContent = cash ? 'จ่ายคืนตามยอด' : 'ถอนเงิน (คืน)';
+      deposit.disabled = tableMode && (!desk || (cash && (pending || balance >= 0)));
+      withdraw.disabled = tableMode && (!desk || (cash && (pending || balance <= 0)));
+      if (!tableMode) return;
+      if (!desk) {
+        status.textContent = target ? 'ยังไม่พบหมายเลขโต๊ะนี้' : 'กรอกหมายเลขโต๊ะเพื่อดูยอดที่ทำรายการได้';
+      } else if (!cash) {
+        status.textContent = 'โต๊ะเครดิต · ยอดคงเหลือ ' + tableMoney(balance);
+      } else if (pending) {
+        status.textContent = 'โต๊ะเงินสด · รอตัดผลก่อนรับหรือจ่ายเงิน';
+      } else {
+        status.textContent = 'โต๊ะเงินสด · รับชำระได้ ' + tableMoney(Math.max(-balance, 0))
+          + ' · จ่ายคืนได้ ' + tableMoney(Math.max(balance, 0));
+      }
     }
     
     let cashPaymentRetry = null;
@@ -2058,19 +2089,31 @@
         tId = parseMemberCode(currentShopId, tId);
         if (!tId) return alert('รหัสสมาชิกไม่ถูกต้องหรือเป็นของร้านอื่น');
       }
-      if(!confirm(`ยืนยันการทำรายการ ${type === 'deposit' ? 'ฝาก' : 'ถอน'} ${amount} บาท ให้กับ ${creditMode === 'table' ? 'โต๊ะ ' + tId : 'รหัส ' + formatMemberCode(currentShopId, tId)}?`)) return;
-      
+      const tableMode = creditMode === 'table';
+      const action = type === 'deposit' ? 'ฝาก' : 'ถอน';
+      if (!tableMode && !confirm(`ยืนยัน${action} ${amount} บาท ให้กับรหัส ${formatMemberCode(currentShopId, tId)}?`)) return;
+
       try {
-        if(creditMode === 'table') {
-          const { data: t, error: tableError } = await _supabase.from('tables').select('credit,cash_limit').eq('shop_id', currentShopId).eq('table_no', String(tId)).single();
-          if(tableError || !t) throw new Error("ไม่พบเบอร์โต๊ะนี้ในระบบ กรุณาตรวจสอบให้แน่ใจว่าได้กด 'เพิ่มโต๊ะ' เบอร์นี้ในระบบแล้ว");
-          
+        if (tableMode) {
+          const { data: t } = await _supabase.from('tables').select('credit,cash_limit').eq('shop_id', currentShopId).eq('table_no', tId).single();
+          if (!t) throw new Error('ไม่พบหมายเลขโต๊ะนี้ในร้าน');
           if (t.cash_limit != null) {
+            if (!/^\d{1,9}(?:\.\d{1,2})?$/.test(amountStr)) return alert('กรอกยอดเงินเป็นบาท ทศนิยมได้ไม่เกิน 2 ตำแหน่ง');
+            const balance = Number(t.credit);
+            const limit = Math.max(type === 'deposit' ? -balance : balance, 0);
+            const label = type === 'deposit' ? 'รับชำระ' : 'จ่ายคืน';
+            if (amount > limit) {
+              void loadTableList().catch(() => {});
+              return alert('โต๊ะ ' + tId + ' ' + label + 'ได้สูงสุด ' + tableMoney(limit));
+            }
+            if (!confirm(`ยืนยัน${label} ${tableMoney(amount)} สำหรับโต๊ะ ${tId}?`)) return;
             await recordCashAtTable(tId, type, amountStr);
             document.getElementById('txtTargetId').value = '';
             document.getElementById('txtAmount').value = '';
+            renderCreditActions();
             return;
           }
+          if (!confirm(`ยืนยัน${action} ${amount} บาท ให้กับโต๊ะ ${tId}?`)) return;
           let newBal = type === 'deposit' ? t.credit + amount : t.credit - amount;
           if (newBal < 0) throw new Error("ยอดเงินในโต๊ะไม่พอให้ถอน");
           
@@ -2119,7 +2162,7 @@
         document.getElementById('txtAmount').value = ""; 
         loadTableList(); 
       } catch(e) {
-        alert(e.message === 'CASH_TABLE_WAITING_RESULT' ? 'กรุณารอผลของโต๊ะก่อนบันทึกเงินสด' : coverageErrors[e.message] || 'ข้อผิดพลาด ' + e.message);
+        alert(cashTablePaymentErrors[e.message] || coverageErrors[e.message] || 'ข้อผิดพลาด ' + e.message);
       }
     }
 
@@ -2161,6 +2204,11 @@
         if (document.getElementById('repDateSelector').value === day) list.textContent = 'โหลดรายงานเงินสดไม่สำเร็จ';
       }
     }
+
+    const cashTablePaymentErrors = {
+      CASH_TABLE_WAITING_RESULT: 'กรุณารอตัดผลก่อนรับหรือจ่ายเงินสด',
+      CASH_AMOUNT_EXCEEDS_BALANCE: 'จำนวนเงินเกินยอดที่รับหรือจ่ายได้ กรุณาตรวจยอดโต๊ะล่าสุด',
+    };
 
     async function recordCashAtTable(table, type, amount) {
       if (cashPaymentBusy) return;
@@ -2315,6 +2363,7 @@
     }
 
     function renderTableGrid() {
+      renderCreditActions();
       const filter = document.getElementById('tableFilter').value;
       const grid = document.getElementById('tableListContainer');
       const focused = grid.contains(document.activeElement) ? document.activeElement.dataset.table : null;
@@ -2371,8 +2420,7 @@
         element.onclick = async () => {
           element.disabled = true;
           try { await action(); } catch (error) {
-            alert(({ ...tableBetErrors, TABLE_CLOSED: 'โต๊ะนี้ปิดรับยอด', CASH_TABLE_WAITING_RESULT: 'กรุณารอผลก่อนบันทึกเงินสด',
-              CASH_AMOUNT_EXCEEDS_BALANCE: 'จำนวนเงินเกินยอดที่ต้องชำระ' })[error.message] || 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง');
+            alert(({ ...tableBetErrors, ...cashTablePaymentErrors })[error.message] || 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง');
           } finally { element.disabled = false; }
         };
         return element;
@@ -2478,7 +2526,7 @@
       }
       const settlement = settlementState(desk);
       if (settlement) {
-        actions.append(button(balance < 0 ? 'รับเงินสด' : 'จ่ายเงินสด', async () => {
+        actions.append(button(balance < 0 ? 'รับชำระยอดค้าง' : 'จ่ายคืนตามยอด', async () => {
           const amount = prompt(balance < 0 ? 'จำนวนเงินสดที่รับจริง' : 'จำนวนเงินสดที่จ่ายจริง', Math.abs(balance).toFixed(2));
           if (amount === null || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0) return;
           await recordCashAtTable(desk.table_no, balance < 0 ? 'deposit' : 'withdraw', amount.trim());
@@ -2621,7 +2669,6 @@
     async function loadSettings() {
       try {
         const { data: [settings] } = await _supabase.from('system_settings').select('*').eq('shop_id', currentShopId).limit(1);
-        document.getElementById('settingWithdrawalFee').value = settings?.withdrawal_fee_mode ?? 'deduct';
         document.getElementById('settingWaterMargin').value = settings?.water_margin ?? 0.05;
         document.getElementById('settingRoundDuration').value = settings?.round_duration ?? 15;
         document.getElementById('settingCommRate').value = settings?.comm_rate ?? 0.01;
@@ -2637,7 +2684,6 @@
       if (minBet < 100 || maxBet < minBet) return alert('ยอดเล่นขั้นต่ำต้องอย่างน้อย 100 บาท และยอดสูงสุดต้องไม่น้อยกว่ายอดขั้นต่ำ');
       try {
         const { data: saved } = await _supabase.from('system_settings').update({
-          withdrawal_fee_mode: document.getElementById('settingWithdrawalFee').value,
           water_margin: parseFloat(document.getElementById('settingWaterMargin').value),
           round_duration: parseInt(document.getElementById('settingRoundDuration').value, 10),
           comm_rate: parseFloat(document.getElementById('settingCommRate').value),
