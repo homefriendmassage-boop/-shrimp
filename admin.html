@@ -1862,7 +1862,7 @@
 
           const { data: bets } = await _supabase.from('bets').select('*').eq('shop_id', currentShopId).eq('round_id', r.round_id).neq('status', 'Cancelled').order('bet_id', { ascending: false });
           if (request !== dashboardRequest) return;
-          tableRound = { id: r.round_id, status: r.status,
+          tableRound = { id: r.round_id, status: r.status, betsComplete: Array.isArray(bets) && bets.length < 1000,
             locked: r.settlement_weight != null || (bets || []).some(b => ['Win','Lose'].includes(b.status)), bets: (bets || []).filter(b => b.play_mode === 'table') };
           renderTableGrid();
           if (canCorrectCashBets() && r.status === 'Ended' && cashRoundNewestId !== r.round_id
@@ -2403,7 +2403,8 @@
       BET_WHOLE_HUNDREDS: 'ยอดแทงต้องเป็นจำนวนเต็มร้อย เช่น 100, 200 หรือ 1,100 บาท',
       BET_REMOVE_REASON_REQUIRED: 'กรุณาระบุเหตุผลในการลบยอด ไม่เกิน 300 ตัวอักษร',
       TABLE_CLOSED: 'โต๊ะนี้ปิดหรือซ่อนอยู่',
-      TABLE_CREDIT_LIMIT: 'ยอดค้างเกินวงเงินของโต๊ะ'
+      TABLE_CREDIT_LIMIT: 'ยอดค้างเกินวงเงินของโต๊ะ',
+      CASH_TABLE_PRIOR_DEBT: 'โต๊ะนี้ยังค้างชำระจากรอบก่อน กรุณารับชำระให้ครบก่อนลงยอดใหม่'
     };
 
     function openTableBetForm(desk, mode, bet) {
@@ -2691,14 +2692,21 @@
       }
       const balance = Number(desk.credit);
       const current = tableRound?.bets.filter(b => b.table_no === desk.table_no) || [];
+      const activeStakes = current.reduce((cents, bet) => cents + (bet.cash_table && bet.status === 'Active'
+        ? Math.round(Number(bet.amount) * 100) : 0), 0);
+      const priorBalance = Math.round(balance * 100) + activeStakes;
+      const priorDebt = desk.cash_limit != null && tableRound?.status !== 'Ended'
+        && tableRound?.betsComplete && priorBalance < 0;
       const form = document.getElementById('staffCashBetForm');
       if (form.dataset.table !== desk.table_no || form.dataset.round !== tableRound?.id) form.classList.add('hidden');
+      if (priorDebt && form.dataset.mode !== 'edit') form.classList.add('hidden');
       const roundTotal = current.reduce((sum, bet) => sum + Number(bet.amount), 0);
       status.textContent = deskName(desk) + ' · หมายเลข ' + desk.table_no + ' · รอบนี้ ฿' + roundTotal.toLocaleString('th-TH')
         + (balance < 0 ? ' · ต้องรับ ฿' : balance > 0 ? ' · ต้องจ่าย ฿' : ' · สุทธิ ฿')
         + Math.abs(balance).toLocaleString('th-TH')
-        + (desk.cash_limit == null ? '' : ' · วงเงิน ฿' + Number(desk.cash_limit).toLocaleString('th-TH'));
-      const key = JSON.stringify([desk, current, tableRound?.id, tableRound?.status, tableRound?.locked, isRoundOpen]);
+        + (desk.cash_limit == null ? '' : ' · วงเงิน ฿' + Number(desk.cash_limit).toLocaleString('th-TH'))
+        + (priorDebt ? ' · ต้องเคลียร์ยอดรอบก่อน ' + tableMoney(-priorBalance / 100) + ' ก่อนลงยอดใหม่' : '');
+      const key = JSON.stringify([desk, current, tableRound?.id, tableRound?.status, tableRound?.locked, isRoundOpen, priorDebt]);
       if (actions.dataset.key === key) return;
       actions.dataset.key = key;
       billDetails.hidden = false;
@@ -2746,9 +2754,9 @@
         if (owner) actions.append(button('วงเงินสด', () => setCashTableLimit(desk.table_no, desk.cash_limit)));
         if (desk.is_open && desk.cash_limit != null) {
           actions.append(button('QR', () => showQrCode(desk.table_no, true, deskName(desk))));
-          if (isRoundOpen) actions.append(button('ลงยอดให้โต๊ะ', () => openTableBetForm(desk, 'normal'), 'btn-blue'));
+          if (isRoundOpen && !priorDebt) actions.append(button('ลงยอดให้โต๊ะ', () => openTableBetForm(desk, 'normal'), 'btn-blue'));
         }
-        if (desk.cash_limit != null && canCorrectTableRound()) {
+        if (desk.cash_limit != null && !priorDebt && canCorrectTableRound()) {
           actions.append(button('เพิ่มยอดหลังปิดรับ', () => openTableBetForm(desk, 'add'), 'btn-blue'));
         }
       }
