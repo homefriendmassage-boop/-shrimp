@@ -163,7 +163,7 @@
 
       <div style="margin-bottom: 15px;">
         <label style="display: block; color: var(--text-muted); font-size: 0.9rem; margin-bottom: 5px;">จำนวนเงิน</label>
-        <input type="number" id="txtTopupAmount" inputmode="decimal" min="100" step="0.01" oninput="renderDepositPayment(true); renderBonusWithdrawal()" placeholder="ระบุจำนวนเงิน" style="width: 100%; box-sizing: border-box; background: #0f111a; border: 1px solid var(--card-border); color: white; padding: 12px; border-radius: 8px; font-family: 'Kanit'; font-size: 1.2rem; outline: none;">
+        <input type="number" id="txtTopupAmount" inputmode="decimal" min="100" step="0.01" oninput="renderDepositPayment(true); renderWithdrawalSummary()" placeholder="ระบุจำนวนเงิน" style="width: 100%; box-sizing: border-box; background: #0f111a; border: 1px solid var(--card-border); color: white; padding: 12px; border-radius: 8px; font-family: 'Kanit'; font-size: 1.2rem; outline: none;">
       </div>
 
       <div style="margin-bottom: 15px;" id="paymentMethodSection">
@@ -192,7 +192,7 @@
         <small id="slipPreviewStatus" role="status" style="color: var(--text-muted);"></small>
       </div>
 
-      <p id="bonusWithdrawalSummary" hidden role="status"></p>
+      <p id="withdrawalSummary" hidden role="status"></p>
       <div id="withdrawOptionsSection" style="display:none;color:var(--text-muted);margin-bottom:16px;">
         <label for="withdrawBank">ธนาคารรับเงิน</label>
         <select id="withdrawBank" style="display:block;width:100%;padding:10px;margin:4px 0 10px;font:inherit"><option value="">เลือกธนาคาร</option></select>
@@ -1152,12 +1152,20 @@
       output.textContent = 'กระเป๋าโบนัส ' + moneyTHB(bonusBalance);
     }
 
-    function renderBonusWithdrawal() {
-      const summary = document.getElementById('bonusWithdrawalSummary');
-      summary.hidden = document.getElementById('selTransactionType').value !== 'ถอนโบนัส';
+    function renderWithdrawalSummary() {
+      const summary = document.getElementById('withdrawalSummary');
+      const type = document.getElementById('selTransactionType').value;
+      summary.hidden = type === 'ฝากเงิน';
       if (summary.hidden) return;
       const cents = Math.round(Number(document.getElementById('txtTopupAmount').value) * 100);
-      if (cents < 10000 || !Number.isFinite(cents)) {
+      const valid = Number.isFinite(cents) && cents >= 10000;
+      if (type === 'ถอนเงิน') {
+        summary.textContent = valid
+          ? 'รับ ' + moneyTHB(cents / 100) + ' · ค่าธรรมเนียม ฿0 · หัก Wallet ' + moneyTHB(cents / 100)
+          : 'ถอนขั้นต่ำ ฿100 · ค่าธรรมเนียม ฿0';
+        return;
+      }
+      if (!valid) {
         summary.textContent = 'ถอนขั้นต่ำ ฿100 · ค่าบริการ 10% · โบนัสคงเหลือ ' + moneyTHB(bonusBalance);
         return;
       }
@@ -1338,7 +1346,7 @@
       else document.getElementById('slipUploadSection').style.display = 'none';
       document.getElementById('btnSubmitTopup').textContent = type !== 'ฝากเงิน' ? 'ส่งไปยืนยันใน LINE' : 'ส่งแจ้งแอดมิน';
       renderDepositPayment(true);
-      renderBonusWithdrawal();
+      renderWithdrawalSummary();
     }
 
     // ฟังก์ชันอัปโหลดรูปสลิปขึ้น Supabase Storage (รองรับ Multitenant)
