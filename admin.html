@@ -98,6 +98,10 @@
         .layout-slip .slip-section { margin-bottom: 10px; border-bottom: 1px dashed #000; padding-bottom: 10px; }
         .layout-slip .slip-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
         .layout-slip .slip-bold { font-weight: bold; }
+        .table-qr-slip { text-align:center; break-inside:avoid; }
+        .table-qr-slip h2 { font-size:16px; margin:0 0 3mm; overflow-wrap:anywhere; }
+        .table-qr-slip h3 { font-size:15px; margin:0; overflow-wrap:anywhere; }
+        .table-qr-slip canvas { width:50mm; height:50mm; padding:5mm; image-rendering:pixelated; }
         .text-right { text-align: right !important; }
         .grand-total { font-weight: bold; background-color: #eee !important; }
     }
@@ -198,6 +202,12 @@
     .table-bill { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
     .table-bill .btn { flex:0 0 auto; padding:5px 12px; }
     .cashier-workspace #adminContentView > :not(#cardRoundControl) { display:none; }
+    #cashRoundDialog { background:var(--card-bg); color:var(--text-main); border:1px solid #465472;
+      border-radius:14px; width:min(540px,calc(100% - 32px)); max-width:none; max-height:85vh; box-sizing:border-box; }
+    #cashRoundDialog::backdrop { background:#080b13b3; }
+    #cashRoundDialog h2 { margin:0 0 12px; font-size:1.25rem; }
+    #cashRoundDialog .report-table { margin-bottom:14px; }
+    #cashRoundDialog .report-table td:first-child { overflow-wrap:anywhere; }
     @media (min-width:1000px) {
       .table-workspace .container { max-width:1420px; }
       .table-workspace #tableWorkspace { grid-template-columns:minmax(0, 2fr) minmax(300px, 1fr); }
@@ -251,6 +261,7 @@
         <button id="shareTableFlex" class="btn btn-green" type="button">ส่ง Flex ใน LINE</button>
       </div>
       <p id="tableShareStatus" role="status"></p>
+      <button id="printTableQr" class="btn btn-outline hidden" type="button" onclick="printTableQrSlip()">พิมพ์ QR 80 มม.</button>
       <button onclick="closeQrModal()" class="btn btn-blue" style="width: 100%;">ปิดหน้าต่าง</button>
     </div>
   </div>
@@ -464,6 +475,7 @@
           </select></label>
         </div>
         <p id="tableGridRound" aria-live="polite"></p>
+        <button id="openCashRoundSummary" class="btn btn-outline hidden" type="button" onclick="openCashRoundSummary()">สรุปเงินสดรายรอบ</button>
         <dl id="tableCashTotals" class="table-cash-totals hidden">
           <div class="cash-total-receive"><dt>รวมค้างเก็บ</dt><dd id="tableTotalReceive">฿0</dd></div>
           <div class="cash-total-pay"><dt>รวมค้างจ่าย</dt><dd id="tableTotalPay">฿0</dd></div>
@@ -656,6 +668,38 @@
           <div>ผู้จัดการ</div>
       </div>
   </div>
+
+  <div id="printAreaTableQr" class="print-only layout-slip table-qr-slip" style="display:none">
+    <h2 id="printQrShop"></h2>
+    <h3 id="printQrTable"></h3>
+    <canvas id="printQrImage" aria-label="QR โต๊ะเงินสด"></canvas>
+    <div id="printQrExpires"></div>
+  </div>
+
+  <dialog id="cashRoundDialog" class="no-print" aria-labelledby="cashRoundTitle">
+    <h2 id="cashRoundTitle">สรุปเงินสดรายรอบ</h2>
+    <p id="cashRoundRecovery" hidden>บันทึกผลรอบที่ค้างแล้ว เครดิตของบิลเดิมจ่ายเพียงครั้งเดียว</p>
+    <label for="cashRoundSelect">รอบที่ตัดผลแล้ว</label>
+    <select id="cashRoundSelect" class="form-control"></select>
+    <p id="cashRoundMessage" role="status"></p>
+    <div id="cashRoundDetail" hidden>
+      <dl class="table-cash-totals">
+        <div class="cash-total-pay"><dt>เงินสดที่ต้องเตรียมจ่าย</dt><dd id="cashRoundPay"></dd></div>
+        <div class="cash-total-receive"><dt>เงินสดที่ต้องเก็บ</dt><dd id="cashRoundReceive"></dd></div>
+        <div><dt>ส่วนต่างเงินสดของรอบ</dt><dd id="cashRoundNet"></dd></div>
+      </dl>
+      <table class="report-table" style="width:100%">
+        <thead><tr><th scope="col">โต๊ะ</th><th scope="col" class="text-right">จ่าย</th><th scope="col" class="text-right">เก็บ</th></tr></thead>
+        <tbody id="cashRoundRows"></tbody>
+      </table>
+      <p id="cashRoundWallet"></p>
+      <p style="color:var(--text-muted)">ยอดเฉพาะบิลของรอบนี้ ส่วนเงินสดที่ยังค้างรับ–จ่ายให้ดูในคิวของโต๊ะ</p>
+    </div>
+    <div class="btn-group">
+      <form method="dialog"><button class="btn btn-outline" type="submit">ปิด</button></form>
+      <button class="btn btn-blue" type="button" onclick="openCashierQueue()">เปิดคิวรับ–จ่ายเงินสด</button>
+    </div>
+  </dialog>
 
   <dialog id="boardPasswordDialog" aria-labelledby="boardPasswordTitle" style="background:#171925;color:white;border:1px solid #465472;border-radius:14px;max-width:min(400px,85vw)">
     <form id="boardPasswordForm">
@@ -1647,11 +1691,6 @@
         if (!cachedReportData || Object.keys(cachedReportData).length === 0) return alert("กรุณารอข้อมูลโหลดให้เสร็จก่อนสั่งพิมพ์");
         let rd = cachedReportData; let targetDivId = paperType === 'A4' ? 'printAreaA4' : 'printAreaSlip';
         
-        let styleSheet = document.getElementById('printPageStyle');
-        if(!styleSheet) { styleSheet = document.createElement('style'); styleSheet.id = 'printPageStyle'; document.head.appendChild(styleSheet); }
-        if (paperType === 'A4') { styleSheet.innerHTML = "@media print { @page { size: A4; margin: 1cm; } }"; } 
-        else { styleSheet.innerHTML = "@media print { @page { size: auto; margin: 2mm 5mm; } }"; }
-        
         document.getElementById(`printDate${paperType}`).innerText = rd.dateStr; document.getElementById(`printAdminName${paperType}`).innerText = currentAdminName;
         
         document.getElementById(`p_grossBet${paperType}`).innerText = rd.grossBet.toLocaleString(); document.getElementById(`p_payout${paperType}`).innerText = rd.payout.toLocaleString();
@@ -1672,21 +1711,32 @@
           cash.prepend(title);
         }
 
-        const report = document.getElementById(targetDivId);
+        setTimeout(() => printAdminArea(targetDivId, paperType), 500);
+    }
+
+    function printAdminArea(areaId, paperType) {
+        let pageStyle = document.getElementById('printPageStyle');
+        if (!pageStyle) {
+          pageStyle = document.createElement('style');
+          pageStyle.id = 'printPageStyle';
+          document.head.appendChild(pageStyle);
+        }
+        pageStyle.textContent = paperType === 'A4'
+          ? '@media print { @page { size: A4; margin: 1cm; } }'
+          : '@media print { @page { size: auto; margin: 2mm 5mm; } }';
+        const report = document.getElementById(areaId);
         const app = document.getElementById('mainAppContainer');
         const appDisplay = app.style.display;
         app.style.display = 'none';
         report.classList.add('print-active');
         report.style.display = 'block';
 
-        setTimeout(() => {
-          try { window.print(); }
-          finally {
-            app.style.display = appDisplay;
-            report.classList.remove('print-active');
-            report.style.display = 'none';
-          }
-        }, 500);
+        try { window.print(); }
+        finally {
+          app.style.display = appDisplay;
+          report.classList.remove('print-active');
+          report.style.display = 'none';
+        }
     }
 
     let cashReportDelivery = null;
@@ -2025,8 +2075,7 @@
         const roundId = lr[0].round_id;
         const finalized = await _supabase.finalizeRound(roundId, w);
         void notifyRoundEvent(roundId, 'result');
-        alert(finalized.recovered ? 'บันทึกผลรอบที่ค้างแล้ว เครดิตของบิลเดิมไม่ได้ถูกจ่ายซ้ำ'
-          : 'ตัดผลสำเร็จ! ผลคือ ' + (w % 2 === 0 ? 'คู่' : 'คี่'));
+        void openCashRoundSummary({ round_id: roundId, weight: w, recovered: finalized.recovered });
         document.getElementById('txtShrimpWeight').value = '';
         await loadTableList();
       } catch (e) {
@@ -2348,6 +2397,93 @@
     let loadingRoundTotals = null;
     const tableMoney = amount => '฿' + Number(amount).toLocaleString('th-TH', { maximumFractionDigits:2 });
 
+    const cashRoundDialog = document.getElementById('cashRoundDialog');
+    const cashRoundSelect = document.getElementById('cashRoundSelect');
+    const cashRoundMessage = document.getElementById('cashRoundMessage');
+    const cashRoundDetail = document.getElementById('cashRoundDetail');
+    let cashRoundSummaryRequest = 0;
+
+    async function openCashRoundSummary(finalizedRound) {
+      if (!canCorrectCashBets()) return;
+      const request = ++cashRoundSummaryRequest;
+      cashRoundSelect.replaceChildren();
+      cashRoundSelect.disabled = true;
+      document.getElementById('cashRoundRecovery').hidden = !finalizedRound?.recovered;
+      cashRoundDetail.hidden = true;
+      cashRoundMessage.textContent = 'กำลังโหลดรอบที่ตัดผลแล้ว…';
+      if (!cashRoundDialog.open) cashRoundDialog.showModal();
+      let rounds;
+      try {
+        ({ data: rounds } = await _supabase.from('rounds').select('round_id,result,weight')
+          .eq('status', 'Ended').order('created_at', { ascending: false })
+          .order('round_id', { ascending: false }).limit(50));
+      } catch {
+        rounds = [];
+        if (!finalizedRound && request === cashRoundSummaryRequest && cashRoundDialog.open) {
+          cashRoundMessage.textContent = 'โหลดรายการรอบไม่สำเร็จ กรุณาปิดแล้วเปิดสรุปอีกครั้ง';
+          return;
+        }
+      }
+      if (request !== cashRoundSummaryRequest || !cashRoundDialog.open) return;
+      if (finalizedRound && !rounds.some(round => round.round_id === finalizedRound.round_id)) {
+        rounds.unshift(finalizedRound);
+      }
+      if (!rounds.length) {
+        cashRoundMessage.textContent = 'ยังไม่มีรอบที่ตัดผลแล้ว';
+        return;
+      }
+      for (const { round_id, result, weight } of rounds) {
+        const label = 'รอบ ' + formatRoundName(round_id)
+          + (result && weight != null ? ' · ' + result + ' · ' + weight + ' กรัม' : '');
+        cashRoundSelect.add(new Option(label, round_id));
+      }
+      if (finalizedRound) cashRoundSelect.value = finalizedRound.round_id;
+      cashRoundSelect.disabled = false;
+      void showCashRoundSummary();
+    }
+
+    async function showCashRoundSummary() {
+      const request = ++cashRoundSummaryRequest;
+      cashRoundMessage.textContent = 'กำลังโหลดยอดเงินสดของรอบ…';
+      cashRoundDetail.hidden = true;
+      try {
+        const { totals } = await _supabase.tableRoundSummary(cashRoundSelect.value);
+        if (request !== cashRoundSummaryRequest || !cashRoundDialog.open) return;
+        if (!Array.isArray(totals?.tables)) throw new Error('ROUND_SUMMARY_UNAVAILABLE');
+        document.getElementById('cashRoundPay').textContent = tableMoney(totals.cash_pay);
+        document.getElementById('cashRoundReceive').textContent = tableMoney(totals.cash_receive);
+        const net = Math.round((Number(totals.cash_receive) - Number(totals.cash_pay)) * 100) / 100;
+        document.getElementById('cashRoundNet').textContent = (net > 0 ? '+' : net < 0 ? '−' : '') + tableMoney(Math.abs(net));
+        const rows = document.getElementById('cashRoundRows');
+        rows.replaceChildren();
+        for (const table of totals.tables) {
+          const row = rows.insertRow();
+          row.insertCell().textContent = table.name || 'โต๊ะ ' + table.number;
+          for (const amount of [table.pay, table.receive]) {
+            const cell = row.insertCell();
+            cell.className = 'text-right';
+            cell.textContent = Number(amount) ? tableMoney(amount) : '–';
+          }
+        }
+        document.getElementById('cashRoundWallet').textContent = 'Wallet · ยอดเล่น '
+          + tableMoney(totals.wallet_stake) + ' · เครดิตจ่ายเข้ากระเป๋า ' + tableMoney(totals.wallet_payout);
+        cashRoundMessage.textContent = totals.tables.length ? '' : 'รอบนี้ไม่มีบิลเงินสดบนโต๊ะ';
+        cashRoundDetail.hidden = false;
+      } catch {
+        if (request === cashRoundSummaryRequest && cashRoundDialog.open) {
+          cashRoundMessage.textContent = 'โหลดยอดรอบนี้ไม่สำเร็จ กรุณาเปิดสรุปอีกครั้ง';
+        }
+      }
+    }
+
+    cashRoundSelect.addEventListener('change', showCashRoundSummary);
+
+    function openCashierQueue() {
+      cashRoundDialog.close();
+      switchAdminTab('tables');
+      document.getElementById('cashierQueue').scrollIntoView({ block: 'nearest' });
+    }
+
     async function loadTableRoundTotals(roundId) {
       if (loadingRoundTotals === roundId) return;
       loadingRoundTotals = roundId;
@@ -2395,6 +2531,7 @@
       const unsettled = tableDesks.filter(settlementState);
       const totalsView = document.getElementById('tableCashTotals');
       totalsView.classList.toggle('hidden', !canCorrectCashBets());
+      document.getElementById('openCashRoundSummary').classList.toggle('hidden', !canCorrectCashBets());
       if (canCorrectCashBets()) {
         let receive = 0;
         let pay = 0;
@@ -2588,16 +2725,23 @@
     }
     let tableQrRefresh;
     let tableQrGeneration = 0;
+    let printableTableQr = null;
 
     async function showQrCode(table, cashEnabled, name = table) {
         if (!cashEnabled) return alert('กรุณาเปิดวงเงินสดให้โต๊ะก่อนสร้าง QR');
         const generation = ++tableQrGeneration;
         clearTimeout(tableQrRefresh);
+        printableTableQr = null;
+        document.getElementById('printTableQr').classList.add('hidden');
         const { day, token } = await _supabase.tableQr(table);
         if (generation !== tableQrGeneration) return;
         const playerUrl = playerEntryUrl(currentShopId, { table, d: day, table_token: token });
-        openCustomerShare([adminShopName, name].filter(Boolean).join(' · '), playerUrl);
         const [, end] = shopAccountingWindow(day);
+        openCustomerShare([adminShopName, name].filter(Boolean).join(' · '), playerUrl);
+        if (document.querySelector('#qrImage canvas')) {
+          printableTableQr = { shop: adminShopName, table: name, expires: new Date(end) };
+          document.getElementById('printTableQr').classList.remove('hidden');
+        }
         tableQrRefresh = setTimeout(() => {
           document.getElementById('qrImage').replaceChildren();
           showQrCode(table, cashEnabled, name).catch(() => {
@@ -2625,6 +2769,28 @@
     function shareShopFromTables() {
       closeQrModal();
       openCustomerShare(adminShopName || 'บ่อตกกุ้ง', playerEntryUrl(currentShopId));
+    }
+
+    function printTableQrSlip() {
+      const qr = printableTableQr;
+      const source = document.querySelector('#qrImage canvas');
+      const status = document.getElementById('tableShareStatus');
+      if (!qr || !source || Date.now() >= qr.expires.getTime()) {
+        status.textContent = 'กรุณาเปิด QR โต๊ะของวันบัญชีล่าสุดก่อนพิมพ์';
+        return;
+      }
+      document.getElementById('printQrShop').textContent = qr.shop;
+      document.getElementById('printQrTable').textContent = qr.table;
+      const expires = qr.expires.toLocaleString('th-TH', {
+        timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+      });
+      document.getElementById('printQrExpires').textContent = 'ใช้ได้ถึง ' + expires + ' น.';
+      const image = document.getElementById('printQrImage');
+      image.width = source.width;
+      image.height = source.height;
+      image.getContext('2d').drawImage(source, 0, 0);
+      printAdminArea('printAreaTableQr', 'Slip');
     }
 
     document.getElementById('copyTableLink').onclick = async () => {
@@ -2676,6 +2842,8 @@
     function closeQrModal() {
       tableQrGeneration++;
       clearTimeout(tableQrRefresh);
+      printableTableQr = null;
+      document.getElementById('printTableQr').classList.add('hidden');
       document.getElementById('qrModal').classList.add('hidden');
       document.getElementById('qrImage').replaceChildren();
     }
