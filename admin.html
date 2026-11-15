@@ -599,7 +599,9 @@
           <tr><td>ยอดจ่ายลูกค้าและคนรับจบ (Payout)</td><td class="text-right" style="color: red;" id="p_payoutA4">0</td></tr>
           <tr><td>ยอดคืนบิลยกเลิก (Cancelled)</td><td class="text-right" id="p_cancelledA4">0</td></tr>
           <tr><td>หักค่าคอมมิชชั่นผู้แนะนำ (Commission)</td><td class="text-right" style="color: red;" id="p_commA4">0</td></tr>
-          <tr class="grand-total"><td>รายได้ค่าน้ำสุทธิเข้าร้าน (Shop Net Profit)</td><td class="text-right" id="p_netProfitA4">0</td></tr>
+          <tr><td>ผลสุทธิหลังหักค่าแนะนำ</td><td class="text-right" id="p_netProfitA4">0</td></tr>
+          <tr><td>ค่าบริการถอนโบนัส (รายได้ร้าน)</td><td class="text-right" id="p_bonusFeeA4">0</td></tr>
+          <tr class="grand-total"><td>ผลสุทธิรวมค่าบริการถอนโบนัส</td><td class="text-right" id="p_netWithBonusFeeA4">0</td></tr>
       </table>
       <h3>2. สรุปรายการฝาก-ถอนเครดิต</h3>
       <table class="report-table">
@@ -631,9 +633,9 @@
           <div class="slip-row"><span>จ่ายลูกค้า(Payout):</span> <span id="p_payoutSlip">0</span></div>
           <div class="slip-row"><span>ยกเลิก(Cancel):</span> <span id="p_cancelledSlip">0</span></div>
           <div class="slip-row"><span>หักค่าคอม(Comm):</span> <span id="p_commSlip">0</span></div>
-          <div class="slip-row slip-bold" style="margin-top: 5px; font-size: 14px;">
-              <span>ค่าน้ำสุทธิ(Net):</span> <span id="p_netProfitSlip">0</span>
-          </div>
+          <div class="slip-row"><span>ผลสุทธิหลังหักค่าแนะนำ</span> <span id="p_netProfitSlip">0</span></div>
+          <div class="slip-row"><span>ค่าบริการถอนโบนัส</span> <span id="p_bonusFeeSlip">0</span></div>
+          <div class="slip-row slip-bold"><span>ผลสุทธิรวมค่าบริการ</span> <span id="p_netWithBonusFeeSlip">0</span></div>
       </div>
       <div class="slip-section">
           <div class="slip-bold" style="margin-bottom: 5px;">-- รายการฝาก/ถอน --</div>
@@ -1627,7 +1629,8 @@
         const money = value => value.toLocaleString('th-TH', { maximumFractionDigits: 2 });
         document.getElementById('repReferralCommission').textContent = '฿' + money(commission)
           + ' · ' + referral.referral_recipients + ' ผู้แนะนำ';
-        document.getElementById('repBonusFee').textContent = '฿' + money(Number(referral.bonus_fee_revenue ?? 0));
+        const bonusFee = Number(referral.bonus_fee_revenue ?? 0);
+        document.getElementById('repBonusFee').textContent = '฿' + money(bonusFee);
         document.getElementById('repBonusWithdrawn').textContent = '฿' + money(Number(referral.bonus_withdrawn ?? 0));
         document.getElementById('repBonusLiability').textContent = '฿' + money(Number(referral.bonus_wallet_liability ?? 0));
         gNet -= commission;
@@ -1636,7 +1639,7 @@
         document.getElementById('repCancelled').innerText = `฿${gCancel.toLocaleString()}`; document.getElementById('repNetProfit').innerText = `฿${gNet.toLocaleString()}`;
         document.getElementById('repNetProfit').style.color = gNet >= 0 ? 'var(--green-main)' : 'var(--red-main)';
         
-        cachedReportData = { dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, adminName: currentAdminName, backerSummaries: backerSummaries };
+        cachedReportData = { dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, bonusFee, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, adminName: currentAdminName, backerSummaries: backerSummaries };
       } catch (e) { listDiv.innerHTML = '<div style="text-align:center; color:red; padding: 15px;">การดึงรายงานขัดข้อง: ' + e.message + '</div>'; }
     }
 
@@ -1650,11 +1653,12 @@
         else { styleSheet.innerHTML = "@media print { @page { size: 80mm auto; margin: 2mm 5mm; } }"; }
         
         document.getElementById(`printDate${paperType}`).innerText = rd.dateStr; document.getElementById(`printAdminName${paperType}`).innerText = currentAdminName;
-        if(paperType === 'A4') document.getElementById('signAdminNameA4').innerText = currentAdminName;
         
         document.getElementById(`p_grossBet${paperType}`).innerText = rd.grossBet.toLocaleString(); document.getElementById(`p_payout${paperType}`).innerText = rd.payout.toLocaleString();
         document.getElementById(`p_cancelled${paperType}`).innerText = rd.cancelled.toLocaleString(); document.getElementById(`p_comm${paperType}`).innerText = rd.comm.toLocaleString('th-TH', { maximumFractionDigits: 2 });
         document.getElementById(`p_netProfit${paperType}`).innerText = rd.netProfit.toLocaleString();
+        document.getElementById(`p_bonusFee${paperType}`).innerText = rd.bonusFee.toLocaleString('th-TH', { maximumFractionDigits: 2 });
+        document.getElementById(`p_netWithBonusFee${paperType}`).innerText = (rd.netProfit + rd.bonusFee).toLocaleString('th-TH', { maximumFractionDigits: 2 });
         document.getElementById(`p_depCount${paperType}`).innerText = rd.countDep + (paperType === 'A4' ? " รายการ" : ""); document.getElementById(`p_totalDep${paperType}`).innerText = rd.totalDep.toLocaleString();
         document.getElementById(`p_wdCount${paperType}`).innerText = rd.countWd + (paperType === 'A4' ? " รายการ" : ""); document.getElementById(`p_totalWd${paperType}`).innerText = rd.totalWd.toLocaleString();
         document.getElementById(`p_drawerNet${paperType}`).innerText = rd.drawerNet.toLocaleString();

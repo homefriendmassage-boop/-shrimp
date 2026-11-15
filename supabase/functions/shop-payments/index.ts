@@ -240,6 +240,12 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
           (name !== null && (!name || name.length > 120 || /[\r\n]/.test(name))) ||
           (input.destination_kind != null && !name)) return fail('WITHDRAWAL_INVALID');
       if (Number(amount) < 100) return fail('WALLET_MINIMUM');
+      if (Number(amount) % 100 !== 0) return fail('WITHDRAWAL_WHOLE_HUNDREDS');
+      const rules = await db.rpc('check_wallet_withdrawal_rules', {
+        p_shop: shop, p_uid: uid, p_kind: walletKind, p_amount: amount,
+      });
+      if (rules.error || !rules.data) return fail('PAYMENTS_UNAVAILABLE', 503);
+      if (rules.data !== 'ALLOWED') return fail(rules.data, 409);
       const amountCents = Math.round(Number(amount) * 100);
       const feeCents = bonus ? Math.round(amountCents / 10) : 0;
       const balance = bonus ? member.data.commission_balance
