@@ -52,6 +52,7 @@ function createAdminApiClient(config, getShopId) {
     moveBackerFunds: details => call({ action: 'coverage_move', ...details }),
     setCoverageFund: details => call({ action: 'coverage_fund', ...details }),
     closeRoundWithCoverage: roundId => call({ action: 'round_close_with_coverage', round_id: roundId }),
+    staffRoundReport: day => call({ action: 'daily_staff_round_report', day }),
     coverageReport: day => call({ action: 'coverage_report', day }),
     bankerPayout: details => call({ action: 'banker_payout', ...details }),
     openRound: () => call({ action: 'round_open' }),
