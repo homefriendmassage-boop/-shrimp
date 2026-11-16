@@ -6,7 +6,7 @@
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=round-name-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=round-coverage-2"></script>
+  <script src="admin-api-client.js?v=banker-payout-1"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -638,6 +638,11 @@
       <section class="card">
         <div class="card-title">ค่าน้ำและผลรับจบแยกช่องทาง</div>
         <div id="dailyCoverageReport" role="status"></div>
+      </section>
+      <section class="card">
+        <div class="card-title">ปิดยอดจ่ายแบงเกอร์</div>
+        <div id="bankerPayoutReport"></div>
+        <p id="bankerPayoutStatus" role="status"></p>
       </section>
       <section class="card">
         <div class="card-title">รายงานเงินสดรายโต๊ะ</div>
@@ -1621,6 +1626,121 @@
       }
     }
 
+    let bankerReportRequest = 0;
+    let bankerPayoutBusy = false;
+    let bankerPayoutRetry = null;
+
+    async function loadBankerPayoutReport(day, notice = '') {
+      const version = ++bankerReportRequest;
+      const view = document.getElementById('bankerPayoutReport');
+      const status = document.getElementById('bankerPayoutStatus');
+      const isCurrent = () => version === bankerReportRequest && document.getElementById('repDateSelector').value === day;
+      view.replaceChildren();
+      status.textContent = 'กำลังโหลดยอดแบงเกอร์…';
+      try {
+        const { bankers } = await _supabase.bankerPayout({ operation: 'report', day });
+        if (!isCurrent()) return;
+        if (!bankers.length) {
+          status.textContent = 'ไม่มีรายการแบงเกอร์';
+          return;
+        }
+        status.textContent = notice;
+        if (day === shopAccountingDay()) {
+          const due = document.createElement('strong');
+          due.textContent = 'รวมค้างจ่าย ' + tableMoney(bankers.reduce((total, banker) => total + Number(banker.pending), 0));
+          view.append(due);
+        }
+        const canRecord = ['Admin', 'Superadmin'].includes(currentUserRole);
+
+        async function record(button, details, confirmation, success) {
+          if (bankerPayoutBusy || !isCurrent() || !confirm(confirmation)) return;
+          bankerPayoutBusy = button.disabled = true;
+          status.textContent = 'กำลังบันทึก…';
+          try {
+            await _supabase.bankerPayout(details);
+            if (details.operation === 'request') bankerPayoutRetry = null;
+            if (isCurrent()) await loadBankerPayoutReport(day, success);
+          } catch (error) {
+            const messages = {
+              COVERAGE_FUNDS_RESERVED: 'ยังมีเงินที่กันไว้กับรอบค้าง กรุณาตรวจยอดก่อนจ่าย',
+              COVERAGE_WALLET_TOO_LOW: 'ยอดในกระเป๋าไม่พอกับรายการที่ขอถอน กรุณาตรวจยอดอีกครั้ง',
+              BANKER_PAYOUT_RESOLVED: 'รายการนี้ดำเนินการไปแล้ว กรุณาค้นหารายงานใหม่',
+              BANKER_PAYOUT_INVALID: 'บันทึกไม่ได้ กรุณาตรวจแบงเกอร์และจำนวนเงิน',
+            };
+            if (isCurrent()) status.textContent = messages[error.message] || 'ยืนยันผลบันทึกไม่ได้ กรุณาลองกดเดิมอีกครั้ง';
+          } finally {
+            bankerPayoutBusy = button.disabled = false;
+          }
+        }
+
+        for (const banker of bankers) {
+          const card = document.createElement('fieldset');
+          card.style.marginBlock = '10px';
+          const name = document.createElement('legend');
+          name.textContent = banker.name + (banker.member_id ? ' · ' + formatMemberCode(currentShopId, banker.member_id) : '');
+          const totals = document.createElement('p');
+          totals.textContent = 'ผลรับจบสุทธิ ' + tableMoney(banker.pnl)
+            + ' · ขอถอนในวัน ' + tableMoney(banker.requested) + ' · จ่ายแล้วในวัน ' + tableMoney(banker.paid)
+            + ' · ค้างจ่าย ' + tableMoney(banker.pending);
+          const wallet = document.createElement('p');
+          wallet.textContent = 'เงินในกระเป๋าปัจจุบัน ' + tableMoney(banker.wallet)
+            + ' · ถอนได้ปัจจุบัน ' + tableMoney(banker.available);
+          card.append(name, totals, wallet);
+          for (const item of banker.items) {
+            const row = document.createElement('p');
+            row.textContent = new Date(item.created_at).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })
+              + ' · ' + tableMoney(item.amount) + ' · ' + { pending: 'รอจ่าย', paid: 'จ่ายแล้ว', cancelled: 'ยกเลิก' }[item.status] + ' ';
+            if (canRecord && item.status === 'pending') {
+              const pay = document.createElement('button');
+              pay.className = 'btn btn-green';
+              pay.textContent = 'บันทึกจ่ายแล้ว';
+              pay.disabled = !banker.active || Number(item.amount) > Number(banker.available);
+              pay.onclick = () => record(pay, { operation: 'pay', request_id: item.id },
+                'ยืนยันว่าจ่ายเงินจริง ' + tableMoney(item.amount) + ' ให้ ' + banker.name + ' แล้ว?',
+                'บันทึกจ่ายแบงเกอร์แล้ว');
+              const cancel = document.createElement('button');
+              cancel.className = 'btn btn-outline';
+              cancel.textContent = 'ยกเลิกคำขอ';
+              cancel.onclick = () => record(cancel, { operation: 'cancel', request_id: item.id },
+                'ยกเลิกคำขอถอน ' + tableMoney(item.amount) + ' ของ ' + banker.name + '?',
+                'ยกเลิกคำขอถอนแล้ว');
+              row.append(pay, ' ', cancel);
+            }
+            card.append(row);
+          }
+          if (canRecord && banker.active && day === shopAccountingDay()) {
+            const form = document.createElement('form');
+            const label = document.createElement('label');
+            label.textContent = 'ยอดที่แบงเกอร์ขอถอน (บาท)';
+            const amount = document.createElement('input');
+            amount.className = 'form-control';
+            amount.type = 'number';
+            amount.inputMode = 'decimal';
+            amount.min = '100';
+            amount.step = '0.01';
+            amount.required = true;
+            label.append(amount);
+            const add = document.createElement('button');
+            add.className = 'btn btn-outline';
+            add.textContent = 'บันทึกคำขอถอน';
+            form.append(label, add);
+            form.onsubmit = event => {
+              event.preventDefault();
+              const details = { operation: 'request', recipient: banker.uid, amount: Number(amount.value) };
+              const key = JSON.stringify([currentShopId, details]);
+              if (bankerPayoutRetry?.key !== key) bankerPayoutRetry = { key, id: crypto.randomUUID() };
+              void record(add, { ...details, request_id: bankerPayoutRetry.id },
+                'บันทึกคำขอถอน ' + tableMoney(details.amount) + ' ให้ ' + banker.name + '?', 'บันทึกคำขอถอนแล้ว');
+            };
+            card.append(form);
+          }
+          view.append(card);
+        }
+      } catch (_) {
+        if (isCurrent()) status.textContent = 'โหลดสรุปจ่ายแบงเกอร์ไม่สำเร็จ กรุณาค้นหาอีกครั้ง';
+      }
+    }
+
     async function generateReport() {
       cachedReportData = {};
       if (currentUserRole === 'Operator') return; 
@@ -1638,6 +1758,7 @@
       const [startAt, endAt] = shopAccountingWindow(selDate);
       void loadCashTableReport(selDate);
       void loadDailyCoverageReport(selDate);
+      void loadBankerPayoutReport(selDate);
       try {
         const { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId)
           .gte('created_at', startAt).lt('created_at', endAt).order('created_at', { ascending: false });

@@ -395,7 +395,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, board: result.data });
       }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_correct_bet', 'round_begin_settlement', 'coverage_read', 'coverage_move', 'coverage_fund', 'coverage_reserve', 'coverage_report', 'round_open', 'round_close_with_coverage', 'round_finalize', 'table_round_summary', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_correct_bet', 'round_begin_settlement', 'coverage_read', 'coverage_move', 'coverage_fund', 'coverage_reserve', 'coverage_report', 'banker_payout', 'round_open', 'round_close_with_coverage', 'round_finalize', 'table_round_summary', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request'].includes(input.action);
@@ -830,8 +830,29 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (staff.data.role === 'Operator' && !['access','query','table_qr','table_cash_payment','table_cash_bet'].includes(input.action)) {
         fail('ADMIN_REQUIRED', 403);
       }
-      if (staff.data.role === 'Cashier' && !['access','query','table_qr','table_cash_payment','table_cash_bet','table_correct_bet','round_open','round_close_with_coverage','round_finalize','table_round_summary','coverage_read','coverage_reserve','coverage_report'].includes(input.action)) {
+      if (staff.data.role === 'Cashier' && !['access','query','table_qr','table_cash_payment','table_cash_bet','table_correct_bet','round_open','round_close_with_coverage','round_finalize','table_round_summary','coverage_read','coverage_reserve','coverage_report','banker_payout'].includes(input.action)) {
         fail('ADMIN_REQUIRED', 403);
+      }
+      if (input.action === 'banker_payout') {
+        if (input.operation === 'report') {
+          if (typeof input.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.day)) fail('TABLE_DATE_INVALID');
+          const result = await db.rpc('daily_banker_payout_report', { p_shop: shopId, p_day: input.day });
+          if (result.error) fail('BANKER_PAYOUT_UNAVAILABLE', 500);
+          return reply({ ok: true, bankers: result.data });
+        }
+        if (!['Admin', 'Superadmin'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
+        if (!['request', 'pay', 'cancel'].includes(input.operation) || !shopInviteIdPattern.test(input.request_id) ||
+            (input.operation === 'request' && (typeof input.recipient !== 'string' || !input.recipient ||
+              input.recipient.length > 100 || !Number.isFinite(input.amount)))) fail('BANKER_PAYOUT_INVALID');
+        const result = await db.rpc('record_banker_payout', {
+          p_shop: shopId, p_actor: claims.sub, p_action: input.operation, p_request: input.request_id,
+          p_recipient: input.operation === 'request' ? input.recipient : null,
+          p_amount: input.operation === 'request' ? input.amount : null,
+        });
+        if (result.error?.message === 'COVERAGE_FUNDS_RESERVED') fail('COVERAGE_FUNDS_RESERVED', 409);
+        if (result.error) fail('BANKER_PAYOUT_UNAVAILABLE', 500);
+        if (result.data !== 'RECORDED') fail(result.data || 'BANKER_PAYOUT_UNAVAILABLE', 409);
+        return reply({ ok: true });
       }
       if (input.action === 'coverage_move') {
         if (!['Admin','Superadmin'].includes(staff.data.role)) fail('ADMIN_REQUIRED', 403);
