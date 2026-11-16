@@ -6,7 +6,7 @@
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=round-name-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=banker-payout-1"></script>
+  <script src="admin-api-client.js?v=banker-payout-2"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -1755,31 +1755,32 @@
       
       const [year, mm, dd] = selDate.split('-');
       const yy = year.slice(-2);
-      const [startAt, endAt] = shopAccountingWindow(selDate);
       void loadCashTableReport(selDate);
       void loadDailyCoverageReport(selDate);
       void loadBankerPayoutReport(selDate);
       try {
-        const { data: rounds } = await _supabase.from('rounds').select('*').eq('shop_id', currentShopId)
-          .gte('created_at', startAt).lt('created_at', endAt).order('created_at', { ascending: false });
-        let gGross = 0, gPayout = 0, gCancel = 0, gNet = 0; let cntEven = 0, cntOdd = 0, cntTotalRounds = rounds ? rounds.length : 0;
-        
-        listDiv.innerHTML = '';
-        if(rounds && rounds.length > 0) {
-          for(let r of rounds) {
-            if(r.result === 'คู่') cntEven++; if(r.result === 'คี่') cntOdd++;
-            const { data: bets } = await _supabase.from('bets').select('amount, payout, status').eq('shop_id', currentShopId).eq('round_id', r.round_id);
-            let rTotBet = 0, rTotPay = 0;
-            if(bets) {
-              bets.forEach(b => {
-                if(b.status === 'Cancelled') { gCancel += b.amount; }
-                else { rTotBet += b.amount; rTotPay += b.payout || 0; gGross += b.amount; gPayout += b.payout || 0; }
-              });
-            }
-            
-            const { data: bLogs } = await _supabase.from('backer_logs').select('pnl_amount').eq('shop_id', currentShopId).eq('round_id', r.round_id);
-            let rBackerPnlTotal = 0;
-            if (bLogs) { bLogs.forEach(bl => rBackerPnlTotal += Number(bl.pnl_amount)); }
+        const { rounds, wallet } = await _supabase.staffRoundReport(selDate);
+        if (document.getElementById('repDateSelector').value !== selDate) return;
+        let gGross = 0, gPayout = 0, gCancel = 0, gNet = 0;
+        let cntEven = 0, cntOdd = 0, cntTotalRounds = rounds.length;
+
+        listDiv.replaceChildren();
+        if (rounds.length) {
+          const legacyCount = rounds.filter(round => round.legacy_date).length;
+          if (legacyCount) {
+            const notice = document.createElement('p');
+            notice.textContent = 'รอบย้อนหลัง '+ legacyCount +' รอบไม่มีเวลาตัดผล จึงใช้เวลาเปิดรอบสำหรับรายการเหล่านี้';
+            listDiv.appendChild(notice);
+          }
+          for (const r of rounds) {
+            if (r.result === 'คู่') cntEven++;
+            if (r.result === 'คี่') cntOdd++;
+            const rTotBet = Number(r.gross);
+            const rTotPay = Number(r.payout);
+            const rBackerPnlTotal = Number(r.banker_pnl);
+            gGross += rTotBet;
+            gPayout += rTotPay;
+            gCancel += Number(r.cancelled);
             let rNet = (rTotBet - rTotPay) - rBackerPnlTotal; gNet += rNet; 
             
             let pCol = rNet >= 0 ? 'var(--green-main)' : 'var(--red-main)';
@@ -1789,34 +1790,10 @@
           }
         } else { listDiv.innerHTML = '<div style="text-align:center; color: var(--text-muted); padding: 15px;">ยังไม่มีการออกรอบในวันที่เลือก</div>'; }
 
-        const { data: tx } = await _supabase.from('transactions').select('*').eq('shop_id', currentShopId).gte('created_at', startAt).lt('created_at', endAt);
-        let tDep = 0, tWd = 0; let countDep = 0, countWd = 0;
-        if(tx) {
-            tx.forEach(t => {
-                if (t.target_type === 'table' || t.cash_table_no != null) return;
-                if(t.type === 'deposit') { tDep += Number(t.amount); countDep++; }
-                else if(t.type === 'withdraw') { tWd += Number(t.amount); countWd++; }
-            });
-        }
-
-        const { data: allBLogs } = await _supabase.from('backer_logs').select('*').eq('shop_id', currentShopId).gte('created_at', startAt).lt('created_at', endAt);
-        let backerMap = {};
-        if (allBLogs) {
-            allBLogs.forEach(bl => {
-                if (!backerMap[bl.uid]) { backerMap[bl.uid] = { uid: bl.uid, name: '', share: bl.share_percent, feeRate: 0, totalExposure: 0, totalFeePaid: 0, totalPnl: 0, walletBalance: bl.wallet_balance_after }; }
-                backerMap[bl.uid].totalExposure += Number(bl.gap_amount); backerMap[bl.uid].totalFeePaid += Number(bl.water_fee_deducted); backerMap[bl.uid].totalPnl += Number(bl.pnl_amount); backerMap[bl.uid].walletBalance = bl.wallet_balance_after; 
-            });
-        }
-        
-        const { data: backerUsers } = await _supabase.from('users').select('uid, display_name, backer_water_fee').eq('shop_id', currentShopId).eq('role', 'Backer');
-        let backerSummaries = [];
-        if (backerUsers) {
-            backerUsers.forEach(bu => {
-                if (backerMap[bu.uid]) {
-                    backerMap[bu.uid].name = bu.display_name; backerMap[bu.uid].feeRate = bu.backer_water_fee || 0; backerSummaries.push(backerMap[bu.uid]);
-                }
-            });
-        }
+        const tDep = Number(wallet.deposits);
+        const tWd = Number(wallet.withdrawals);
+        const countDep = Number(wallet.deposit_count);
+        const countWd = Number(wallet.withdrawal_count);
 
         const referral = await _supabase.dailyReferralCommission(selDate);
         if (document.getElementById('repDateSelector').value !== selDate) return;
@@ -1834,7 +1811,7 @@
         document.getElementById('repCancelled').innerText = `฿${gCancel.toLocaleString()}`; document.getElementById('repNetProfit').innerText = `฿${gNet.toLocaleString()}`;
         document.getElementById('repNetProfit').style.color = gNet >= 0 ? 'var(--green-main)' : 'var(--red-main)';
         
-        cachedReportData = { dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, bonusFee, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, adminName: currentAdminName, backerSummaries: backerSummaries };
+        cachedReportData = { dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, bonusFee, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, adminName: currentAdminName };
       } catch (e) { listDiv.innerHTML = '<div style="text-align:center; color:red; padding: 15px;">การดึงรายงานขัดข้อง: ' + e.message + '</div>'; }
     }
 
@@ -2115,6 +2092,7 @@
       COVERAGE_FUNDS_RESERVED: 'เงินส่วนนี้ถูกกันไว้สำหรับรอบที่ยังไม่ตัดผล',
       COVERAGE_WALLET_TOO_LOW: 'ยอดกระเป๋าแบงเกอร์ไม่พอ ให้ใช้ช่องเงินฝากของทีมนี้ แล้วบันทึกวงเงินอีกครั้ง',
       COVERAGE_UNAVAILABLE: 'ติดต่อระบบวงเงินไม่สำเร็จ กรุณาลองอีกครั้ง',
+      BANKER_PAYOUT_QUEUE_REQUIRED: 'กรุณาบันทึกถอนแบงเกอร์ที่ รายงาน → ปิดยอดจ่ายแบงเกอร์',
       COVERAGE_MOVEMENT_BUSY: 'กำลังบันทึกเงินฝากหรือถอน กรุณารอสักครู่',
       COVERAGE_INVALID: 'กรุณาตรวจยอดวงเงินที่กรอก',
       ROUND_NOT_CLOSED: 'ไม่พบรอบที่ปิดรับได้ หรือรอบเริ่มตัดผลแล้ว',
@@ -2369,7 +2347,6 @@
       }
       const tableMode = creditMode === 'table';
       const action = type === 'deposit' ? 'ฝาก' : 'ถอน';
-      if (!tableMode && !confirm(`ยืนยัน${action} ${amount} บาท ให้กับรหัส ${formatMemberCode(currentShopId, tId)}?`)) return;
 
       try {
         if (tableMode) {
@@ -2405,6 +2382,13 @@
           if(userError || !u) throw new Error("ไม่พบรหัสสมาชิกนี้ในร้าน");
           if(u.status !== 'Active') throw new Error(`ไม่สามารถทำรายการได้! บัญชีลูกค้ารหัส ${tId} ถูกระงับ`);
           
+          if (u.role === 'Backer' && type === 'withdraw') {
+            alert('กรุณาบันทึกถอนแบงเกอร์ที่ รายงาน → ปิดยอดจ่ายแบงเกอร์');
+            switchAdminTab('report');
+            document.getElementById('bankerPayoutReport').scrollIntoView({ behavior: 'smooth' });
+            return;
+          }
+          if (!confirm(`ยืนยัน${action} ${amount} บาท ให้กับรหัส ${formatMemberCode(currentShopId, tId)}?`)) return;
           if (u.role === 'Backer') {
             await moveBackerWallet(u.uid, amount, type);
             document.getElementById('txtTargetId').value = '';
