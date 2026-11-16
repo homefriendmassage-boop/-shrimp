@@ -539,3 +539,30 @@ test('Operator can rename and open their own tables without creating or adjustin
   const { handler } = setup({ role:'Operator' });
   assert.equal((await handler(request({ action:'table_bulk_create', count:2, cash_limit:'300' }))).status, 403);
 });
+
+test('Cashier can read banker payouts and only Admin can record a withdrawal', async () => {
+  const action = 'banker_payout';
+  const day = '2026-11-17';
+  const id = '01234567-0123-4123-8123-0123456789ab';
+  const payout = { action, operation: 'pay', request_id: id, amount: 999, recipient: 'forged' };
+  const cashier = setup({ role: 'Cashier', rpc: async (name, args) => {
+    assert.equal(name, 'daily_banker_payout_report');
+    assert.deepEqual(args, { p_shop: 'SHOP_001', p_day: day });
+    return { data: [{ pending: 200 }] };
+  } });
+  assert.deepEqual(await (await cashier.handler(request({ action, operation: 'report', day }))).json(),
+    { ok: true, bankers: [{ pending: 200 }] });
+  cashier.queries.length = 0;
+  assert.equal((await cashier.handler(request(payout))).status, 403);
+  const operator = setup({ role: 'Operator', rpc: () => assert.fail('Operator must not read payout reports') });
+  assert.equal((await operator.handler(request({ action, operation: 'report', day }))).status, 403);
+
+  const admin = setup({ rpc: async (name, args) => {
+    assert.equal(name, 'record_banker_payout');
+    assert.deepEqual(args, {
+      p_shop: 'SHOP_001', p_actor: 'verified-user', p_action: 'pay', p_request: id, p_recipient: null, p_amount: null,
+    });
+    return { data: 'RECORDED' };
+  } });
+  assert.equal((await admin.handler(request(payout))).status, 200);
+});
