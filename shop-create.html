@@ -10,6 +10,7 @@
   <script src="./config.js?v=player-entry-1"></script>
   <script src="./payment-ui.js?v=1"></script>
   <script src="./platform-billing.js?v=qr-1"></script>
+  <script src="./shop-rich-menu.js?v=1"></script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #131620; color: #f8fafc; font: 16px/1.5 system-ui, sans-serif; }
@@ -51,6 +52,13 @@
     .billing-product { display: grid; gap: 4px; text-align: left; }
     .billing-product span { color: #a7efcb; }
     .billing-product small { font-weight: normal; }
+    #rich-preview-box { position: relative; }
+    #rich-preview { display: block; width: 100%; }
+    #rich-areas { position: absolute; inset: 0; touch-action: none; cursor: crosshair; }
+    .rich-area { position: absolute; border: 2px dashed white; padding: 3px; pointer-events: none; overflow: hidden; font-size: .8rem; }
+    .rich-area-0 { background: #0b73514d; }
+    .rich-area-1 { background: #184aba4d; }
+    #rich-status { margin: 0; }
     @media (max-width: 360px) { .billing-products { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -66,6 +74,32 @@
     <label id="shop-selection" hidden>เลือกร้าน
       <select id="shop-select"></select>
     </label>
+    <section id="shop-rich-menu" hidden>
+      <h2>ริชเมนูสมาชิก</h2>
+      <label>ภาพริชเมนู
+        <input id="rich-file" type="file" accept="image/jpeg,image/png">
+        <small>2500 × 843 หรือ 2500 × 1686 พิกเซล · PNG/JPEG ไม่เกิน 1 MB</small>
+      </label>
+      <button class="secondary" type="button" id="rich-default">ใช้ภาพมาตรฐาน</button>
+      <label>ลิงก์สั่งอาหาร
+        <input id="rich-food" type="url" placeholder="https://">
+      </label>
+      <a id="rich-food-test" target="_blank" rel="noopener noreferrer" hidden>ทดลองเปิดหน้าสั่งอาหาร</a>
+      <a id="rich-player" target="_blank" rel="noopener noreferrer">ทดลองเปิดหน้าเล่นกุ้งของร้านนี้</a>
+      <div id="rich-workspace" hidden>
+        <label>เลือกช่องแล้วลากกรอบบนภาพ
+          <select id="rich-action"><option value="0">สั่งอาหาร</option><option value="1">เข้าเล่นกุ้ง</option></select>
+        </label>
+        <div id="rich-preview-box">
+          <img id="rich-preview" alt="ตัวอย่างริชเมนู">
+          <div id="rich-areas"></div>
+        </div>
+        <button id="rich-reset" class="secondary" type="button">คืนค่าแบ่งซ้าย–ขวา</button>
+      </div>
+      <button id="rich-save" class="secondary" type="button">บันทึกฉบับร่าง</button>
+      <button id="rich-publish" type="button">เผยแพร่ริชเมนูสมาชิก</button>
+      <p id="rich-status" role="status"></p>
+    </section>
     <section id="shop-overview" hidden>
       <h2 id="shop-overview-name"></h2>
       <p id="shop-overview-info"></p>
@@ -474,6 +508,7 @@
         const customerLink = byId('shop-customer-link');
         const customerShop = selected || (data.can_invite ? data.platform_shops?.find(shop => shop.shop_id === sourceShop) : null);
         customerLink.hidden = !customerShop;
+        if (customerShop && (selected?.can_manage_rich_menu || data.can_invite)) mountShopRichMenu(customerShop, request);
         if (customerShop) {
           document.title = 'จัดการร้าน · ' + customerShop.shop_name;
           customerLink.textContent = 'ลิงก์ลูกค้า · ' + customerShop.shop_name;
@@ -517,6 +552,7 @@
         const matching = (data.platform_shops ?? []).filter(shop => shop.shop_id === saasShop);
         if (!matching.length) platform.textContent = 'ไม่พบร้านนี้';
         for (const shop of matching) {
+          mountShopRichMenu(shop, request);
           const active = String(shop.status).toLowerCase() === 'active';
           const row = appendRow(platform, shop.shop_name + ' · ' + shop.shop_id,
             (active ? 'เปิดบริการ' : 'ปิดบริการ') + ' · ' +

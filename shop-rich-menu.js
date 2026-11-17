@@ -1,0 +1,200 @@
+function mountShopRichMenu(shop, request) {
+  const section = document.getElementById('shop-rich-menu');
+  const field = id => section.querySelector('#rich-' + id);
+  const preview = field('preview');
+  const canvas = field('areas');
+  const fileControl = field('file');
+  const status = field('status');
+  const actionNames = ['สั่งอาหาร', 'เข้าเล่นกุ้ง'];
+  const format = heights => heights === 843 || heights === 1686;
+  let image = null;
+  let areas = [];
+  let drag = null;
+  let shopRequest = 0;
+  const call = (operation, details = {}) =>
+    request('platform_rich_menu', { target_shop_id: shop.shop_id, operation, ...details });
+  const messages = {
+    RICH_MENU_INVALID: 'ตรวจสอบภาพและลิงก์สั่งอาหาร รวมถึงกรอบทั้งสองช่อง',
+    RICH_MENU_OA_REQUIRED: 'เชื่อม LINE OA เฉพาะของร้านก่อนเผยแพร่',
+    RICH_MENU_LINE_FAILED: 'LINE ยังรับเมนูไม่ได้ กรุณาตรวจสอบการเชื่อมต่อ OA และลองใหม่',
+    RICH_MENU_PILOT_ONLY: 'ร้านนี้บันทึกฉบับร่างได้ การเผยแพร่เปิดเฉพาะร้านนำร่องในช่วงทดสอบ',
+    RICH_MENU_BUSY: 'กำลังเผยแพร่เมนูของร้าน กรุณารอสักครู่แล้วเปิดใหม่',
+  };
+
+  function render() {
+    canvas.replaceChildren();
+    if (!image) return;
+    for (const [i, rect] of areas.entries()) {
+      const area = document.createElement('span');
+      area.className = 'rich-area rich-area-' + i;
+      area.textContent = actionNames[i];
+      Object.assign(area.style, {
+        left: (100 * rect.x / 2500) + '%',
+        top: (100 * rect.y / image.height) + '%',
+        width: (100 * rect.width / 2500) + '%',
+        height: (100 * rect.height / image.height) + '%',
+      });
+      canvas.append(area);
+    }
+  }
+
+  function resetAreas() {
+    if (!image) return;
+    areas = [0, 1250].map(x => ({ x, y: 0, width: 1250, height: image.height }));
+    render();
+  }
+
+  function showImage() {
+    field('workspace').hidden = !image;
+    preview.src = image ? 'data:' + image.mime + ';base64,' + image.data : '';
+    canvas.style.aspectRatio = image ? '2500 / ' + image.height : '';
+    render();
+  }
+
+  function coordinates(event) {
+    const bounds = canvas.getBoundingClientRect();
+    return {
+      x: Math.min(2500, Math.max(0, Math.round((event.clientX - bounds.left) * 2500 / bounds.width))),
+      y: Math.min(image.height, Math.max(0, Math.round((event.clientY - bounds.top) * image.height / bounds.height))),
+    };
+  }
+
+  canvas.onpointerdown = event => {
+    if (!image || drag || !event.isPrimary || event.button !== 0) return;
+    const selected = Number(field('action').value);
+    drag = { id: event.pointerId, start: coordinates(event), selected, previous: areas[selected] };
+    canvas.setPointerCapture(event.pointerId);
+  };
+  canvas.onpointermove = event => {
+    if (drag?.id !== event.pointerId) return;
+    const end = coordinates(event);
+    areas[drag.selected] = {
+      x: Math.min(drag.start.x, end.x), y: Math.min(drag.start.y, end.y),
+      width: Math.abs(drag.start.x - end.x), height: Math.abs(drag.start.y - end.y),
+    };
+    render();
+  };
+  const endDrag = (event, cancelled) => {
+    if (drag?.id !== event.pointerId) return;
+    const area = areas[drag.selected];
+    if (cancelled || area.width < 20 || area.height < 20) areas[drag.selected] = drag.previous;
+    drag = null;
+    render();
+  };
+  canvas.onpointerup = event => {
+    canvas.onpointermove(event);
+    endDrag(event, false);
+  };
+  canvas.onpointercancel = event => endDrag(event, true);
+  canvas.onlostpointercapture = event => endDrag(event, true);
+  field('reset').onclick = resetAreas;
+
+  async function readImage(file) {
+    if (!['image/jpeg', 'image/png'].includes(file.type) || file.size > 1000000) throw Error();
+    const bitmap = await createImageBitmap(file);
+    const { width, height } = bitmap;
+    bitmap.close();
+    if (width !== 2500 || !format(height)) throw Error();
+    const data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    return { mime: file.type, data, height };
+  }
+
+  fileControl.onchange = async () => {
+    const file = fileControl.files[0];
+    if (!file) return;
+    const version = ++shopRequest;
+    try {
+      const uploaded = await readImage(file);
+      if (version !== shopRequest) return;
+      image = uploaded;
+      resetAreas();
+      showImage();
+      status.textContent = '';
+    } catch {
+      if (version !== shopRequest) return;
+      status.textContent = 'เลือก PNG หรือ JPEG ขนาด 2500 × 843 หรือ 2500 × 1686 พิกเซล ไม่เกิน 1 MB';
+    } finally {
+      if (version === shopRequest) fileControl.value = '';
+    }
+  };
+
+  field('default').onclick = async () => {
+    const version = ++shopRequest;
+    try {
+      const result = await fetch('./assets/rich-menu-standard-2500x1686.jpg');
+      if (!result.ok) throw Error();
+      const standard = await readImage(await result.blob());
+      if (version !== shopRequest) return;
+      image = standard;
+      resetAreas();
+      showImage();
+      status.textContent = 'เลือกภาพมาตรฐานแล้ว';
+    } catch {
+      if (version === shopRequest) status.textContent = 'โหลดภาพมาตรฐานไม่สำเร็จ';
+    }
+  };
+
+  field('player').href = playerEntryUrl(shop.shop_id);
+  field('food').oninput = () => {
+    try {
+      const url = new URL(field('food').value);
+      if (url.protocol === 'https:') {
+        field('food-test').href = url.href;
+        field('food-test').hidden = false;
+        return;
+      }
+    } catch { /* Await a complete URL. */ }
+    field('food-test').hidden = true;
+  };
+
+  const buttons = [field('save'), field('publish')];
+  async function submit(operation) {
+    if (!image || !field('food').reportValidity() || buttons.some(button => button.disabled)) return;
+    if (operation === 'publish' && !field('food').value.trim()) {
+      status.textContent = 'ใส่ลิงก์สั่งอาหารก่อนเผยแพร่ หรือบันทึกฉบับร่างไว้ก่อน';
+      field('food').focus();
+      return;
+    }
+    const [a, b] = areas;
+    if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) {
+      status.textContent = 'กรอบสั่งอาหารและเข้าเล่นกุ้งซ้อนกัน กรุณาปรับให้แยกกัน';
+      return;
+    }
+    if (operation === 'publish' && !confirm('เผยแพร่ริชเมนูสมาชิกของ ' + shop.shop_name + '?')) return;
+    buttons.forEach(button => { button.disabled = true; });
+    status.textContent = 'กำลังบันทึก…';
+    try {
+      await call(operation, { draft: { ...image, areas, food_url: field('food').value.trim() } });
+      status.textContent = operation === 'save' ? 'บันทึกฉบับร่างแล้ว' : 'เผยแพร่เมนูแล้ว ระบบกำลังซิงก์ให้สมาชิก';
+    } catch (error) {
+      status.textContent = messages[error.message] || 'บันทึกไม่สำเร็จ กรุณาลองใหม่';
+    } finally {
+      buttons.forEach(button => { button.disabled = false; });
+    }
+  }
+  field('save').onclick = () => void submit('save');
+  field('publish').onclick = () => void submit('publish');
+  section.hidden = false;
+  buttons.forEach(button => { button.disabled = true; });
+  const version = shopRequest;
+  void call('load').then(({ draft, published }) => {
+    if (version !== shopRequest) return;
+    if (draft) {
+      image = draft;
+      areas = draft.areas;
+      field('food').value = draft.food_url;
+      field('food').oninput();
+      showImage();
+    } else {
+      void field('default').onclick();
+    }
+    status.textContent = published ? 'ร้านนี้มีริชเมนูสมาชิกที่เผยแพร่แล้ว' : '';
+  }).catch(error => {
+    if (version === shopRequest) status.textContent = messages[error.message] || 'โหลดการตั้งค่าไม่สำเร็จ';
+  }).finally(() => buttons.forEach(button => { button.disabled = false; }));
+}
