@@ -311,6 +311,152 @@ export function dailyFinanceFlex(day, shopName, data, preparedBy) {
   } };
 }
 
+function parseShopRichMenu(draft) {
+  if (!draft || ![843, 1686].includes(draft.height) || !['image/png', 'image/jpeg'].includes(draft.mime) ||
+      typeof draft.data !== 'string' || draft.data.length > 1333336 ||
+      !Array.isArray(draft.areas) || draft.areas.length !== 2 || typeof draft.food_url !== 'string' ||
+      draft.food_url.length > 1000) fail('RICH_MENU_INVALID');
+
+  let url, bytes;
+  try {
+    url = draft.food_url ? new URL(draft.food_url) : null;
+    bytes = Uint8Array.from(atob(draft.data), char => char.charCodeAt(0));
+  } catch { fail('RICH_MENU_INVALID'); }
+  if ((url && (url.protocol !== 'https:' || url.username || url.password || url.href.length > 1000)) ||
+      bytes.byteLength < 24 || bytes.byteLength > 1000000) fail('RICH_MENU_INVALID');
+
+  const view = new DataView(bytes.buffer);
+  let width, height;
+  if (draft.mime === 'image/png' && view.getUint32(0) === 0x89504e47 &&
+      view.getUint32(4) === 0x0d0a1a0a && view.getUint32(12) === 0x49484452) {
+    width = view.getUint32(16);
+    height = view.getUint32(20);
+  } else if (draft.mime === 'image/jpeg' && view.getUint16(0) === 0xffd8) {
+    for (let i = 2; i + 8 < bytes.length && bytes[i] === 255;) {
+      const marker = bytes[i + 1];
+      if (marker === 255) { i++; continue; }
+      const length = view.getUint16(i + 2);
+      if (length < 2 || i + 2 + length > bytes.length || marker === 0xda) break;
+      if ([0xc0, 0xc1, 0xc2].includes(marker) && length >= 8) {
+        height = view.getUint16(i + 5);
+        width = view.getUint16(i + 7);
+        break;
+      }
+      i += 2 + length;
+    }
+  }
+  if (width !== 2500 || height !== draft.height) fail('RICH_MENU_INVALID');
+
+  const areas = draft.areas.map(rect => {
+    if (!rect || !['x','y','width','height'].every(key => Number.isInteger(rect[key]))) fail('RICH_MENU_INVALID');
+    const { x, y, width, height: h } = rect;
+    if (x < 0 || y < 0 || width < 20 || h < 20 || x + width > 2500 || y + h > height) fail('RICH_MENU_INVALID');
+    return { x, y, width, height: h };
+  });
+  const [a, b] = areas;
+  if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) {
+    fail('RICH_MENU_INVALID');
+  }
+  return { draft: { height, mime: draft.mime, data: draft.data, food_url: url?.href ?? '', areas }, bytes };
+}
+
+function richMenuLine(fetcher, token, path, options = {}, data = false) {
+  const domain = data ? 'api-data.line.me' : 'api.line.me';
+  return fetcher('https://' + domain + path, {
+    ...options, signal: AbortSignal.timeout(6500),
+    headers: { ...options.headers, Authorization: 'Bearer ' + token },
+  });
+}
+
+async function manageShopRichMenu(db, fetcher, input, shopId) {
+  const table = 'shop_rich_menus';
+  if (input.operation === 'load') {
+    const result = await db.from(table).select('draft,published_id').eq('shop_id', shopId).maybeSingle();
+    if (result.error) fail('RICH_MENU_UNAVAILABLE', 500);
+    return { draft: result.data?.draft ?? null, published: Boolean(result.data?.published_id) };
+  }
+  if (!['save', 'publish'].includes(input.operation)) fail('RICH_MENU_INVALID');
+  const { draft, bytes } = parseShopRichMenu(input.draft);
+  if (input.operation === 'publish') {
+    if (!draft.food_url) fail('RICH_MENU_INVALID');
+    const pilot = await db.from('shop_rich_menu_pilots').select('shop_id').eq('shop_id', shopId).maybeSingle();
+    if (pilot.error) fail('RICH_MENU_UNAVAILABLE', 500);
+    if (!pilot.data) fail('RICH_MENU_PILOT_ONLY', 409);
+  }
+  const saved = await db.from(table).upsert({ shop_id: shopId, draft }, { onConflict: 'shop_id' });
+  if (saved.error) fail('RICH_MENU_UNAVAILABLE', 500);
+  if (input.operation === 'save') return {};
+
+  const [shop, oa] = await Promise.all([
+    db.from('shops').select('line_oa_bot_uid').eq('shop_id', shopId).single(),
+    db.from('shop_oa_runtime').select('line_oa_token').eq('shop_id', shopId).single(),
+  ]);
+  const token = oa.data?.line_oa_token;
+  const bot = shop.data?.line_oa_bot_uid;
+  if (!token || !bot) fail('RICH_MENU_OA_REQUIRED', 409);
+  const lock = crypto.randomUUID();
+  const claimed = await db.from(table).update({ publish_lock: lock, publish_started_at: new Date().toISOString() })
+    .eq('shop_id', shopId)
+    .or('publish_lock.is.null,publish_started_at.lt.' + new Date(Date.now() - 120000).toISOString())
+    .select('shop_id').maybeSingle();
+  if (claimed.error) fail('RICH_MENU_UNAVAILABLE', 500);
+  if (!claimed.data) fail('RICH_MENU_BUSY', 409);
+  let menu;
+  let finished = false;
+  try {
+    const info = await richMenuLine(fetcher, token, '/v2/bot/info');
+    if (!info.ok || (await info.json()).userId !== bot) fail('RICH_MENU_OA_REQUIRED', 409);
+    const player = 'https://liff.line.me/2012454809-UFGeUGbW?shop=' + encodeURIComponent(shopId);
+    const created = await richMenuLine(fetcher, token, '/v2/bot/richmenu', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        size: { width: 2500, height: draft.height }, selected: true,
+        name: 'Shrimp members ' + shopId, chatBarText: 'เมนูสมาชิก',
+        areas: draft.areas.map((bounds, i) => ({ bounds, action: { type: 'uri', uri: i === 0 ? draft.food_url : player } })),
+      }),
+    });
+    if (!created.ok) fail('RICH_MENU_LINE_FAILED', 502);
+    menu = (await created.json()).richMenuId;
+    if (typeof menu !== 'string' || !/^richmenu-[a-f0-9]+$/i.test(menu)) fail('RICH_MENU_LINE_FAILED', 502);
+    const uploaded = await richMenuLine(fetcher, token, '/v2/bot/richmenu/' + menu + '/content',
+      { method: 'POST', headers: { 'Content-Type': draft.mime }, body: bytes }, true);
+    if (!uploaded.ok) fail('RICH_MENU_LINE_FAILED', 502);
+    const result = await db.rpc('finish_shop_rich_menu', { p_shop: shopId, p_lock: lock, p_bot: bot, p_menu: menu });
+    if (result.error || result.data !== true) fail('RICH_MENU_UNAVAILABLE', 500);
+    finished = true;
+    return {};
+  } finally {
+    if (!finished) {
+      // Retain any uploaded menu after an ambiguous database response. A later publish is safe.
+      await db.from(table).update({ publish_lock: null }).eq('shop_id', shopId).eq('publish_lock', lock);
+    }
+  }
+}
+
+async function syncShopRichMenus(db, fetcher) {
+  const jobs = await db.rpc('claim_shop_rich_menu_sync');
+  if (jobs.error) fail('RICH_MENU_UNAVAILABLE', 500);
+  await Promise.all((jobs.data ?? []).map(async job => {
+    const path = '/v2/bot/user/' + encodeURIComponent(job.oa_uid) + '/richmenu';
+    try {
+      const observed = await richMenuLine(fetcher, job.token, path);
+      if (observed.status !== 404 && !observed.ok) return;
+      const current = observed.ok ? (await observed.json()).richMenuId : null;
+      if (job.menu_id && job.menu_id !== current) {
+        if (current && !job.known_menus.includes(current)) return;
+        const linked = await richMenuLine(fetcher, job.token, path + '/' + job.menu_id, { method: 'POST' });
+        if (!linked.ok) return;
+      } else if (!job.menu_id && current && job.known_menus.includes(current)) {
+        const removed = await richMenuLine(fetcher, job.token, path, { method: 'DELETE' });
+        if (!removed.ok) return;
+      }
+      await db.from('shop_rich_menu_members').update({
+        applied_id: job.menu_id, lease: null, refresh_after: new Date(Date.now() + 86400000).toISOString(),
+      }).eq('shop_id', job.shop_id).eq('oa_uid', job.oa_uid).eq('lease', job.lease);
+    } catch { /* An expired lease lets the next run retry. */ }
+  }));
+}
+
 export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
   const entryAccounts = new Map();
   function database() {
@@ -382,10 +528,20 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       if (req.headers.get('origin') && req.headers.get('origin') !== origin) fail('ORIGIN_NOT_ALLOWED', 403);
       if (!(req.headers.get('content-type') || '').toLowerCase().startsWith('application/json')) fail('UNSUPPORTED_CONTENT_TYPE', 415);
       const raw = await req.text();
-      if (raw.length > 65536) fail('REQUEST_TOO_LARGE', 413);
+      if (raw.length > 1350000) fail('REQUEST_TOO_LARGE', 413);
       let input;
       try { input = JSON.parse(raw); } catch (_) { fail('INVALID_JSON'); }
       if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_JSON');
+      if (raw.length > 65536 && input.action !== 'platform_rich_menu') fail('REQUEST_TOO_LARGE', 413);
+      if (input.action === 'rich_menu_worker') {
+        const secret = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+        if (!/^[a-f0-9]{64}$/.test(secret)) fail('ADMIN_REQUIRED', 403);
+        const db = database();
+        const authorized = await db.rpc('authorize_shop_rich_menu_worker', { p_secret: secret });
+        if (authorized.error || authorized.data !== true) fail('ADMIN_REQUIRED', 403);
+        await syncShopRichMenus(db, fetcher);
+        return reply({ ok: true });
+      }
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
       if (input.action === 'public_cash_board') {
         if (!/^SHOP_[0-9]{3,24}$/.test(shopId)) fail('SHOP_INVALID');
@@ -395,8 +551,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, board: result.data });
       }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_correct_bet', 'round_begin_settlement', 'coverage_read', 'coverage_move', 'coverage_fund', 'coverage_reserve', 'coverage_report', 'banker_payout', 'backer_portal', 'daily_staff_round_report', 'round_open', 'round_close_with_coverage', 'round_finalize', 'table_round_summary', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
-      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
+      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_correct_bet', 'round_begin_settlement', 'coverage_read', 'coverage_move', 'coverage_fund', 'coverage_reserve', 'coverage_report', 'banker_payout', 'backer_portal', 'daily_staff_round_report', 'round_open', 'round_close_with_coverage', 'round_finalize', 'table_round_summary', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'backer_portal'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
@@ -435,6 +591,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const shops = (membership.data ?? []).flatMap(({ shop, member_id }) => shop ? [{
           shop_id: shop.shop_id, shop_name: shop.shop_name, status: shop.status,
           oa_configured: Boolean(shop.line_oa_bot_uid || shop.line_oa_token?.trim()),
+          can_manage_rich_menu: member_id === 'M0000',
           can_manage_billing: member_id === 'M0000' && shop.shop_id !== 'SHOP_000',
           can_refer_shop: member_id === 'M0000' && String(shop.status).toLowerCase() === 'active',
         }] : []);
@@ -564,6 +721,15 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (['OA_ALREADY_LINKED', 'SHOP_NOT_FOUND', 'OA_DETAILS_INVALID'].includes(saved.data)) fail(saved.data, 409);
         if (saved.data !== 'SAVED') fail('OA_SAVE_FAILED', 500);
         return reply({ ok: true });
+      }
+      if (input.action === 'platform_rich_menu') {
+        const target = input.target_shop_id;
+        if (typeof target !== 'string' || !/^SHOP_[0-9]{3,24}$/.test(target)) fail('SHOP_INVALID');
+        const member = await db.from('users').select('uid').eq('shop_id', target).eq('uid', claims.sub)
+          .eq('status', 'Active').eq('member_id', 'M0000').in('role', ['Admin', 'Superadmin']).maybeSingle();
+        if (member.error) fail('RICH_MENU_UNAVAILABLE', 500);
+        if (!member.data && !await canCreateShop()) fail('ADMIN_REQUIRED', 403);
+        return reply({ ok: true, ...await manageShopRichMenu(db, fetcher, input, target) });
       }
       if (input.action === 'platform_shop_control') {
         if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
