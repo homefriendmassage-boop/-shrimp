@@ -10,7 +10,7 @@
   <script src="./config.js?v=player-entry-1"></script>
   <script src="./payment-ui.js?v=1"></script>
   <script src="./platform-billing.js?v=qr-1"></script>
-  <script src="./shop-rich-menu.js?v=1"></script>
+  <script src="./shop-rich-menu.js?v=3"></script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #131620; color: #f8fafc; font: 16px/1.5 system-ui, sans-serif; }
@@ -58,6 +58,7 @@
     .rich-area { position: absolute; border: 2px dashed white; padding: 3px; pointer-events: none; overflow: hidden; font-size: .8rem; }
     .rich-area-0 { background: #0b73514d; }
     .rich-area-1 { background: #184aba4d; }
+    .rich-area-2 { background: #a52a2a4d; }
     #rich-status { margin: 0; }
     @media (max-width: 360px) { .billing-products { grid-template-columns: 1fr; } }
   </style>
@@ -84,17 +85,22 @@
       <label>ลิงก์สั่งอาหาร
         <input id="rich-food" type="url" placeholder="https://">
       </label>
+      <label>ลิงก์จองโต๊ะ / ที่นั่ง
+        <input id="rich-booking" type="url" placeholder="https://">
+      </label>
+      <small>ช่องที่ยังไม่ใส่ลิงก์จะแจ้งว่าร้านยังไม่เปิดบริการส่วนนี้</small>
+      <a id="rich-booking-test" target="_blank" rel="noopener noreferrer" hidden>ทดลองเปิดหน้าจองโต๊ะ / ที่นั่ง</a>
       <a id="rich-food-test" target="_blank" rel="noopener noreferrer" hidden>ทดลองเปิดหน้าสั่งอาหาร</a>
       <a id="rich-player" target="_blank" rel="noopener noreferrer">ทดลองเปิดหน้าเล่นกุ้งของร้านนี้</a>
       <div id="rich-workspace" hidden>
         <label>เลือกช่องแล้วลากกรอบบนภาพ
-          <select id="rich-action"><option value="0">สั่งอาหาร</option><option value="1">เข้าเล่นกุ้ง</option></select>
+          <select id="rich-action"><option value="0">สั่งอาหาร</option><option value="1">จองโต๊ะ / ที่นั่ง</option><option value="2">เข้าเล่นกุ้ง</option></select>
         </label>
         <div id="rich-preview-box">
           <img id="rich-preview" alt="ตัวอย่างริชเมนู">
           <div id="rich-areas"></div>
         </div>
-        <button id="rich-reset" class="secondary" type="button">คืนค่าแบ่งซ้าย–ขวา</button>
+        <button id="rich-reset" class="secondary" type="button">แบ่ง 3 ช่องเท่ากัน</button>
       </div>
       <button id="rich-save" class="secondary" type="button">บันทึกฉบับร่าง</button>
       <button id="rich-publish" type="button">เผยแพร่ริชเมนูสมาชิก</button>

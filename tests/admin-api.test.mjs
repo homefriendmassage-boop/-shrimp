@@ -566,3 +566,17 @@ test('Cashier can read banker payouts and only Admin can record a withdrawal', a
   } });
   assert.equal((await admin.handler(request(payout))).status, 200);
 });
+
+test('rich menus accept blank food and booking links and preserve two-panel drafts', () => {
+  const parse = new Function('fail', source.slice(source.indexOf('function parseShopRichMenu('),
+    source.indexOf('function richMenuLine(')) + '\nreturn parseShopRichMenu;')(code => { throw Error(code); });
+  const data = fs.readFileSync(new URL('../assets/rich-menu-standard-2500x843.jpg', import.meta.url)).toString('base64');
+  const areas = [0, 833, 1667].map((x, i) => ({ x, y: 0, width: [833, 834, 833][i], height: 843 }));
+  const draft = { data, mime: 'image/jpeg', height: 843, food_url: '', booking_url: '', areas };
+  assert.deepEqual(parse(draft).draft.areas, areas);
+  assert.equal(parse(draft).draft.booking_url, '');
+  assert.throws(() => parse({ ...draft, booking_url: 'javascript:alert(1)' }), /RICH_MENU_INVALID/);
+  assert.throws(() => parse({ ...draft, areas: [areas[0], { ...areas[1], x: 800 }, areas[2]] }), /RICH_MENU_INVALID/);
+  assert.equal(parse({ ...draft, booking_url: undefined, areas: [0, 1250].map(x =>
+    ({ x, y: 0, width: 1250, height: 843 })) }).draft.areas.length, 2);
+});

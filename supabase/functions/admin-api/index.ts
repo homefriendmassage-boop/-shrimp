@@ -314,15 +314,17 @@ export function dailyFinanceFlex(day, shopName, data, preparedBy) {
 function parseShopRichMenu(draft) {
   if (!draft || ![843, 1686].includes(draft.height) || !['image/png', 'image/jpeg'].includes(draft.mime) ||
       typeof draft.data !== 'string' || draft.data.length > 1333336 ||
-      !Array.isArray(draft.areas) || draft.areas.length !== 2 || typeof draft.food_url !== 'string' ||
+      !Array.isArray(draft.areas) || ![2, 3].includes(draft.areas.length) || typeof draft.food_url !== 'string' ||
       draft.food_url.length > 1000) fail('RICH_MENU_INVALID');
 
-  let url, bytes;
+  let url, booking, bytes;
   try {
     url = draft.food_url ? new URL(draft.food_url) : null;
+    if (draft.booking_url != null && (typeof draft.booking_url !== 'string' || draft.booking_url.length > 1000)) fail('RICH_MENU_INVALID');
+    booking = draft.booking_url ? new URL(draft.booking_url) : null;
     bytes = Uint8Array.from(atob(draft.data), char => char.charCodeAt(0));
   } catch { fail('RICH_MENU_INVALID'); }
-  if ((url && (url.protocol !== 'https:' || url.username || url.password || url.href.length > 1000)) ||
+  if ([url, booking].some(link => link && (link.protocol !== 'https:' || link.username || link.password || link.href.length > 1000)) ||
       bytes.byteLength < 24 || bytes.byteLength > 1000000) fail('RICH_MENU_INVALID');
 
   const view = new DataView(bytes.buffer);
@@ -353,11 +355,11 @@ function parseShopRichMenu(draft) {
     if (x < 0 || y < 0 || width < 20 || h < 20 || x + width > 2500 || y + h > height) fail('RICH_MENU_INVALID');
     return { x, y, width, height: h };
   });
-  const [a, b] = areas;
-  if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) {
+  if (areas.some((a, i) => areas.slice(i + 1).some(b =>
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height))) {
     fail('RICH_MENU_INVALID');
   }
-  return { draft: { height, mime: draft.mime, data: draft.data, food_url: url?.href ?? '', areas }, bytes };
+  return { draft: { height, mime: draft.mime, data: draft.data, food_url: url?.href ?? '', booking_url: booking?.href ?? '', areas }, bytes };
 }
 
 function richMenuLine(fetcher, token, path, options = {}, data = false) {
@@ -368,7 +370,7 @@ function richMenuLine(fetcher, token, path, options = {}, data = false) {
   });
 }
 
-async function manageShopRichMenu(db, fetcher, input, shopId) {
+async function manageShopRichMenu(db, fetcher, input, shopId, defaultMenu = false) {
   const table = 'shop_rich_menus';
   if (input.operation === 'load') {
     const result = await db.from(table).select('draft,published_id').eq('shop_id', shopId).maybeSingle();
@@ -378,13 +380,18 @@ async function manageShopRichMenu(db, fetcher, input, shopId) {
   if (!['save', 'publish'].includes(input.operation)) fail('RICH_MENU_INVALID');
   const { draft, bytes } = parseShopRichMenu(input.draft);
   if (input.operation === 'publish') {
-    if (!draft.food_url) fail('RICH_MENU_INVALID');
     const pilot = await db.from('shop_rich_menu_pilots').select('shop_id').eq('shop_id', shopId).maybeSingle();
     if (pilot.error) fail('RICH_MENU_UNAVAILABLE', 500);
     if (!pilot.data) fail('RICH_MENU_PILOT_ONLY', 409);
   }
-  const saved = await db.from(table).upsert({ shop_id: shopId, draft }, { onConflict: 'shop_id' });
-  if (saved.error) fail('RICH_MENU_UNAVAILABLE', 500);
+  if (defaultMenu) {
+    const prepared = await db.rpc('prepare_default_shop_rich_menu', { p_shop: shopId, p_draft: draft });
+    if (prepared.error) fail('RICH_MENU_UNAVAILABLE', 500);
+    if (prepared.data !== true) return {};
+  } else {
+    const saved = await db.from(table).upsert({ shop_id: shopId, draft, use_default: false }, { onConflict: 'shop_id' });
+    if (saved.error) fail('RICH_MENU_UNAVAILABLE', 500);
+  }
   if (input.operation === 'save') return {};
 
   const [shop, oa] = await Promise.all([
@@ -412,7 +419,13 @@ async function manageShopRichMenu(db, fetcher, input, shopId) {
       body: JSON.stringify({
         size: { width: 2500, height: draft.height }, selected: true,
         name: 'Shrimp members ' + shopId, chatBarText: 'เมนูสมาชิก',
-        areas: draft.areas.map((bounds, i) => ({ bounds, action: { type: 'uri', uri: i === 0 ? draft.food_url : player } })),
+        areas: draft.areas.map((bounds, i) => {
+          const isPlayer = i === draft.areas.length - 1;
+          const uri = isPlayer ? player : i === 0 ? draft.food_url : draft.booking_url;
+          return { bounds, action: uri ? { type: 'uri', uri } : {
+            type: 'message', text: i === 0 ? 'ร้านยังไม่เปิดลิงก์สั่งอาหาร' : 'ร้านยังไม่เปิดลิงก์จองโต๊ะ / ที่นั่ง',
+          } };
+        }),
       }),
     });
     if (!created.ok) fail('RICH_MENU_LINE_FAILED', 502);
@@ -434,6 +447,23 @@ async function manageShopRichMenu(db, fetcher, input, shopId) {
 }
 
 async function syncShopRichMenus(db, fetcher) {
+  const defaults = await db.rpc('next_default_shop_rich_menu');
+  if (!defaults.error && defaults.data) {
+    try {
+      const response = await fetcher('https://homefriendmassage-boop.github.io/-shrimp/assets/rich-menu-standard-2500x843.jpg',
+        { signal: AbortSignal.timeout(6500) });
+      if (response.ok) {
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        let binary = '';
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        await manageShopRichMenu(db, fetcher, { operation: 'publish', draft: {
+          mime: 'image/jpeg', data: btoa(binary), height: 843, food_url: '', booking_url: '',
+          areas: [0, 833, 1667].map((x, i) => ({ x, y: 0, width: [833, 834, 833][i], height: 843 })),
+        } }, defaults.data, true);
+      }
+    } catch { /* The next scheduled run retries default publication. */ }
+  }
+
   const jobs = await db.rpc('claim_shop_rich_menu_sync');
   if (jobs.error) fail('RICH_MENU_UNAVAILABLE', 500);
   await Promise.all((jobs.data ?? []).map(async job => {
