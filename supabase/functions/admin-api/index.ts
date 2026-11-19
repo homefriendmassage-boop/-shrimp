@@ -399,8 +399,14 @@ async function manageShopRichMenu(db, fetcher, input, shopId, defaultMenu = fals
     db.from('shop_oa_runtime').select('line_oa_token').eq('shop_id', shopId).single(),
   ]);
   const token = oa.data?.line_oa_token;
-  const bot = shop.data?.line_oa_bot_uid;
-  if (!token || !bot) fail('RICH_MENU_OA_REQUIRED', 409);
+  let bot = shop.data?.line_oa_bot_uid;
+  if (!token) fail('RICH_MENU_OA_REQUIRED', 409);
+  if (!bot && shopId === 'SHOP_000') {
+    const info = await richMenuLine(fetcher, token, '/v2/bot/info');
+    if (!info.ok) fail('RICH_MENU_OA_REQUIRED', 409);
+    bot = (await info.json()).userId;
+  }
+  if (!bot || !/^U[0-9a-f]{32}$/i.test(bot)) fail('RICH_MENU_OA_REQUIRED', 409);
   const lock = crypto.randomUUID();
   const claimed = await db.from(table).update({ publish_lock: lock, publish_started_at: new Date().toISOString() })
     .eq('shop_id', shopId)
