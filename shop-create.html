@@ -347,6 +347,44 @@
       row.append(button);
     }
 
+    function addLiveLink(row, shop) {
+      const form = document.createElement('form');
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.id = 'live-url-' + shop.shop_id;
+      input.type = 'url';
+      input.maxLength = 2048;
+      input.placeholder = 'https://';
+      input.value = shop.live_url ?? '';
+      label.htmlFor = input.id;
+      label.textContent = 'ลิงก์ดูสด (HTTPS)';
+      const button = document.createElement('button');
+      button.type = 'submit';
+      button.className = 'secondary';
+      button.textContent = 'บันทึกลิงก์ดูสด';
+      const message = document.createElement('small');
+      message.setAttribute('role', 'status');
+      message.textContent = 'เว้นว่างแล้วบันทึกเพื่อลบลิงก์';
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        button.disabled = true;
+        try {
+          await request('platform_shop_control', {
+            target_shop_id: shop.shop_id, setting: 'live_url', live_url: input.value.trim()
+          });
+          message.textContent = input.value.trim() ? 'บันทึกลิงก์แล้ว' : 'ลบลิงก์แล้ว';
+        } catch (error) {
+          message.textContent = error.message === 'LIVE_URL_INVALID'
+            ? 'กรุณาใช้ลิงก์ HTTPS ที่ไม่มีชื่อผู้ใช้หรือรหัสผ่าน'
+            : 'บันทึกลิงก์ไม่สำเร็จ กรุณาลองอีกครั้ง';
+        } finally {
+          button.disabled = false;
+        }
+      });
+      form.append(label, input, button, message);
+      row.append(form);
+    }
+
     const oaDialog = byId('oa-dialog');
     const oaForm = byId('oa-form');
     const oaSave = byId('oa-save');
@@ -644,6 +682,7 @@
           addControl(row, shop, 'line_notifications_enabled', !shop.line_notifications_enabled,
             shop.line_notifications_enabled ? 'ปิดการแจ้งเตือน LINE' : 'เปิดการแจ้งเตือน LINE');
           addControl(row, shop, 'live_enabled', !shop.live_enabled, shop.live_enabled ? 'ปิดเมนู LIVE สด' : 'เปิดเมนู LIVE สด');
+          addLiveLink(row, shop);
         }
         byId('title').textContent = 'รายละเอียดการเปิด–ปิดระบบ';
         byId('platform-panel').hidden = false;
