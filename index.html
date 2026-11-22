@@ -617,6 +617,7 @@
         entry.hidden = true;
         document.getElementById('player-main').hidden = false;
         void loadPlayerEntry();
+        if (cashTableQr) void readPlayerProfile('table_guest_scan', cashTableQr).catch(() => {});
         await authenticateUser(parseMemberCode(currentShopId, urlParams.get('ref')));
         if (currentUserStatus === 'Active' && readDepositDraft()) openTopupModal();
         startCountdownTimer();
@@ -955,7 +956,7 @@
       const end = Number(round?.end_time_ms) || 0;
       targetEndTimeMs = round?.status === 'Open' ? end : 0;
       const wasOpen = isRoundOpen;
-      isRoundOpen = round?.status === 'Open' && end > Date.now();
+      isRoundOpen = round?.status === 'Open' && end > Date.now() && (!tableMode || snapshot.table_open === true);
       if (displayedRoundId !== (round?.round_id ?? null)) {
         lockBettingUI(true);
         displayedRoundId = round?.round_id ?? null;
@@ -983,6 +984,12 @@
       if (snapshot.daily_results) renderDailyStats(snapshot.daily_results);
     }
 
+    const playerTableMessages = {
+      GUEST_BILL_REQUIRED: 'แจ้งพนักงานให้จับคู่ LINE กับบิลของคุณก่อนลงยอด',
+      TABLE_QR_INVALID: 'QR โต๊ะนี้เปลี่ยนแล้ว กรุณาขอ QR ใบใหม่',
+      TABLE_QR_EXPIRED: 'QR โต๊ะหมดอายุแล้ว กรุณาขอ QR ใบใหม่',
+    };
+
     async function fetchDashboard() {
       clearTimeout(liveTimer);
       if (currentUserStatus !== 'Active' || document.hidden) return;
@@ -998,7 +1005,7 @@
         });
         if (!snapshot) throw new Error('PLAYER_STATE_UNAVAILABLE');
         renderLiveSnapshot(snapshot, table);
-        sync.textContent = '';
+        sync.textContent = snapshot.table_error ? (playerTableMessages[snapshot.table_error] || '') : '';
       } catch (error) {
         isRoundOpen = false;
         targetEndTimeMs = 0;
@@ -1035,6 +1042,7 @@
     function playerBetError(error) {
       const messages = {
         ROUND_CLOSED: 'รอบนี้ปิดรับแล้วหรือเปลี่ยนรอบ กรุณาตรวจรอบปัจจุบัน',
+        ...playerTableMessages,
         TABLE_QR_EXPIRED: 'QR โต๊ะหมดอายุเวลา 06:00 น. กรุณาขอ QR ใหม่จากร้าน',
         TABLE_QR_INVALID: 'QR โต๊ะนี้ใช้ไม่ได้ กรุณาขอสแกนจากร้านอีกครั้ง',
         TABLE_CLOSED: 'โต๊ะนี้ปิดรับยอด กรุณาติดต่อแคชเชียร์',
