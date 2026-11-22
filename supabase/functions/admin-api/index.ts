@@ -666,9 +666,12 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         }
         if (canInvite) {
           const managed = await db.from('shops').select('shop_id,shop_name,status,line_oa_token,line_oa_bot_uid,live_enabled,line_notifications_enabled,membership_notice_recipient_uid,admin_group_id').order('shop_id');
-          if (managed.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+          const liveSettings = await db.from('shop_live_links').select('shop_id,live_url');
+          if (managed.error || liveSettings.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
+          const liveLinks = new Map((liveSettings.data ?? []).map(row => [row.shop_id, row.live_url]));
           platformShops = (managed.data ?? []).map(({ line_oa_token, line_oa_bot_uid, ...shop }) => ({
             ...shop, oa_configured: Boolean(line_oa_bot_uid || line_oa_token?.trim()),
+            live_url: liveLinks.get(shop.shop_id) ?? null,
             ...planDetails(shop.shop_id),
           }));
         }
@@ -785,6 +788,22 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
         const target = input.target_shop_id;
         if (typeof target !== 'string' || !/^[\w-]{1,80}$/.test(target)) fail('SHOP_INVALID');
+        if (input.setting === 'live_url') {
+          if (typeof input.live_url !== 'string' || input.live_url.length > 2048) fail('LIVE_URL_INVALID');
+          const value = input.live_url.trim();
+          let liveUrl = null;
+          if (value) {
+            let parsed;
+            try { parsed = new URL(value); } catch { fail('LIVE_URL_INVALID'); }
+            if (parsed.protocol !== 'https:' || parsed.username || parsed.password ||
+                !/^https:\/\//i.test(value) || parsed.href.length > 2048) fail('LIVE_URL_INVALID');
+            liveUrl = parsed.href;
+          }
+          const saved = await db.from('shop_live_links').upsert({ shop_id: target, live_url: liveUrl });
+          if (saved.error?.code === '23503') fail('SHOP_INVALID');
+          if (saved.error) fail('LIVE_URL_SAVE_FAILED', 500);
+          return reply({ ok: true });
+        }
         let values;
         if (input.setting === 'live_enabled' && typeof input.enabled === 'boolean') {
           values = { live_enabled: input.enabled };
@@ -1097,7 +1116,12 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)).slice(0, 10);
           return reply({ ok: true, wallet_requests: history, bonus_balance: profile.data.commission_balance });
         }
-        return reply({ ok: true, staff, state: 'Approved', player: profile.data, live_enabled: shop.data.live_enabled === true });
+        let liveUrl = null;
+        if (shop.data.live_enabled === true) {
+          const liveLink = await db.from('shop_live_links').select('live_url').eq('shop_id', shopId).maybeSingle();
+          if (!liveLink.error) liveUrl = liveLink.data?.live_url ?? null;
+        }
+        return reply({ ok: true, staff, state: 'Approved', player: profile.data, live_enabled: shop.data.live_enabled === true, live_url: liveUrl });
       }
 
       // Identity always comes from LINE verification, never from input.uid/role.
