@@ -625,7 +625,7 @@
           <div style="background:#0f111a;padding:10px;border-radius:8px;border:1px solid var(--card-border)">
             <div>ค่าบริการถอนโบนัส (รายได้ร้าน)</div><strong id="repBonusFee">—</strong>
             <div>โอนจ่ายโบนัส</div><strong id="repBonusWithdrawn">—</strong>
-            <div>โบนัสค้างจ่ายปัจจุบัน</div><strong id="repBonusLiability">—</strong>
+            <div>ยอดคงเหลือในกระเป๋าโบนัสปัจจุบัน</div><strong id="repBonusLiability">—</strong>
           </div>
         </div>
         
@@ -638,6 +638,10 @@
         </div>
       </div>
       
+      <section class="card">
+        <div class="card-title">กระทบยอดผู้เล่นและผู้แนะนำ</div>
+        <div id="dailyMemberReconciliation" role="status"></div>
+      </section>
       <section class="card">
         <div class="card-title">ค่าน้ำและผลรับจบแยกช่องทาง</div>
         <div id="dailyCoverageReport" role="status"></div>
@@ -664,12 +668,26 @@
           <h2 style="margin-bottom: 5px;">รายงานสรุปยอดประจำวัน - บ่อตกกุ้ง</h2>
           <p style="margin-top: 0; color: #555;">วันที่: <span id="printDateA4"></span> | พิมพ์โดย: <span id="printAdminNameA4"></span></p>
       </div>
+      <h3>Wallet ออนไลน์และค่าน้ำ</h3>
+      <table class="report-table">
+          <tr><td>ฝากเข้า Wallet สมาชิก</td><td class="text-right" id="p_walletDepositA4">—</td></tr>
+          <tr><td>ถอนจาก Wallet สมาชิก</td><td class="text-right" id="p_walletWithdrawA4">—</td></tr>
+          <tr><td>ยอดแทงออนไลน์ที่ตัดผลแล้ว</td><td class="text-right" id="p_walletStakeA4">—</td></tr>
+          <tr><td>ยอดจ่ายคืน Wallet รวมทุน</td><td class="text-right" id="p_walletPayoutA4">—</td></tr>
+          <tr><td>เล่นได้/เสียสุทธิฝั่งผู้เล่น</td><td class="text-right" id="p_walletNetA4">—</td></tr>
+          <tr><td>ค่าน้ำยอดจับคู่</td><td class="text-right" id="p_matchedFeeA4">—</td></tr>
+          <tr><td>ค่าน้ำผู้เล่นจากยอดรับจบ</td><td class="text-right" id="p_playerCoverageFeeA4">—</td></tr>
+          <tr><td>ค่าน้ำหักจากแบงเกอร์</td><td class="text-right" id="p_bankerFeeA4">—</td></tr>
+          <tr><td>รวมค่าน้ำที่บันทึกไว้</td><td class="text-right" id="p_totalWaterFeeA4">—</td></tr>
+      </table>
+      <p>ยอดฝาก/ถอนรวมรายการที่แอดมินบันทึกเข้า Wallet · ค่าน้ำรวมทุกช่องทางตามที่บันทึกไว้</p>
+      <div id="printMemberReconciliationA4"></div>
       <div id="printCashTablesA4"></div>
       <h3>1. สรุปผลกำไร-ขาดทุน (P&L)</h3>
       <table class="report-table">
           <tr><th style="width: 70%;">รายการ</th><th class="text-right">จำนวนเงิน (บาท)</th></tr>
           <tr><td>ยอดเดิมพันรวมจากลูกค้า (Gross Bet)</td><td class="text-right" id="p_grossBetA4">0</td></tr>
-          <tr><td>ยอดจ่ายลูกค้าและคนรับจบ (Payout)</td><td class="text-right" style="color: red;" id="p_payoutA4">0</td></tr>
+          <tr><td>ยอดจ่ายตามบิลผู้เล่น รวมทุน</td><td class="text-right" style="color: red;" id="p_payoutA4">0</td></tr>
           <tr><td>ยอดคืนบิลยกเลิก (Cancelled)</td><td class="text-right" id="p_cancelledA4">0</td></tr>
           <tr><td>หักค่าคอมมิชชั่นผู้แนะนำ (Commission)</td><td class="text-right" style="color: red;" id="p_commA4">0</td></tr>
           <tr><td>ผลสุทธิหลังหักค่าแนะนำ</td><td class="text-right" id="p_netProfitA4">0</td></tr>
@@ -679,8 +697,8 @@
       <h3>2. สรุปรายการฝาก-ถอนเครดิต</h3>
       <table class="report-table">
           <tr><th style="width: 40%;">ประเภท</th><th style="width: 30%;">ผู้ทำรายการ</th><th class="text-right" style="width: 15%;">จำนวนครั้ง</th><th class="text-right" style="width: 15%;">รวมเป็นเงิน</th></tr>
-          <tr><td>เติมเงินเข้าให้ลูกค้า/โต๊ะ/รับจบ</td><td id="p_adminDepListA4">ทุกคน</td><td class="text-right" id="p_depCountA4">0</td><td class="text-right" id="p_totalDepA4">0</td></tr>
-          <tr><td>ถอนเงินคืนให้ลูกค้า/โต๊ะ/รับจบ</td><td id="p_adminWdListA4">ทุกคน</td><td class="text-right" id="p_wdCountA4">0</td><td class="text-right" style="color: red;" id="p_totalWdA4">0</td></tr>
+          <tr><td>ฝากเครดิต (ไม่รวมเงินสดโต๊ะ)</td><td id="p_adminDepListA4">ทุกคน</td><td class="text-right" id="p_depCountA4">0</td><td class="text-right" id="p_totalDepA4">0</td></tr>
+          <tr><td>ถอนเครดิต (ไม่รวมเงินสดโต๊ะ)</td><td id="p_adminWdListA4">ทุกคน</td><td class="text-right" id="p_wdCountA4">0</td><td class="text-right" style="color: red;" id="p_totalWdA4">0</td></tr>
           <tr class="grand-total"><td>เครดิตสมาชิกสุทธิ (เติม - ถอน)</td><td></td><td></td><td class="text-right" id="p_drawerNetA4">0</td></tr>
       </table>
       <h3>3. สถิติรอบชั่งกุ้ง</h3>
@@ -699,6 +717,20 @@
           <div style="font-size: 10px; text-align: left; margin-top: 5px;">วันที่: <span id="printDateSlip"></span></div>
           <div style="font-size: 10px; text-align: left;">แอดมิน: <span id="printAdminNameSlip"></span></div>
       </div>
+      <div class="slip-section">
+          <div class="slip-bold">Wallet ออนไลน์และค่าน้ำ</div>
+          <div class="slip-row"><span>ฝากเข้า Wallet สมาชิก</span><span id="p_walletDepositSlip">—</span></div>
+          <div class="slip-row"><span>ถอนจาก Wallet สมาชิก</span><span id="p_walletWithdrawSlip">—</span></div>
+          <div class="slip-row"><span>ยอดแทงออนไลน์ที่ตัดผลแล้ว</span><span id="p_walletStakeSlip">—</span></div>
+          <div class="slip-row"><span>ยอดจ่ายคืน Wallet รวมทุน</span><span id="p_walletPayoutSlip">—</span></div>
+          <div class="slip-row"><span>เล่นได้/เสียสุทธิฝั่งผู้เล่น</span><span id="p_walletNetSlip">—</span></div>
+          <div class="slip-row"><span>ค่าน้ำยอดจับคู่</span><span id="p_matchedFeeSlip">—</span></div>
+          <div class="slip-row"><span>ค่าน้ำผู้เล่นจากยอดรับจบ</span><span id="p_playerCoverageFeeSlip">—</span></div>
+          <div class="slip-row"><span>ค่าน้ำหักจากแบงเกอร์</span><span id="p_bankerFeeSlip">—</span></div>
+          <div class="slip-row"><span>รวมค่าน้ำที่บันทึกไว้</span><span id="p_totalWaterFeeSlip">—</span></div>
+          <div>ฝาก/ถอนรวมรายการที่แอดมินบันทึก · ค่าน้ำรวมทุกช่องทางตามที่บันทึกไว้</div>
+      </div>
+      <div id="printMemberReconciliationSlip"></div>
       <div id="printCashTablesSlip"></div>
       <div class="slip-section">
           <div class="slip-bold" style="margin-bottom: 5px;">-- สรุปกำไร/ขาดทุน --</div>
@@ -1744,7 +1776,63 @@
       }
     }
 
+    function summarizePrintedWallet(rounds, wallet) {
+      if (wallet.member_deposits == null || wallet.member_withdrawals == null) return null;
+      const totals = {
+        walletDeposit: Number(wallet.member_deposits),
+        walletWithdraw: Number(wallet.member_withdrawals),
+        walletStake: 0, walletPayout: 0, matchedFee: 0, playerCoverageFee: 0, bankerFee: 0,
+      };
+      for (const round of rounds) {
+        totals.walletStake += Number(round.wallet_stake);
+        totals.walletPayout += Number(round.wallet_payout);
+        totals.matchedFee += Number(round.matched_fee);
+        totals.playerCoverageFee += Number(round.player_coverage_fee);
+        totals.bankerFee += Number(round.banker_fee);
+      }
+      return {
+        ...totals,
+        walletNet: totals.walletPayout - totals.walletStake,
+        totalWaterFee: totals.matchedFee + totals.playerCoverageFee + totals.bankerFee,
+      };
+    }
+
+    function renderMemberReconciliation(target, data) {
+      target.replaceChildren();
+      if (!data) {
+        target.textContent = 'ยังไม่มีข้อมูลกระทบยอดผู้เล่นและผู้แนะนำ';
+        return;
+      }
+      const money = value => Number(value).toLocaleString('th-TH', {
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+      }) + ' บาท';
+      const groups = [
+        ['Wallet ผู้เล่น', data.players, [['ฝาก','deposits'],['เล่นได้/เสียสุทธิ','play_net']]],
+        ['ค่าแนะนำ', data.referrals, [['ค่าแนะนำเข้า','earned'],['ค่าธรรมเนียมที่หัก','fee']]],
+      ];
+      const note = document.createElement('p');
+      note.textContent = 'รายการเข้าและจ่ายอิงวันที่บัญชีที่เลือก · ยอดรอจ่ายและยอดคงเหลืออิงเวลาที่โหลดรายงาน';
+      target.append(note);
+      for (const [title, rows, activity] of groups) {
+        const heading = document.createElement('h3');
+        heading.textContent = title;
+        const summary = document.createElement('p');
+        const sum = key => money(rows.reduce((total, row) => total + Number(row[key]), 0));
+        summary.textContent = 'จ่ายตามบันทึก ' + sum('paid') + ' · รอโอน ' + sum('pending')
+          + ' · คงเหลือ ' + sum('balance');
+        target.append(heading, summary);
+        for (const row of rows) {
+          const detail = document.createElement('p');
+          detail.style.breakInside = 'avoid';
+          const fields = [...activity, ['จ่ายตามบันทึก','paid'], ['รอโอน','pending'], ['คงเหลือ','balance']];
+          detail.textContent = row.member_id + ' · ' + fields.map(([label, key]) => label + ' ' + money(row[key])).join(' · ');
+          target.append(detail);
+        }
+      }
+    }
+
     async function generateReport() {
+      document.getElementById('dailyMemberReconciliation').textContent = '';
       cachedReportData = {};
       if (currentUserRole === 'Operator') return; 
       for (const id of ['repReferralCommission','repBonusFee','repBonusWithdrawn','repBonusLiability']) {
@@ -1762,7 +1850,7 @@
       void loadDailyCoverageReport(selDate);
       void loadBankerPayoutReport(selDate);
       try {
-        const { rounds, wallet } = await _supabase.staffRoundReport(selDate);
+        const { rounds, wallet, reconciliation } = await _supabase.staffRoundReport(selDate);
         if (document.getElementById('repDateSelector').value !== selDate) return;
         let gGross = 0, gPayout = 0, gCancel = 0, gNet = 0;
         let cntEven = 0, cntOdd = 0, cntTotalRounds = rounds.length;
@@ -1816,7 +1904,8 @@
         
         const cashRows = await cashReport;
         if (document.getElementById('repDateSelector').value !== selDate) return;
-        cachedReportData = { day: selDate, cashRows, dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, bonusFee, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, adminName: currentAdminName };
+        renderMemberReconciliation(document.getElementById('dailyMemberReconciliation'), reconciliation);
+        cachedReportData = { day: selDate, cashRows, reconciliation, walletPrint: summarizePrintedWallet(rounds, wallet), dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, bonusFee, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, adminName: currentAdminName };
       } catch (e) { listDiv.innerHTML = '<div style="text-align:center; color:red; padding: 15px;">การดึงรายงานขัดข้อง: ' + e.message + '</div>'; }
     }
 
@@ -1839,6 +1928,14 @@
         document.getElementById(`p_drawerNet${paperType}`).innerText = rd.drawerNet.toLocaleString();
         document.getElementById(`p_roundTotal${paperType}`).innerText = rd.roundTotal; document.getElementById(`p_roundEven${paperType}`).innerText = rd.roundEven; document.getElementById(`p_roundOdd${paperType}`).innerText = rd.roundOdd;
         
+        for (const field of ["walletDeposit","walletWithdraw","walletStake","walletPayout","walletNet","matchedFee","playerCoverageFee","bankerFee","totalWaterFee"]) {
+          const value = rd.walletPrint?.[field];
+          document.getElementById('p_' + field + paperType).textContent = Number.isFinite(value)
+            ? value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            : '—';
+        }
+
+        renderMemberReconciliation(document.getElementById('printMemberReconciliation' + paperType), rd.reconciliation);
         const cash = document.getElementById('printCashTables' + paperType);
         cash.replaceChildren(...rd.cashRows.map(text => {
           const row = document.createElement('p');
