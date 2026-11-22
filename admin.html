@@ -2457,8 +2457,8 @@
       const deposit = document.getElementById('creditDepositButton');
       const withdraw = document.getElementById('creditWithdrawButton');
       status.hidden = !tableMode;
-      deposit.textContent = cash ? 'รับชำระยอดค้าง' : 'เติมเงิน (ฝาก)';
-      withdraw.textContent = cash ? 'จ่ายคืนตามยอด' : 'ถอนเงิน (คืน)';
+      deposit.textContent = cash ? 'รับยอด ลูกค้า ' + tableMoney(Math.max(0, -balance)) : 'เติมเงิน (ฝาก)';
+      withdraw.textContent = cash ? 'จ่าย ลูกค้า ' + tableMoney(Math.max(0, balance)) : 'ถอนเงิน (คืน)';
       deposit.disabled = tableMode && (!desk || (cash && (pending || balance >= 0)));
       withdraw.disabled = tableMode && (!desk || (cash && (pending || balance <= 0)));
       if (!tableMode) return;
@@ -2701,7 +2701,7 @@
         details.reason = reason.trim();
         if (!details.reason || details.reason.length > 300) throw new Error('BET_REMOVE_REASON_REQUIRED');
       } else {
-        details.reason = operation === 'add' ? 'เพิ่มยอดหลังปิดรับ' : 'แก้ยอดโต๊ะ';
+        details.reason = operation === 'add' ? 'เพิ่มยอดหลังปิดรับ' : operation === 'move' ? 'ย้ายฝั่งตามที่ลูกค้าแจ้ง' : 'แก้ยอดโต๊ะ';
       }
       const expected = bet ? {
         bet_id: bet.bet_id, expected_side: bet.bet_type, expected_amount: String(bet.amount),
@@ -2893,6 +2893,7 @@
       }
       const tools = group();
       const request = details => _supabase.tableGuest({ table_no: physical.table_no, ...details });
+      const canManageGuests = currentUserRole !== 'Operator';
       const selected = children.find(child => child.table_no === selectedGuestBill);
       const shop = currentShopId;
       const current = () => version === guestPanelVersion && selectedTable === physical.table_no && currentShopId === shop;
@@ -2916,11 +2917,11 @@
         const data = await request({ operation: 'list' });
         if (!current()) return;
         generation = data.generation;
-        tools.append(button('เพิ่มชื่อ / เปิดบิล', async () => {
+        if (canManageGuests) tools.append(button('เพิ่มชื่อ / เปิดบิล', async () => {
           const name = askName();
           if (name) await changes({ operation:'add', name }, 'created');
         }));
-        if (selected) {
+        if (canManageGuests && selected) {
           tools.append(button('แก้ชื่อบิล', async () => {
             const name = askName(selected.table_name);
             if (name) await changes({ operation:'edit', bill:selected.table_no, name }, selected.table_no);
@@ -2930,30 +2931,33 @@
             }
           }));
         }
-        if (children.length) tools.append(button(physical.is_open ? 'ปิดรับทั้งโต๊ะ' : 'เปิดรับทั้งโต๊ะ', async () => {
+        if (canManageGuests && children.length) tools.append(button(physical.is_open ? 'ปิดรับทั้งโต๊ะ' : 'เปิดรับทั้งโต๊ะ', async () => {
           if (!current()) return;
           await _supabase.from('tables').update({ is_open: !physical.is_open })
             .eq('shop_id', shop).eq('table_no', physical.table_no);
           await loadTableList();
         }));
-        tools.append(button('ดู / พิมพ์ QR', () => showQrCode(physical.table_no, true, deskName(physical))),
-          button('เปลี่ยนลูกค้า · ออก QR ใหม่', async () => {
+        tools.append(button(currentUserRole === 'Operator' ? 'ดู QR' : 'ดู / พิมพ์ QR',
+          () => showQrCode(physical.table_no, true, deskName(physical))));
+        if (canManageGuests) tools.append(button('เปลี่ยนลูกค้า · ออก QR ใหม่', async () => {
             if (confirm('ยกเลิก QR เดิมของโต๊ะนี้และออก QR ใหม่?') &&
                 await changes({ operation:'rotate' }, null) && physical.is_open && selectedTable === physical.table_no && currentShopId === shop) {
               await showQrCode(physical.table_no, true, deskName(physical));
             }
-          }), button('โหลดผู้สแกนใหม่', () => renderTableGuests(physical, children, button)));
+          }));
+        tools.append(button('โหลดผู้สแกนใหม่', () => renderTableGuests(physical, children, button)));
         scanPanel.replaceChildren();
         if (!data.scans.length) scanPanel.textContent = 'ยังไม่มีผู้สแกน LINE ที่รอจับคู่';
         for (const scan of data.scans) {
-          const match = button(scan.name, async () => {
+          const match = canManageGuests ? button(scan.name, async () => {
             const target = selected && !selected.guest_uid;
             const name = askName(target ? selected.table_name : scan.name.slice(0, 40));
             if (name) await changes(target
               ? { operation:'edit', bill:selected.table_no, name, guest:scan.uid }
               : { operation:'add', name, guest:scan.uid }, target ? selected.table_no : 'created');
-          });
-          match.title = selected && !selected.guest_uid ? 'จับคู่กับบิลที่เลือก' : 'เปิดบิลจากผู้สแกน';
+          }) : document.createElement('span');
+          if (!canManageGuests) match.textContent = scan.name;
+          match.title = canManageGuests ? (selected && !selected.guest_uid ? 'จับคู่กับบิลที่เลือก' : 'เปิดบิลจากผู้สแกน') : '';
           if (scan.picture) {
             const img = document.createElement('img');
             img.src = scan.picture;
@@ -3148,9 +3152,14 @@
         amount.className = 'table-bill-amount';
         amount.textContent = tableMoney(bet.amount);
         row.append(side, amount);
-        if (canCorrectTableRound() && bet.cash_table && bet.status === 'Active') {
-          row.append(button('แก้ยอด', () => openTableBetForm(desk, 'edit', bet)),
-            button('ลบยอด', () => submitTableCorrection('remove', { table_no: desk.table_no, round_id: tableRound.id }, bet)));
+        if (canCorrectCashBets() && !tableRound.locked && ['Open','Closed'].includes(tableRound.status)
+            && bet.cash_table && bet.status === 'Active') {
+          const details = { table_no: desk.table_no, round_id: tableRound.id };
+          const opposite = bet.bet_type === 'คู่' ? 'คี่' : 'คู่';
+          row.append(button('ย้ายไปฝั่ง' + opposite, () =>
+            submitTableCorrection('move', { ...details, side: opposite, amount: String(bet.amount) }, bet)));
+          if (canCorrectTableRound()) row.append(button('แก้ยอด', () => openTableBetForm(desk, 'edit', bet)));
+          row.append(button('ลบยอด', () => submitTableCorrection('remove', details, bet)));
         }
         bills.append(row);
       }
@@ -3183,7 +3192,7 @@
       }
       const settlement = settlementState(desk);
       if (settlement) {
-        actions.append(button(balance < 0 ? 'รับชำระยอดค้าง' : 'จ่ายคืนตามยอด', async () => {
+        actions.append(button((balance < 0 ? 'รับยอด ลูกค้า ' : 'จ่าย ลูกค้า ') + tableMoney(Math.abs(balance)), async () => {
           const amount = prompt(balance < 0 ? 'จำนวนเงินสดที่รับจริง' : 'จำนวนเงินสดที่จ่ายจริง', Math.abs(balance).toFixed(2));
           if (amount === null || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0) return;
           await recordCashAtTable(desk.table_no, balance < 0 ? 'deposit' : 'withdraw', amount.trim());

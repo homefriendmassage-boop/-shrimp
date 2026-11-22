@@ -1187,13 +1187,13 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const { operation, request_id, bet_id, table_no, round_id, reason, side, amount, expected_side, expected_amount } = input;
         const validSide = value => ['คู่','คี่'].includes(value);
         const validAmount = value => typeof value === 'string' && /^\d{1,9}(?:\.\d{1,2})?$/.test(value);
-        if (!['add','edit','remove'].includes(operation) || !shopInviteIdPattern.test(request_id) ||
+        if (!['add','edit','move','remove'].includes(operation) || !shopInviteIdPattern.test(request_id) ||
             !shopInviteIdPattern.test(bet_id) || typeof table_no !== 'string' || !/^\d{1,8}$/.test(table_no) ||
             typeof round_id !== 'string' || !round_id || round_id.length > 100 ||
             typeof reason !== 'string' || !reason.trim() || reason.trim().length > 300 ||
             (operation !== 'remove' && (!validSide(side) || !validAmount(amount))) ||
             (operation !== 'add' && (!validSide(expected_side) || !validAmount(expected_amount)))) fail('BET_INVALID');
-        if (operation !== 'remove' && !wholeHundredBet(amount)) fail('BET_WHOLE_HUNDREDS');
+        if (['add','edit'].includes(operation) && !wholeHundredBet(amount)) fail('BET_WHOLE_HUNDREDS');
         const result = await db.rpc('correct_cash_table_bet', {
           p_shop: shopId, p_actor: claims.sub, p_round: round_id, p_table: table_no, p_request: request_id,
           p_bet: bet_id, p_operation: operation, p_reason: reason.trim(),
@@ -1318,6 +1318,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       }
       if (input.action === 'table_guest_manage') {
         const { table_no, operation, bill, name, guest, generation } = input;
+        if (staff.data.role === 'Operator' && operation !== 'list') fail('ADMIN_REQUIRED', 403);
         if (typeof table_no !== 'string' || !/^\d{1,8}$/.test(table_no) ||
             !['list','add','edit','close','rotate'].includes(operation) ||
             (bill != null && (typeof bill !== 'string' || !/^\d{1,8}$/.test(bill))) ||
