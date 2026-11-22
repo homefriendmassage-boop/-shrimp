@@ -2157,9 +2157,8 @@
       }
     }
 
-    async function notifyOpenRound(roundId) {
-      const kind = 'opened';
-      const label = 'เปิดรอบ';
+    async function notifyRound(roundId, kind) {
+      const label = kind === 'result' ? 'ผลชั่งกุ้ง' : 'เปิดรอบ';
       const status = document.getElementById('roundNoticeStatus');
       status.textContent = 'กำลังตรวจผู้รับและส่งแจ้ง' + label + '…';
       try {
@@ -2174,7 +2173,9 @@
         const result = await response.json();
         if (!response.ok || !result.ok) throw new Error(result.code || 'ROUND_NOTICE_FAILED');
         if (result.eligible === undefined) status.textContent = result.queued ? 'เข้าคิวส่งแจ้ง' + label + 'แล้ว' : 'ไม่มีรายการแจ้ง' + label + 'ที่รอส่ง';
-        else if (result.eligible === 0) status.textContent = 'ไม่มีสมาชิกที่เข้าเกณฑ์จากการทัก LINE OA ใน 6 ชั่วโมงล่าสุด';
+        else if (result.eligible === 0) status.textContent = kind === 'result'
+          ? 'ไม่มีผู้เล่นในรอบนี้ที่ส่งแจ้งผลผ่าน LINE ได้'
+          : 'ไม่มีสมาชิกที่เข้าเกณฑ์จากการทัก LINE OA ใน 6 ชั่วโมงล่าสุด';
         else if (result.queued) status.textContent = 'เข้าคิวแจ้ง' + label + 'ให้สมาชิก ' + (result.eligible ?? '') + ' คน';
         else status.textContent = 'LINE API รับคำขอแจ้ง' + label + ' ' + result.accepted + ' จาก ' + result.eligible + ' คน' +
           (result.failed ? ' · ส่งไม่สำเร็จ ' + result.failed + ' คน กรุณาตรวจ Logs ของ round-notice' : '');
@@ -2192,7 +2193,7 @@
       try {
         const { round_id: roundId } = await _supabase.openRound();
         if (shop !== currentShopId) return;
-        void notifyOpenRound(roundId);
+        void notifyRound(roundId, 'opened');
         document.getElementById('resolverStatusMsg').style.display = 'none';
         alert('เปิดรอบ ' + roundId + ' สำเร็จ!');
       } catch (error) {
@@ -2409,6 +2410,7 @@
 
         const roundId = lr[0].round_id;
         const finalized = await _supabase.finalizeRound(roundId, w);
+        void notifyRound(roundId, 'result');
         void openCashRoundSummary({ round_id: roundId, weight: w, recovered: finalized.recovered });
         switchAdminTab('tables');
         document.getElementById('cashRoundHistory').open = true;
