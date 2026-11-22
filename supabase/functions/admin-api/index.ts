@@ -587,8 +587,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, board: result.data });
       }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_correct_bet', 'round_begin_settlement', 'coverage_read', 'coverage_move', 'coverage_fund', 'coverage_reserve', 'coverage_report', 'banker_payout', 'backer_portal', 'daily_staff_round_report', 'round_open', 'round_close_with_coverage', 'round_finalize', 'table_round_summary', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
-      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
+      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_correct_bet', 'round_begin_settlement', 'coverage_read', 'coverage_move', 'coverage_fund', 'coverage_reserve', 'coverage_report', 'banker_payout', 'backer_portal', 'daily_staff_round_report', 'round_open', 'round_close_with_coverage', 'round_finalize', 'table_round_summary', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_extend_shop_plan', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_extend_shop_plan', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'backer_portal'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
@@ -766,6 +766,20 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (member.error) fail('RICH_MENU_UNAVAILABLE', 500);
         if (!member.data && !await canCreateShop()) fail('ADMIN_REQUIRED', 403);
         return reply({ ok: true, ...await manageShopRichMenu(db, fetcher, input, target) });
+      }
+      if (input.action === 'platform_extend_shop_plan') {
+        if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
+        const { target_shop_id, days, reason, request_id } = input;
+        if (!/^SHOP_[0-9]{3,24}$/.test(target_shop_id) || target_shop_id === 'SHOP_000' ||
+            !Number.isInteger(days) || days < 1 || days > 365 ||
+            typeof reason !== 'string' || !reason.trim() || reason.trim().length > 300 ||
+            typeof request_id !== 'string' || !shopInviteIdPattern.test(request_id)) fail('PLAN_EXTENSION_INVALID');
+        const result = await db.rpc('extend_platform_shop_plan', {
+          p_shop: target_shop_id, p_days: days, p_reason: reason.trim(), p_actor: claims.sub, p_request: request_id,
+        });
+        if (result.error) fail('PLAN_EXTENSION_FAILED', 500);
+        if (result.data?.code !== 'EXTENDED') fail(result.data?.code || 'PLAN_EXTENSION_FAILED', 409);
+        return reply({ ok: true, expires_at: result.data.expires_at });
       }
       if (input.action === 'platform_shop_control') {
         if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
