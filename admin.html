@@ -625,7 +625,7 @@
           <div style="background:#0f111a;padding:10px;border-radius:8px;border:1px solid var(--card-border)">
             <div>ค่าบริการถอนโบนัส (รายได้ร้าน)</div><strong id="repBonusFee">—</strong>
             <div>โอนจ่ายโบนัส</div><strong id="repBonusWithdrawn">—</strong>
-            <div>โบนัสค้างจ่ายปัจจุบัน</div><strong id="repBonusLiability">—</strong>
+            <div>ยอดคงเหลือในกระเป๋าโบนัสปัจจุบัน</div><strong id="repBonusLiability">—</strong>
           </div>
         </div>
         
@@ -638,6 +638,10 @@
         </div>
       </div>
       
+      <section class="card">
+        <div class="card-title">กระทบยอดผู้เล่นและผู้แนะนำ</div>
+        <div id="dailyMemberReconciliation" role="status"></div>
+      </section>
       <section class="card">
         <div class="card-title">ค่าน้ำและผลรับจบแยกช่องทาง</div>
         <div id="dailyCoverageReport" role="status"></div>
@@ -677,6 +681,7 @@
           <tr><td>รวมค่าน้ำที่บันทึกไว้</td><td class="text-right" id="p_totalWaterFeeA4">—</td></tr>
       </table>
       <p>ยอดฝาก/ถอนรวมรายการที่แอดมินบันทึกเข้า Wallet · ค่าน้ำรวมทุกช่องทางตามที่บันทึกไว้</p>
+      <div id="printMemberReconciliationA4"></div>
       <div id="printCashTablesA4"></div>
       <h3>1. สรุปผลกำไร-ขาดทุน (P&L)</h3>
       <table class="report-table">
@@ -725,6 +730,7 @@
           <div class="slip-row"><span>รวมค่าน้ำที่บันทึกไว้</span><span id="p_totalWaterFeeSlip">—</span></div>
           <div>ฝาก/ถอนรวมรายการที่แอดมินบันทึก · ค่าน้ำรวมทุกช่องทางตามที่บันทึกไว้</div>
       </div>
+      <div id="printMemberReconciliationSlip"></div>
       <div id="printCashTablesSlip"></div>
       <div class="slip-section">
           <div class="slip-bold" style="margin-bottom: 5px;">-- สรุปกำไร/ขาดทุน --</div>
@@ -1791,7 +1797,42 @@
       };
     }
 
+    function renderMemberReconciliation(target, data) {
+      target.replaceChildren();
+      if (!data) {
+        target.textContent = 'ยังไม่มีข้อมูลกระทบยอดผู้เล่นและผู้แนะนำ';
+        return;
+      }
+      const money = value => Number(value).toLocaleString('th-TH', {
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+      }) + ' บาท';
+      const groups = [
+        ['Wallet ผู้เล่น', data.players, [['ฝาก','deposits'],['เล่นได้/เสียสุทธิ','play_net']]],
+        ['ค่าแนะนำ', data.referrals, [['ค่าแนะนำเข้า','earned'],['ค่าธรรมเนียมที่หัก','fee']]],
+      ];
+      const note = document.createElement('p');
+      note.textContent = 'รายการเข้าและจ่ายอิงวันที่บัญชีที่เลือก · ยอดรอจ่ายและยอดคงเหลืออิงเวลาที่โหลดรายงาน';
+      target.append(note);
+      for (const [title, rows, activity] of groups) {
+        const heading = document.createElement('h3');
+        heading.textContent = title;
+        const summary = document.createElement('p');
+        const sum = key => money(rows.reduce((total, row) => total + Number(row[key]), 0));
+        summary.textContent = 'จ่ายตามบันทึก ' + sum('paid') + ' · รอโอน ' + sum('pending')
+          + ' · คงเหลือ ' + sum('balance');
+        target.append(heading, summary);
+        for (const row of rows) {
+          const detail = document.createElement('p');
+          detail.style.breakInside = 'avoid';
+          const fields = [...activity, ['จ่ายตามบันทึก','paid'], ['รอโอน','pending'], ['คงเหลือ','balance']];
+          detail.textContent = row.member_id + ' · ' + fields.map(([label, key]) => label + ' ' + money(row[key])).join(' · ');
+          target.append(detail);
+        }
+      }
+    }
+
     async function generateReport() {
+      document.getElementById('dailyMemberReconciliation').textContent = '';
       cachedReportData = {};
       if (currentUserRole === 'Operator') return; 
       for (const id of ['repReferralCommission','repBonusFee','repBonusWithdrawn','repBonusLiability']) {
@@ -1809,7 +1850,7 @@
       void loadDailyCoverageReport(selDate);
       void loadBankerPayoutReport(selDate);
       try {
-        const { rounds, wallet } = await _supabase.staffRoundReport(selDate);
+        const { rounds, wallet, reconciliation } = await _supabase.staffRoundReport(selDate);
         if (document.getElementById('repDateSelector').value !== selDate) return;
         let gGross = 0, gPayout = 0, gCancel = 0, gNet = 0;
         let cntEven = 0, cntOdd = 0, cntTotalRounds = rounds.length;
@@ -1863,7 +1904,8 @@
         
         const cashRows = await cashReport;
         if (document.getElementById('repDateSelector').value !== selDate) return;
-        cachedReportData = { day: selDate, cashRows, walletPrint: summarizePrintedWallet(rounds, wallet), dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, bonusFee, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, adminName: currentAdminName };
+        renderMemberReconciliation(document.getElementById('dailyMemberReconciliation'), reconciliation);
+        cachedReportData = { day: selDate, cashRows, reconciliation, walletPrint: summarizePrintedWallet(rounds, wallet), dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, bonusFee, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, adminName: currentAdminName };
       } catch (e) { listDiv.innerHTML = '<div style="text-align:center; color:red; padding: 15px;">การดึงรายงานขัดข้อง: ' + e.message + '</div>'; }
     }
 
@@ -1893,6 +1935,7 @@
             : '—';
         }
 
+        renderMemberReconciliation(document.getElementById('printMemberReconciliation' + paperType), rd.reconciliation);
         const cash = document.getElementById('printCashTables' + paperType);
         cash.replaceChildren(...rd.cashRows.map(text => {
           const row = document.createElement('p');
