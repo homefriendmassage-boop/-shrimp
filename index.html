@@ -400,7 +400,8 @@
 
   <section id="liveView" class="hidden" aria-labelledby="liveStatus" style="text-align:center; padding:40px 16px;">
     <i class="fa-solid fa-video-slash" aria-hidden="true" style="color:var(--text-muted); font-size:1.5rem;"></i>
-    <h2 id="liveStatus">สถานะออฟไลน์</h2>
+    <h2 id="liveStatus">ร้านยังไม่ได้ตั้งค่าลิงก์ดูสด</h2>
+    <a id="liveWatchLink" hidden rel="noopener noreferrer">เปิดลิงก์ดูสด</a>
   </section>
 
   <div class="bottom-nav" id="bottomNavMenu" style="display: none;">
@@ -413,7 +414,7 @@
     <div class="nav-item" onclick="switchTab('history')">
       <i class="fa-solid fa-clock-rotate-left"></i><span>ประวัติ</span>
     </div>
-    <button id="liveNav" type="button" class="nav-item" onclick="switchTab('live')" style="background:none; border:0; font-family:inherit; padding:0;">
+    <button id="liveNav" type="button" class="nav-item" onclick="openLive()" style="background:none; border:0; font-family:inherit; padding:0;">
       <i class="fa-solid fa-video" aria-hidden="true"></i><span>LIVE สด</span>
     </button>
   </div>
@@ -779,6 +780,14 @@
           return;
         }
         document.getElementById('liveNav').classList.toggle('hidden', result.live_enabled === false);
+        const liveLink = document.getElementById('liveWatchLink');
+        liveLink.removeAttribute('href');
+        liveLink.hidden = true;
+        if (result.live_enabled && typeof result.live_url === 'string' && /^https:\/\//i.test(result.live_url)) {
+          liveLink.href = result.live_url;
+          liveLink.hidden = false;
+        }
+        document.getElementById('liveStatus').textContent = liveLink.hidden ? 'ร้านยังไม่ได้ตั้งค่าลิงก์ดูสด' : 'LIVE สด';
         const user = result.player;
         if (!user?.uid) throw new Error('LINE_AUTH_INVALID');
         currentLineUserId = user.uid;
@@ -840,6 +849,19 @@
       document.getElementById('btnOdd').classList.remove('selected');
       if(type === 'คู่') document.getElementById('btnEven').classList.add('selected');
       if(type === 'คี่') document.getElementById('btnOdd').classList.add('selected');
+    }
+
+    function openLive() {
+      switchTab('live');
+      const link = document.getElementById('liveWatchLink');
+      if (link.hidden) return;
+      if (liff.isInClient()) {
+        try {
+          liff.openWindow({ url: link.href, external: false });
+          return;
+        } catch { /* The regular link is still available. */ }
+      }
+      link.click();
     }
 
     function switchTab(tab) {
