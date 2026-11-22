@@ -496,6 +496,12 @@
           <div class="form-group"><label for="shopPaymentBank">ธนาคาร</label><select id="shopPaymentBank" class="form-control" required><option value="">เลือกธนาคาร</option></select></div>
           <div class="form-group"><label for="shopPaymentNumber">เลขบัญชี</label><input id="shopPaymentNumber" class="form-control" inputmode="numeric" maxlength="24" required></div>
           <div class="form-group"><label for="shopPaymentPromptPay">เลขพร้อมเพย์</label><input id="shopPaymentPromptPay" class="form-control" inputmode="numeric" maxlength="20" required></div>
+          <fieldset id="shopPaymentExtra" hidden>
+            <legend>ข้อมูลสำหรับบัญชีธนาคารใหม่</legend>
+            <div class="form-group"><label for="shopPaymentNameTh">ชื่อเจ้าของบัญชีภาษาไทย</label><input id="shopPaymentNameTh" class="form-control" maxlength="150"></div>
+            <div class="form-group"><label for="shopPaymentNameEn">ชื่อเจ้าของบัญชีภาษาอังกฤษ</label><input id="shopPaymentNameEn" class="form-control" maxlength="150"></div>
+            <div class="form-group"><label for="shopPaymentType">ประเภทบัญชี</label><select id="shopPaymentType" class="form-control"><option value="">เลือกประเภทบัญชี</option><option value="NATURAL">บุคคลธรรมดา</option><option value="JURISTIC">นิติบุคคล</option></select></div>
+          </fieldset>
           <p id="shopPaymentStatus" role="status"></p>
           <button id="saveShopPayment" class="btn btn-blue" type="submit">บันทึกบัญชีรับเงิน</button>
         </form>
@@ -1419,6 +1425,8 @@
       const bank = document.getElementById('shopPaymentBank');
       const status = document.getElementById('shopPaymentStatus');
       fillPaymentBanks(bank);
+      document.getElementById('shopPaymentExtra').hidden = true;
+      for (const field of ['shopPaymentNameTh', 'shopPaymentNameEn', 'shopPaymentType']) document.getElementById(field).value = '';
       document.getElementById('shopPaymentSettings').classList.remove('hidden');
       try {
         const { receiver } = await shopPaymentRequest(currentShopId, 'settings');
@@ -1438,16 +1446,27 @@
       const status = document.getElementById('shopPaymentStatus');
       button.disabled = true;
       status.textContent = 'กำลังตรวจบัญชีรับเงิน…';
+      const extra = document.getElementById('shopPaymentExtra');
       try {
         const saved = await shopPaymentRequest(currentShopId, 'save_settings', {
           bank_code: document.getElementById('shopPaymentBank').value,
           bank_number: document.getElementById('shopPaymentNumber').value,
           promptpay: document.getElementById('shopPaymentPromptPay').value,
+          ...(!extra.hidden ? {
+            name_th: document.getElementById('shopPaymentNameTh').value,
+            name_en: document.getElementById('shopPaymentNameEn').value,
+            account_type: document.getElementById('shopPaymentType').value,
+          } : {}),
         });
+        extra.hidden = true;
+        for (const input of extra.querySelectorAll('input, select')) input.value = '';
         status.textContent = 'บันทึกแล้ว · ' + saved.account_name;
       } catch (error) {
+        if (error.message === 'RECEIVER_DETAILS_REQUIRED') extra.hidden = false;
         status.textContent = ({
-          THUNDER_RECEIVER_NOT_LINKED: 'เพิ่มบัญชีนี้ใน Branch Thunder ที่ใช้ตรวจสลิปของร้านก่อน แล้วกดบันทึกอีกครั้ง',
+          RECEIVER_DETAILS_REQUIRED: 'กรอกชื่อบัญชีภาษาไทย ภาษาอังกฤษ และประเภทบัญชี แล้วกดบันทึกอีกครั้ง',
+          THUNDER_ACCOUNT_SETUP_FAILED: 'เชื่อมบัญชีกับระบบตรวจสลิปไม่สำเร็จ บัญชีรับเงินเดิมยังใช้งานอยู่หากเคยตั้งไว้',
+          THUNDER_RECEIVER_NOT_LINKED: 'ระบบตรวจสลิปยังไม่พบบัญชีนี้',
           RECEIVER_CONFLICT: 'บัญชีนี้ถูกใช้กับร้านอื่นหรือบัญชีแพลตฟอร์มแล้ว',
           RECEIVER_INVALID: 'ตรวจสอบเลขบัญชีและเลขพร้อมเพย์อีกครั้ง',
         })[error.message] || 'บันทึกบัญชีรับเงินไม่สำเร็จ';

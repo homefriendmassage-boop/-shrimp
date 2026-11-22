@@ -17,15 +17,15 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
 
   async function verifiedBankAccount(bank, number) {
     const key = env('THUNDER_API_KEY');
-    if (!key) return null;
+    if (!key) throw new Error('PAYMENTS_UNAVAILABLE');
     for (let page = 1; page <= 10; page++) {
       const endpoint = new URL('https://api.thunder.in.th/v2/bank-accounts');
       endpoint.search = new URLSearchParams({ bankCode: bank, page: String(page), limit: '100' }).toString();
       const result = await fetcher(endpoint, { headers: { Authorization: 'Bearer ' + key }, signal: AbortSignal.timeout(5000) });
-      if (!result.ok) return null;
+      if (!result.ok) throw new Error('PAYMENTS_UNAVAILABLE');
       const data = (await result.json()).data;
       const rows = data?.items;
-      if (!Array.isArray(rows)) return null;
+      if (!Array.isArray(rows)) throw new Error('PAYMENTS_UNAVAILABLE');
       const account = rows.find(item => item.bankCode === bank && digits(item.bankNumber) === number && item.extraVerify !== 'NAME');
       if (account) return String(account.nameTh || account.nameEn || '').trim().slice(0, 150) || null;
       if (rows.length < 100) return null;
@@ -177,8 +177,35 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
         const promptpay = digits(input.promptpay);
         if (typeof bank !== 'string' || !/^\d{3}$/.test(bank) || !/^\d{6,20}$/.test(number) ||
             !/^(0\d{9}|\d{13}|\d{15})$/.test(promptpay)) return fail('RECEIVER_INVALID');
-        const name = await verifiedBankAccount(bank, number);
-        if (!name) return fail('THUNDER_RECEIVER_NOT_LINKED', 409);
+        const [registered, platform, duplicateProxy] = await Promise.all([
+          db.from('wallet_receiving_accounts').select('shop_id').eq('bank_code', bank).eq('bank_number', number).maybeSingle(),
+          db.from('platform_billing_receiver').select('transfer_number')
+            .or('and(verified_bank_code.eq.' + bank + ',verified_bank_number.eq.' + number + '),transfer_number.eq.' + promptpay).limit(1),
+          db.from('shop_payment_profiles').select('shop_id').eq('promptpay', promptpay).neq('shop_id', shop).limit(1),
+        ]);
+        if (registered.error || platform.error || duplicateProxy.error) return fail('PAYMENTS_UNAVAILABLE', 503);
+        if ((registered.data && registered.data.shop_id !== shop) || platform.data.length || duplicateProxy.data.length) {
+          return fail('RECEIVER_CONFLICT', 409);
+        }
+        let name = await verifiedBankAccount(bank, number);
+        if (!name) {
+          const nameTh = typeof input.name_th === 'string' ? input.name_th.trim() : '';
+          const nameEn = typeof input.name_en === 'string' ? input.name_en.trim() : '';
+          const type = input.account_type;
+          if (!nameTh || !nameEn || nameTh.length > 150 || nameEn.length > 150 || !['NATURAL', 'JURISTIC'].includes(type)) {
+            return fail('RECEIVER_DETAILS_REQUIRED', 409);
+          }
+          const created = await fetcher('https://api.thunder.in.th/v2/bank-accounts', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + env('THUNDER_API_KEY'), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bankCode: bank, bankNumber: number, nameTh, nameEn, type }),
+            signal: AbortSignal.timeout(6000),
+          });
+          if (!created.ok && created.status !== 409) return fail('THUNDER_ACCOUNT_SETUP_FAILED', 422);
+          // Read again so a retry can recover from a successful create followed by a failed local save.
+          name = await verifiedBankAccount(bank, number);
+          if (!name) return fail('THUNDER_ACCOUNT_SETUP_FAILED', 409);
+        }
         const saved = await db.rpc('set_shop_payment_profile', {
           p_shop: shop, p_bank: bank, p_number: number, p_name: name, p_promptpay: promptpay,
         });
