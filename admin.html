@@ -86,17 +86,20 @@
     @media print {
         body { background: white !important; color: black !important; padding: 0 !important; margin: 0 !important; }
         .no-print { display: none !important; }
-        .print-only:not(.print-active) { display: none !important; }
+        body.printing-admin > :not(.print-active) { display: none !important; }
+        body.printing-admin > .print-active { display: block !important; }
         .card, .container { box-shadow: none !important; border: none !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; }
         .layout-a4 { font-family: 'Sarabun', 'Kanit', sans-serif; }
         .layout-a4 .report-header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
         .layout-a4 .report-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 14px; }
         .layout-a4 .report-table th, .layout-a4 .report-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         .layout-a4 .report-table th { background-color: #f2f2f2 !important; color: black !important; font-weight: bold; }
-        .layout-slip { width: 70mm; max-width: 100%; margin: 0 auto; font-family: 'Courier New', Courier, monospace; font-size: 12px; color: black; }
+        .layout-slip { width: 70mm; max-width: 100%; margin: 0 auto; font-family: 'Sarabun', 'Kanit', sans-serif; font-size: 12px; color: black; overflow-wrap: anywhere; }
         .layout-slip .report-header { text-align: center; margin-bottom: 10px; border-bottom: 1px dashed #000; padding-bottom: 5px; }
         .layout-slip .slip-section { margin-bottom: 10px; border-bottom: 1px dashed #000; padding-bottom: 10px; }
-        .layout-slip .slip-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .layout-slip .slip-row { display: flex; justify-content: space-between; gap: 2mm; margin-bottom: 4px; break-inside: avoid; }
+        .layout-slip .slip-row > :last-child { flex-shrink: 0; text-align: right; }
+        #printCashTablesSlip p { break-inside: avoid; }
         .layout-slip .slip-bold { font-weight: bold; }
         .table-qr-slip { text-align:center; break-inside:avoid; }
         .table-qr-slip h2 { font-size:16px; margin:0 0 3mm; overflow-wrap:anywhere; }
@@ -721,7 +724,7 @@
           <div class="slip-row"><span>ออกคู่ (Even):</span> <span id="p_roundEvenSlip">0</span></div>
           <div class="slip-row"><span>ออกคี่ (Odd):</span> <span id="p_roundOddSlip">0</span></div>
       </div>
-      <div style="text-align: center; margin-top: 20px; margin-bottom: 40px; font-size: 10px;">
+      <div style="text-align: center; margin-top: 12px; font-size: 10px; break-inside: avoid;">
           <div>.................................</div>
           <div>ผู้จัดการ</div>
       </div>
@@ -1755,7 +1758,7 @@
       
       const [year, mm, dd] = selDate.split('-');
       const yy = year.slice(-2);
-      void loadCashTableReport(selDate);
+      const cashReport = loadCashTableReport(selDate);
       void loadDailyCoverageReport(selDate);
       void loadBankerPayoutReport(selDate);
       try {
@@ -1811,12 +1814,17 @@
         document.getElementById('repCancelled').innerText = `฿${gCancel.toLocaleString()}`; document.getElementById('repNetProfit').innerText = `฿${gNet.toLocaleString()}`;
         document.getElementById('repNetProfit').style.color = gNet >= 0 ? 'var(--green-main)' : 'var(--red-main)';
         
-        cachedReportData = { dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, bonusFee, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, adminName: currentAdminName };
+        const cashRows = await cashReport;
+        if (document.getElementById('repDateSelector').value !== selDate) return;
+        cachedReportData = { day: selDate, cashRows, dateStr: `${dd}/${mm}/20${yy}`, grossBet: gGross, payout: gPayout, cancelled: gCancel, netProfit: gNet, bonusFee, totalDep: tDep, countDep: countDep, totalWd: tWd, countWd: countWd, drawerNet: tDep - tWd, roundTotal: cntTotalRounds, roundEven: cntEven, roundOdd: cntOdd, comm: commission, adminName: currentAdminName };
       } catch (e) { listDiv.innerHTML = '<div style="text-align:center; color:red; padding: 15px;">การดึงรายงานขัดข้อง: ' + e.message + '</div>'; }
     }
 
     function printReport(paperType) {
-        if (!cachedReportData || Object.keys(cachedReportData).length === 0) return alert("กรุณารอข้อมูลโหลดให้เสร็จก่อนสั่งพิมพ์");
+        if (cachedReportData.day !== document.getElementById('repDateSelector').value || !cachedReportData.day) {
+          return alert('กรุณารอให้รายงานของวันที่เลือกโหลดเสร็จก่อนพิมพ์');
+        }
+        if (!cachedReportData.cashRows) return alert('รายงานเงินสดโหลดไม่สำเร็จ กรุณาค้นหาอีกครั้งก่อนพิมพ์');
         let rd = cachedReportData; let targetDivId = paperType === 'A4' ? 'printAreaA4' : 'printAreaSlip';
         
         document.getElementById(`printDate${paperType}`).innerText = rd.dateStr; document.getElementById(`printAdminName${paperType}`).innerText = currentAdminName;
@@ -1832,14 +1840,18 @@
         document.getElementById(`p_roundTotal${paperType}`).innerText = rd.roundTotal; document.getElementById(`p_roundEven${paperType}`).innerText = rd.roundEven; document.getElementById(`p_roundOdd${paperType}`).innerText = rd.roundOdd;
         
         const cash = document.getElementById('printCashTables' + paperType);
-        cash.replaceChildren(...Array.from(document.getElementById('cashTableReport').children, row => row.cloneNode(true)));
+        cash.replaceChildren(...rd.cashRows.map(text => {
+          const row = document.createElement('p');
+          row.textContent = text;
+          return row;
+        }));
         if (cash.childElementCount) {
           const title = document.createElement('strong');
           title.textContent = 'เงินสดรายโต๊ะ';
           cash.prepend(title);
         }
 
-        setTimeout(() => printAdminArea(targetDivId, paperType), 500);
+        printAdminArea(targetDivId, paperType);
     }
 
     function printAdminArea(areaId, paperType) {
@@ -1853,17 +1865,20 @@
           ? '@media print { @page { size: A4; margin: 1cm; } }'
           : '@media print { @page { size: auto; margin: 2mm 5mm; } }';
         const report = document.getElementById(areaId);
-        const app = document.getElementById('mainAppContainer');
-        const appDisplay = app.style.display;
-        app.style.display = 'none';
-        report.classList.add('print-active');
-        report.style.display = 'block';
-
-        try { window.print(); }
-        finally {
-          app.style.display = appDisplay;
+        if (document.body.classList.contains('printing-admin')) return;
+        const reset = () => {
+          document.body.classList.remove('printing-admin');
           report.classList.remove('print-active');
-          report.style.display = 'none';
+          pageStyle.textContent = '';
+        };
+        document.body.classList.add('printing-admin');
+        report.classList.add('print-active');
+        window.addEventListener('afterprint', reset, { once: true });
+        try { window.print(); }
+        catch (error) {
+          window.removeEventListener('afterprint', reset);
+          reset();
+          throw error;
         }
     }
 
@@ -2042,9 +2057,13 @@
         document.getElementById('resolverStatusMsg').style.display = 'none';
         alert('เปิดรอบ ' + roundId + ' สำเร็จ!');
       } catch (error) {
-        alert(error.message === 'ROUND_PREVIOUS_UNFINISHED'
-          ? 'กรุณาปิดรับและตัดผลรอบเดิมก่อนเปิดรอบใหม่'
-          : 'เปิดรอบไม่สำเร็จ กรุณาตรวจสถานะรอบล่าสุด [' + error.message + ']');
+        const messages = {
+          ROUND_PREVIOUS_UNFINISHED: 'กรุณาปิดรับและตัดผลรอบเดิมก่อนเปิดรอบใหม่',
+          SHOP_TRIAL_EXPIRED: 'หมดช่วงทดลองใช้แล้ว ให้เจ้าของร้านเลือกแพ็กเกจในหน้าจัดการร้านค้า',
+          SHOP_PLAN_EXPIRED: 'แพ็กเกจหมดอายุแล้ว ให้เจ้าของร้านต่ออายุในหน้าจัดการร้านค้า',
+          SHOP_PLAN_PAYMENT_REQUIRED: 'กรุณาชำระค่าแพ็กเกจก่อนเปิดรอบใหม่',
+        };
+        alert(messages[error.message] || 'เปิดรอบไม่สำเร็จ กรุณาตรวจสถานะรอบล่าสุด [' + error.message + ']');
       } finally {
         button.innerHTML = label;
         button.disabled = false;
@@ -2445,15 +2464,19 @@
         if (document.getElementById('repDateSelector').value !== day) return;
         list.replaceChildren();
         if (!tables.length) list.textContent = 'ไม่มีรายการโต๊ะเงินสดในวันที่เลือก';
-        for (const desk of tables) {
-          const row = document.createElement('p');
+        const rows = tables.map(desk => {
           const money = amount => Number(amount).toLocaleString('th-TH');
-          row.textContent = 'โต๊ะ ' + desk.table_no + ' · ยอดลง ฿' + money(desk.played)
+          return 'โต๊ะ ' + desk.table_no + ' · ยอดลง ฿' + money(desk.played)
             + ' · ยอดชนะ ฿' + money(desk.won) + ' · รับสด ฿' + money(desk.received)
             + ' · จ่ายสด ฿' + money(desk.paid) + ' · เงินสดสุทธิ ฿' + money(desk.received - desk.paid)
             + (desk.pending ? ' · รอผล ' + desk.pending + ' บิล' : '');
+        });
+        for (const text of rows) {
+          const row = document.createElement('p');
+          row.textContent = text;
           list.append(row);
         }
+        return rows;
       } catch {
         if (document.getElementById('repDateSelector').value === day) list.textContent = 'โหลดรายงานเงินสดไม่สำเร็จ';
       }
@@ -2712,7 +2735,6 @@
       const bills = document.getElementById('selectedTableBills');
       const billDetails = document.getElementById('selectedTableBillDetails');
       const billTitle = document.getElementById('selectedTableBillTitle');
-      const cashier = currentUserRole === 'Cashier';
       const owner = ['Admin','Superadmin'].includes(currentUserRole);
       const status = document.getElementById('selectedTableStatus');
       const pending = new Set(tableRound?.bets.filter(b => b.status === 'Active').map(b => b.table_no));
@@ -2845,7 +2867,7 @@
         await _supabase.from('tables').update(values).eq('shop_id', currentShopId).eq('table_no', desk.table_no);
         await loadTableList();
       };
-      if (!cashier) actions.append(button('แก้ชื่อ', async () => {
+      if (owner) actions.append(button('แก้ชื่อ', async () => {
         const name = prompt('ชื่อโต๊ะ (เว้นว่างเพื่อใช้หมายเลขโต๊ะ)', desk.table_name || '');
         if (name !== null) {
           if (name.trim().length > 40) return alert('ชื่อโต๊ะต้องไม่เกิน 40 ตัวอักษร');

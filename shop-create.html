@@ -66,6 +66,7 @@
 <body>
   <main>
     <h1 id="title">หน้าจัดการร้านค้า</h1>
+    <p id="shop-oa-status" hidden></p>
     <p><a id="shop-customer-link" hidden></a></p>
     <section id="platform-panel" hidden>
       <h2>ตั้งค่าร้านค้าในแพลตฟอร์ม</h2>
@@ -514,6 +515,11 @@
         const customerLink = byId('shop-customer-link');
         const customerShop = selected || (data.can_invite ? data.platform_shops?.find(shop => shop.shop_id === sourceShop) : null);
         customerLink.hidden = !customerShop;
+        const oaStatus = byId('shop-oa-status');
+        oaStatus.hidden = !customerShop;
+        if (customerShop) oaStatus.textContent = customerShop.oa_configured
+          ? 'บันทึกการเชื่อม LINE OA แล้ว · ทดสอบการแจ้งเตือนก่อนส่งลิงก์ให้ลูกค้า'
+          : 'รอเชื่อม LINE OA · ติดต่อผู้ดูแลแพลตฟอร์มเพื่อตั้งค่าก่อนใช้งานกับลูกค้า';
         if (customerShop && (selected?.can_manage_rich_menu || data.can_invite)) mountShopRichMenu(customerShop, request);
         if (customerShop) {
           document.title = 'จัดการร้าน · ' + customerShop.shop_name;
@@ -713,7 +719,8 @@
           const portalData = await request('platform_shop_portal').catch(() => null);
           const created = portalData?.shops?.find(shop => shop.shop_id === result.shop_id);
           if (String(created?.status).toLowerCase() === 'active') {
-            status.textContent += ' · เปิดร้านแล้ว' + planSummary(created);
+            status.textContent += ' · เปิดร้านแล้ว' + planSummary(created)
+              + (created.oa_configured ? '' : ' · รอเชื่อม LINE OA');
           } else {
             status.textContent += ' · ดูสถานะล่าสุดในหน้าจัดการร้านค้า';
           }

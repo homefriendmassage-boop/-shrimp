@@ -72,7 +72,7 @@ export function validateQuery(input, role, shopId) {
   if (!['select', 'insert', 'update', 'delete'].includes(operation)) fail('OPERATION_NOT_ALLOWED', 403);
   if (['Cashier','Operator'].includes(role)) {
     if (operation === 'select' && !['tables','rounds','bets'].includes(table)) fail('ADMIN_REQUIRED', 403);
-    const allowedTableFields = role === 'Operator' ? ['is_open','table_name'] : ['is_open'];
+    const allowedTableFields = ['is_open'];
     const keys = Object.keys(input.values ?? {});
     const tableUpdate = table === 'tables' && keys.length === 1 && allowedTableFields.includes(keys[0]);
     const closeRound = keys.length === 1 && input.values?.status === 'Closed';

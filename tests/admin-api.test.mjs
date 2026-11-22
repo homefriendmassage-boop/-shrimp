@@ -526,12 +526,11 @@ test('active Cashier and Operator signed into Player are routed to the back offi
   assert.equal((await handler(request(profile))).status, 403);
 });
 
-test('Operator can rename and open their own tables without creating or adjusting balances', async () => {
+test('Operator can open their own tables and cannot rename, create or adjust balances', async () => {
   const target = { table:'tables', operation:'update', filters:[{ op:'eq', column:'table_no', value:'1' }] };
-  for (const values of [{ table_name:'ริมบ่อ' },{ is_open:true }]) {
-    assert.equal(validateQuery({ ...target, values }, 'Operator', 'SHOP_001').operation, 'update');
-  }
-  for (const values of [{ credit:100 },{ cash_limit:100 },{ is_hidden:true }]) {
+  assert.equal(validateQuery({ ...target, values: { is_open:true } }, 'Operator', 'SHOP_001').operation, 'update');
+  assert.equal(validateQuery({ ...target, values: { table_name:'ริมบ่อ' } }, 'Admin', 'SHOP_001').operation, 'update');
+  for (const values of [{ table_name:'ริมบ่อ' },{ credit:100 },{ cash_limit:100 },{ is_hidden:true }]) {
     assert.throws(() => validateQuery({ ...target, values }, 'Operator', 'SHOP_001'), /ADMIN_REQUIRED/);
   }
   assert.throws(() => validateQuery({ table:'tables', operation:'insert', values:{ table_no:'2' } },
