@@ -176,7 +176,7 @@
     }
     #walletDecisionDialog button[value="approve"] { background: linear-gradient(#008c51, #007a45); }
     #walletDecisionDialog button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-    #tableListContainer { display:grid; grid-template-columns:repeat(auto-fill,minmax(122px,1fr)); gap:8px; }
+    #tableListContainer { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,96px),1fr)); gap:8px; }
     #tableListContainer button { width:100%; min-height:76px; white-space:normal; overflow-wrap:anywhere; }
     #tableListContainer button[aria-pressed="true"] {
       outline:2px solid #fff;
@@ -187,6 +187,23 @@
     #tableWorkspace .table-status-pay { background:#73360d; border:1px solid #ffac61; color:#fff; }
     #tableWorkspace button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
     #tableWorkspace { display:grid; gap:16px; align-items:start; }
+    #tablePicker { grid-area:picker; min-width:0; scroll-margin-top:12px; }
+    #tableDeskWorkspace { grid-area:desk; min-width:0; position:relative; }
+    #tableCashOverview { grid-area:cash; min-width:0; }
+    #tableWorkspace { grid-template-areas:"picker" "desk" "cash"; }
+    #tableDeskHeading { position:sticky; top:0; z-index:4; display:flex; gap:10px;
+      align-items:center; justify-content:space-between; padding:10px 12px;
+      background:var(--card-bg); border:1px solid #465472; border-radius:10px; }
+    #tableDeskHeading h2 { margin:0; font-size:1.05rem; overflow-wrap:anywhere; }
+    #tableDeskHeading .btn { flex:none; padding:6px 10px; }
+    #selectedTableStatus { margin:8px 0; }
+    #staffCashBetForm { scroll-margin-top:90px; }
+    #tableSetup { margin:8px 0 12px; }
+    #tableSetup summary { cursor:pointer; color:var(--text-muted); }
+    #tableFilter { width:auto; max-width:100%; }
+    .table-picker-tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+      justify-content:space-between; margin:0 0 10px; }
+    #tableGridRound { margin:0; }
     #tableListContainer button { display:grid; align-content:center; gap:3px; }
     .table-tile-state { font-size:.85rem; }
     .table-tile-amount { font-size:1.12rem; }
@@ -235,8 +252,13 @@
     #cashRoundMessage:empty { display:none; }
     @media (min-width:1000px) {
       .table-workspace .container { max-width:1420px; }
-      .table-workspace #tableWorkspace { grid-template-columns:minmax(0, 2fr) minmax(300px, 1fr); }
-      .table-workspace #tableListContainer { grid-template-columns:repeat(6, minmax(0,1fr)); }
+      .table-workspace #tableWorkspace { grid-template-columns:minmax(0, 1.1fr) minmax(360px, 1fr);
+        grid-template-areas:"picker desk" "cash desk"; grid-template-rows:auto 1fr; }
+      .table-workspace #tableListContainer { max-height:45vh; overflow:auto; padding:3px; }
+      .table-workspace #tableDeskWorkspace { position:sticky; top:0; max-height:calc(100dvh - 12px);
+        overflow:auto; overscroll-behavior:contain; padding:0 3px 6px; }
+      .table-workspace #tableBackToGrid { display:none; }
+      .table-workspace #tableListContainer { grid-template-columns:repeat(auto-fill,minmax(102px,1fr)); }
     }
     #tableGuestPanel { display:grid; gap:8px; margin:8px 0; }
     #tableGuestPanel[hidden] { display:none; }
@@ -490,6 +512,8 @@
     <div id="tableContentView" class="hidden no-print">
       <div class="card" id="cardTableManage">
         <div class="card-title" style="color: var(--blue-main);"><i class="fa-solid fa-qrcode"></i> จัดการโต๊ะ & สแกนเข้าเล่น</div>
+        <details id="tableSetup">
+          <summary>เครื่องมือจัดการโต๊ะและแชร์ร้าน</summary>
         <div class="form-group" style="display: flex; gap: 10px; margin-bottom: 20px;">
           <input type="text" id="txtNewTable" class="form-control" placeholder="ระบุเบอร์โต๊ะใหม่" style="flex: 2;">
           <button class="btn btn-green" id="btnAddTable" style="flex: 1;" onclick="addNewTable()"><i class="fa-solid fa-plus"></i> เพิ่มโต๊ะ</button>
@@ -500,23 +524,57 @@
           <button type="button" class="btn btn-outline" onclick="shareShopFromTables()">แชร์ร้านให้ลูกค้า</button>
           <a class="btn btn-outline" id="cashBoardLink" target="_blank" rel="noopener">จอทีวีและ MC</a>
           <button class="btn btn-outline hidden" id="boardPasswordSettings" type="button">ตั้งรหัสผ่านจอ MC</button>
-          <label>แสดงโต๊ะ <select class="form-control" id="tableFilter">
+        </div>
+        </details>
+        <div id="tableWorkspace">
+          <section id="tablePicker" aria-label="เลือกโต๊ะ">
+            <div class="table-picker-tools">
+              <p id="tableGridRound" aria-live="polite"></p>
+              <label>แสดงโต๊ะ <select class="form-control" id="tableFilter">
             <option value="visible">ทุกโต๊ะที่แสดง</option><option value="open">เปิดรับยอด</option>
             <option value="pending">รอผล</option><option value="receive">ต้องรับเงิน</option>
             <option value="pay">ต้องจ่ายเงิน</option><option value="closed">ปิดรับยอด</option><option value="hidden">โต๊ะที่ซ่อน</option>
           </select></label>
-        </div>
-        <p id="tableGridRound" aria-live="polite"></p>
-        <div id="tableWorkspace">
-          <div id="tableListContainer"></div>
-          <aside>
+            </div>
+            <div id="tableListContainer"></div>
+          </section>
+          <aside id="tableDeskWorkspace" aria-labelledby="tableDeskTitle">
+            <div id="tableDeskHeading">
+              <h2 id="tableDeskTitle" tabindex="-1">เลือกโต๊ะจากผัง</h2>
+              <button class="btn btn-outline" id="tableBackToGrid" type="button">กลับผังโต๊ะ</button>
+            </div>
+            <p id="selectedTableStatus"></p>
+            <div id="tableGuestPanel" hidden></div>
+            <div id="selectedTableActions"></div>
+            <form id="staffCashBetForm" class="hidden" style="margin-bottom:12px">
+              <p id="staffCashBetTitle"></p>
+              <fieldset class="table-bet-side">
+                <legend>ฝั่ง</legend>
+                <label><input type="radio" name="side" value="คู่" required><span>คู่</span></label>
+                <label><input type="radio" name="side" value="คี่" required><span>คี่</span></label>
+              </fieldset>
+              <label>ยอดลงโต๊ะ <input name="amount" type="number" min="100" step="100" inputmode="numeric" placeholder="เพิ่มทีละ 100 บาท" class="form-control" required></label>
+              <button type="submit" class="btn btn-blue">บันทึกบิล</button>
+              <button type="button" class="btn btn-outline" onclick="this.form.classList.add('hidden')">ปิด</button>
+            </form>
+            <section id="selectedTableBillDetails" aria-labelledby="selectedTableBillTitle" hidden>
+              <h3 id="selectedTableBillTitle" tabindex="-1"></h3>
+              <dl class="table-bill-totals">
+                <div><dt>รวมฝั่งคู่</dt><dd id="selectedTableEvenTotal"></dd></div>
+                <div><dt>รวมฝั่งคี่</dt><dd id="selectedTableOddTotal"></dd></div>
+              </dl>
+              <p id="selectedTableBillsEmpty" hidden></p>
+              <ul id="selectedTableBills"></ul>
+            </section>
+          </aside>
+          <div id="tableCashOverview">
             <section id="cashierCashSummary" class="hidden" aria-labelledby="cashRoundTitle">
               <h2 id="cashRoundTitle" tabindex="-1">รับ–จ่ายเงินสด</h2>
               <dl class="table-cash-totals cashier-pending-totals">
                 <div class="cash-total-pay"><dt>ยอดค้างจ่ายทุกโต๊ะ</dt><dd id="tableTotalPay">—</dd></div>
                 <div class="cash-total-receive"><dt>ยอดค้างเก็บทุกโต๊ะ</dt><dd id="tableTotalReceive">—</dd></div>
               </dl>
-              <details id="cashRoundHistory" open>
+              <details id="cashRoundHistory">
                 <summary>สรุปเงินสดรายรอบ</summary>
                 <p id="cashRoundRecovery" hidden>บันทึกผลรอบที่ค้างแล้ว เครดิตของบิลเดิมจ่ายเพียงครั้งเดียว</p>
                 <label for="cashRoundSelect">รอบที่ตัดผลแล้ว</label>
@@ -538,30 +596,7 @@
                 <button id="retryCashRoundSummary" class="btn btn-outline" type="button" hidden>ลองโหลดยอดอีกครั้ง</button>
               </details>
             </section>
-            <p id="selectedTableStatus"></p>
-            <section id="selectedTableBillDetails" aria-labelledby="selectedTableBillTitle" hidden>
-              <h3 id="selectedTableBillTitle" tabindex="-1"></h3>
-              <dl class="table-bill-totals">
-                <div><dt>รวมฝั่งคู่</dt><dd id="selectedTableEvenTotal"></dd></div>
-                <div><dt>รวมฝั่งคี่</dt><dd id="selectedTableOddTotal"></dd></div>
-              </dl>
-              <p id="selectedTableBillsEmpty" hidden></p>
-              <ul id="selectedTableBills"></ul>
-            </section>
-            <div id="tableGuestPanel" hidden></div>
-            <div id="selectedTableActions"></div>
-            <form id="staffCashBetForm" class="hidden" style="margin-bottom:12px">
-              <p id="staffCashBetTitle"></p>
-              <fieldset class="table-bet-side">
-                <legend>ฝั่ง</legend>
-                <label><input type="radio" name="side" value="คู่" required><span>คู่</span></label>
-                <label><input type="radio" name="side" value="คี่" required><span>คี่</span></label>
-              </fieldset>
-              <label>ยอดลงโต๊ะ <input name="amount" type="number" min="100" step="100" inputmode="numeric" placeholder="เพิ่มทีละ 100 บาท" class="form-control" required></label>
-              <button type="submit" class="btn btn-blue">บันทึกบิล</button>
-              <button type="button" class="btn btn-outline" onclick="this.form.classList.add('hidden')">ปิด</button>
-            </form>
-          </aside>
+          </div>
         </div>
       </div>
     </div>
@@ -2950,6 +2985,10 @@
     let tableRequest = 0;
     const deskName = desk => desk.table_name || 'โต๊ะ ' + desk.table_no;
     document.getElementById('tableFilter').addEventListener('change', renderTableGrid);
+    document.getElementById('tableBackToGrid').addEventListener('click', () => {
+      document.getElementById('tablePicker').scrollIntoView({ block: 'start' });
+      document.querySelector('#tableListContainer [aria-pressed="true"]')?.focus({ preventScroll: true });
+    });
 
     async function loadTableList() {
       const request = ++tableRequest;
@@ -3019,6 +3058,12 @@
       if (children.length === 1) selectedGuestBill = children[0].table_no;
       if (!children.some(row => row.table_no === selectedGuestBill)) selectedGuestBill = null;
       const desk = children.length ? children.find(row => row.table_no === selectedGuestBill) : physical;
+      const heading = document.getElementById('tableDeskTitle');
+      heading.textContent = physical
+        ? deskName(physical) + (physical.table_name ? ' · เลขโต๊ะ ' + physical.table_no : '')
+          + (desk?.parent_table_no ? ' / ' + deskName(desk) : '')
+        : 'เลือกโต๊ะจากผัง';
+      document.getElementById('tableBackToGrid').hidden = !physical;
       const guestKey = JSON.stringify([currentShopId, physical?.table_no, physical?.cash_limit, physical?.is_open, selectedGuestBill, children]);
       const guestPanel = document.getElementById('tableGuestPanel');
       if (guestPanel.dataset.key !== guestKey) {
@@ -3035,7 +3080,10 @@
           if (selectedTable !== row.table_no) selectedGuestBill = null;
           selectedTable = row.table_no;
           renderTableGrid();
-          billTitle.focus();
+          if (matchMedia('(max-width:999px)').matches) {
+            document.getElementById('tableDeskWorkspace').scrollIntoView({ block: 'start' });
+          }
+          heading.focus({ preventScroll: true });
         }, activity ? 'table-status-' + activity : 'btn-outline');
         for (const [className, label] of [
           ['table-tile-name', deskName(row)],
