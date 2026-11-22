@@ -4,7 +4,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const fields = {
   users: 'uid shop_id member_id display_name profile_pic role status credit_balance total_deposit commission_balance referrer_uid backer_share backer_water_fee backer_wallet created_at',
-  tables: 'id shop_id table_no credit created_at cash_limit table_name is_open is_hidden',
+  tables: 'id shop_id table_no credit created_at cash_limit table_name is_open is_hidden parent_table_no guest_bill_closed guest_uid',
   rounds: 'round_id shop_id status weight result created_at end_time_ms resolver_type settlement_weight',
   bets: 'bet_id shop_id round_id uid table_no bet_type amount status play_mode payout created_at cash_table',
   backer_logs: 'id shop_id round_id uid member_id share_percent gap_amount result_status pnl_amount water_fee_deducted wallet_balance_after created_at',
@@ -506,11 +506,11 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
     return new Date(Date.now() + 3600000).toISOString().slice(0, 10);
   }
 
-  async function tableQrSignature(shop, table, day) {
+  async function tableQrSignature(shop, table, day, generation = null) {
     const encoder = new TextEncoder();
     const key = await crypto.subtle.importKey('raw', encoder.encode(serverKey(env)),
       { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-    const digest = await crypto.subtle.sign('HMAC', key, encoder.encode(JSON.stringify(['cash-table', shop, table, day])));
+    const digest = await crypto.subtle.sign('HMAC', key, encoder.encode(JSON.stringify(generation ? ['cash-table', shop, table, day, generation] : ['cash-table', shop, table, day])));
     return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
   }
 
@@ -587,10 +587,10 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, board: result.data });
       }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_correct_bet', 'round_begin_settlement', 'coverage_read', 'coverage_move', 'coverage_fund', 'coverage_reserve', 'coverage_report', 'banker_payout', 'backer_portal', 'daily_staff_round_report', 'round_open', 'round_close_with_coverage', 'round_finalize', 'table_round_summary', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_extend_shop_plan', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'table_guest_scan', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_guest_manage', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_correct_bet', 'round_begin_settlement', 'coverage_read', 'coverage_move', 'coverage_fund', 'coverage_reserve', 'coverage_report', 'banker_payout', 'backer_portal', 'daily_staff_round_report', 'round_open', 'round_close_with_coverage', 'round_finalize', 'table_round_summary', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_extend_shop_plan', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
       if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_extend_shop_plan', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-      const playerRequest = ['promoter_profile', 'player_profile', 'player_state', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'backer_portal'].includes(input.action);
+      const playerRequest = ['promoter_profile', 'player_profile', 'player_state', 'table_guest_scan', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'backer_portal'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
       const shopLogin = input.shop_login === true;
       if (shopLogin && (!playerRequest || shopId !== 'SHOP_001')) fail('SHOP_LOGIN_NOT_ALLOWED', 403);
@@ -859,6 +859,34 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (result.data?.code !== 'CREATED') fail('SHOP_CREATE_FAILED', 500);
         return reply({ ok: true, shop_id: result.data.shop_id, status: 'Inactive', plan_code: result.data.plan_code });
       }
+      const verifyGuestTableQr = async table => {
+        if (input.table_day !== tableDay()) fail('TABLE_QR_EXPIRED', 409);
+        const seat = await db.from('tables').select('qr_generation,parent_table_no')
+          .eq('shop_id', shopId).eq('table_no', table).maybeSingle();
+        if (seat.error) fail('PLAYER_STATE_UNAVAILABLE', 500);
+        const generation = seat.data?.qr_generation ?? null;
+        if (!seat.data || seat.data.parent_table_no ||
+            input.table_token !== await tableQrSignature(shopId, table, input.table_day, generation)) {
+          fail('TABLE_QR_INVALID', 403);
+        }
+        return generation;
+      };
+      const resolveGuestTable = async (table, register = false) => {
+        const generation = await verifyGuestTableQr(table);
+        const seat = await db.rpc('cash_table_guest_scan', {
+          p_shop: shopId, p_table: table, p_day: input.table_day, p_generation: generation, p_uid: claims.sub,
+          p_name: register ? (typeof identity.name === 'string' ? identity.name : 'สมาชิก LINE') : null,
+          p_picture: register ? lineProfilePicture(identity.picture) : null,
+        });
+        if (seat.error) fail('PLAYER_STATE_UNAVAILABLE', 500);
+        if (seat.data?.code !== 'OK') fail(seat.data?.code || 'TABLE_QR_INVALID', 409);
+        return seat.data.bill ?? null;
+      };
+      if (input.action === 'table_guest_scan') {
+        if (typeof input.table_no !== 'string' || !/^\d{1,8}$/.test(input.table_no)) fail('TABLE_INVALID');
+        await resolveGuestTable(input.table_no, true);
+        return reply({ ok: true });
+      }
       if (input.action === 'player_state') {
         const member = await db.from('users').select('role,status').eq('shop_id', shopId).eq('uid', claims.sub).maybeSingle();
         if (member.error) fail('PLAYER_STATE_UNAVAILABLE', 500);
@@ -868,17 +896,26 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         }
         const table = input.table_no;
         if (table != null && (typeof table !== 'string' || table.length > 40)) fail('TABLE_INVALID');
-        const validTable = table && input.table_day === tableDay() &&
-          input.table_token === await tableQrSignature(shopId, table, input.table_day);
+        let validTable = null;
+        let tableError = null;
+        if (table) {
+          try {
+            validTable = await resolveGuestTable(table);
+            if (!validTable) tableError = 'GUEST_BILL_REQUIRED';
+          } catch (error) {
+            if (!['TABLE_QR_EXPIRED','TABLE_QR_INVALID','TABLE_CLOSED'].includes(error.message)) throw error;
+            tableError = error.message;
+          }
+        }
         const result = await db.rpc('read_player_live_state', {
-          p_shop: shopId, p_uid: claims.sub, p_table: validTable ? table : null, p_results: input.include_results === true
+          p_shop: shopId, p_uid: claims.sub, p_table: validTable, p_results: input.include_results === true
         });
         if (result.data && validTable) {
           const [desk, total] = await Promise.all([
             db.from('tables').select('table_name,is_open,is_hidden,cash_limit')
-              .eq('shop_id', shopId).eq('table_no', table).maybeSingle(),
+              .eq('shop_id', shopId).eq('table_no', validTable).maybeSingle(),
             result.data.round?.round_id
-              ? db.rpc('cash_table_round_total', { p_shop: shopId, p_table: table, p_round: result.data.round.round_id })
+              ? db.rpc('cash_table_round_total', { p_shop: shopId, p_table: validTable, p_round: result.data.round.round_id })
               : { data: 0 },
           ]);
           if (desk.error || total.error) fail('PLAYER_STATE_UNAVAILABLE', 500);
@@ -888,6 +925,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         }
         if (result.error) fail('PLAYER_STATE_UNAVAILABLE', 500);
         if (!result.data) fail('PLAYER_ACCESS_REQUIRED', 403);
+        if (tableError) result.data.table_error = tableError;
         return reply({ ok: true, snapshot: result.data });
       }
       if (input.action === 'backer_portal') {
@@ -983,14 +1021,14 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             p_shop: shopId, p_uid: claims.sub, p_round: input.round_id, p_id: id, p_type: input.bet_type, p_amount: input.amount,
           };
           const table = input.table_no;
+          let generation = null;
           if (table !== undefined) {
             if (typeof table !== 'string' || !/^\d{1,8}$/.test(table)) fail('BET_INVALID');
-            if (input.table_day !== tableDay()) fail('TABLE_QR_EXPIRED', 409);
-            if (input.table_token !== await tableQrSignature(shopId, table, input.table_day)) fail('TABLE_QR_INVALID', 403);
+            generation = await verifyGuestTableQr(table);
           }
           const result = table === undefined
             ? await db.rpc('place_player_private_bet', params)
-            : await db.rpc('place_player_cash_table_bet', { ...params, p_table: table, p_day: input.table_day, p_staff: false });
+            : await db.rpc('place_guest_cash_table_bet', { ...params, p_table: table, p_day: input.table_day, p_staff: false, p_generation: generation });
           if (['BET_MINIMUM','BET_WHOLE_HUNDREDS'].includes(result.error?.message)) fail(result.error.message, 409);
           if (result.error) fail('BET_UNAVAILABLE', 500);
           if (result.data?.code === 'BET_LIMIT') return reply({ ok: false, ...result.data }, 409);
@@ -1069,10 +1107,10 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       const shop = await db.from('shops').select('shop_id,status').eq('shop_id', shopId).maybeSingle();
       if (shop.error) fail('DATABASE_ERROR', 500);
       if (!shop.data || String(shop.data.status).toLowerCase() !== 'active') fail('SHOP_NOT_AVAILABLE', 403);
-      if (staff.data.role === 'Operator' && !['access','query','table_qr','table_cash_payment','table_cash_bet'].includes(input.action)) {
+      if (staff.data.role === 'Operator' && !['access','query','table_qr','table_guest_manage','table_cash_payment','table_cash_bet'].includes(input.action)) {
         fail('ADMIN_REQUIRED', 403);
       }
-      if (staff.data.role === 'Cashier' && !['access','query','table_qr','table_cash_payment','table_cash_bet','table_correct_bet','round_open','round_close_with_coverage','round_finalize','table_round_summary','coverage_read','coverage_reserve','coverage_report','banker_payout','daily_staff_round_report','table_cash_report','daily_referral_commission'].includes(input.action)) {
+      if (staff.data.role === 'Cashier' && !['access','query','table_qr','table_guest_manage','table_cash_payment','table_cash_bet','table_correct_bet','round_open','round_close_with_coverage','round_finalize','table_round_summary','coverage_read','coverage_reserve','coverage_report','banker_payout','daily_staff_round_report','table_cash_report','daily_referral_commission'].includes(input.action)) {
         fail('ADMIN_REQUIRED', 403);
       }
       if (input.action === 'banker_payout') {
@@ -1163,6 +1201,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           p_expected_side: operation === 'add' ? null : expected_side,
           p_expected_amount: operation === 'add' ? null : expected_amount,
         });
+        if (result.error?.message === 'GUEST_BILL_REQUIRED') fail('GUEST_BILL_REQUIRED', 409);
         if (result.error) fail('BET_UNAVAILABLE', 500);
         if (result.data !== 'RECORDED') fail(result.data || 'BET_UNAVAILABLE', result.data === 'ADMIN_REQUIRED' ? 403 : 409);
         return reply({ ok: true });
@@ -1258,8 +1297,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             !shopInviteIdPattern.test(input.bet_id) || !['คู่','คี่'].includes(input.bet_type) ||
             typeof input.amount !== 'string' || !/^\d{1,9}(?:\.\d{1,2})?$/.test(input.amount)) fail('BET_INVALID');
         if (!wholeHundredBet(input.amount)) fail('BET_WHOLE_HUNDREDS');
-        const result = await db.rpc('place_player_cash_table_bet', {
-          p_shop: shopId, p_uid: claims.sub, p_round: input.round_id, p_id: input.bet_id, p_type: input.bet_type,
+        const result = await db.rpc('place_guest_cash_table_bet', {
+          p_generation: null, p_shop: shopId, p_uid: claims.sub, p_round: input.round_id, p_id: input.bet_id, p_type: input.bet_type,
           p_amount: input.amount, p_table: input.table_no, p_day: tableDay(), p_staff: true,
         });
         if (['BET_MINIMUM','BET_WHOLE_HUNDREDS'].includes(result.error?.message)) fail(result.error.message, 409);
@@ -1277,16 +1316,32 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         if (result.error) fail('TABLE_CREATE_FAILED', 500);
         return reply({ ok: true, added: result.data });
       }
+      if (input.action === 'table_guest_manage') {
+        const { table_no, operation, bill, name, guest, generation } = input;
+        if (typeof table_no !== 'string' || !/^\d{1,8}$/.test(table_no) ||
+            !['list','add','edit','close','rotate'].includes(operation) ||
+            (bill != null && (typeof bill !== 'string' || !/^\d{1,8}$/.test(bill))) ||
+            (name != null && (typeof name !== 'string' || name.length > 40)) ||
+            (guest != null && (typeof guest !== 'string' || !/^U[0-9a-f]{32}$/i.test(guest))) ||
+            (generation != null && (typeof generation !== 'string' || !shopInviteIdPattern.test(generation)))) fail('TABLE_INVALID');
+        const result = await db.rpc('manage_cash_table_guests', {
+          p_shop: shopId, p_actor: claims.sub, p_table: table_no, p_action: operation,
+          p_bill: bill ?? null, p_name: name ?? null, p_guest: guest ?? null, p_expected: generation ?? null,
+        });
+        if (result.error) fail('TABLE_GUEST_UNAVAILABLE', 500);
+        if (result.data?.code !== 'OK') fail(result.data?.code || 'TABLE_GUEST_UNAVAILABLE', 409);
+        return reply({ ok: true, ...result.data });
+      }
       if (['table_qr', 'table_cash_payment'].includes(input.action)) {
         const table = input.table_no;
         if (typeof table !== 'string' || !/^\d{1,8}$/.test(table)) fail('TABLE_INVALID');
         if (input.action === 'table_qr') {
-          const desk = await db.from('tables').select('cash_limit,is_open,is_hidden').eq('shop_id', shopId).eq('table_no', table).maybeSingle();
+          const desk = await db.from('tables').select('cash_limit,is_open,is_hidden,qr_generation,parent_table_no').eq('shop_id', shopId).eq('table_no', table).maybeSingle();
           if (desk.error) fail('DATABASE_ERROR', 500);
           if (desk.data && (!desk.data.is_open || desk.data.is_hidden)) fail('TABLE_CLOSED', 409);
-          if (!desk.data?.cash_limit) fail('CASH_TABLE_REQUIRED', 409);
+          if (!desk.data?.cash_limit || desk.data.parent_table_no) fail('CASH_TABLE_REQUIRED', 409);
           const day = tableDay();
-          return reply({ ok: true, day, token: await tableQrSignature(shopId, table, day) });
+          return reply({ ok: true, day, token: await tableQrSignature(shopId, table, day, desk.data.qr_generation) });
         }
         if (!shopInviteIdPattern.test(input.entry_id) || !['deposit','withdraw'].includes(input.type) ||
             typeof input.amount !== 'string' || !/^\d{1,9}(?:\.\d{1,2})?$/.test(input.amount)) fail('AMOUNT_INVALID');

@@ -6,7 +6,7 @@
   <title>Admin Panel - บ่อตกกุ้ง</title>
   <script src="config.js?v=round-name-1"></script>
   <script src="payment-ui.js?v=1"></script>
-  <script src="admin-api-client.js?v=banker-payout-2"></script>
+  <script src="admin-api-client.js?v=guest-bills-1"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -238,6 +238,11 @@
       .table-workspace #tableWorkspace { grid-template-columns:minmax(0, 2fr) minmax(300px, 1fr); }
       .table-workspace #tableListContainer { grid-template-columns:repeat(6, minmax(0,1fr)); }
     }
+    #tableGuestPanel { display:grid; gap:8px; margin:8px 0; }
+    #tableGuestPanel[hidden] { display:none; }
+    #tableGuestPanel .guest-buttons { display:flex; flex-wrap:wrap; gap:6px; }
+    #tableGuestPanel .guest-buttons .btn { flex:0 1 auto; min-height:38px; }
+    #tableGuestPanel .guest-buttons img { width:22px; height:22px; border-radius:50%; vertical-align:middle; margin-right:6px; }
     #selectedTableActions { display:flex; flex-wrap:wrap; gap:8px; }
   </style>
 </head>
@@ -543,6 +548,7 @@
               <p id="selectedTableBillsEmpty" hidden></p>
               <ul id="selectedTableBills"></ul>
             </section>
+            <div id="tableGuestPanel" hidden></div>
             <div id="selectedTableActions"></div>
             <form id="staffCashBetForm" class="hidden" style="margin-bottom:12px">
               <p id="staffCashBetTitle"></p>
@@ -2563,7 +2569,10 @@
         if (!tables.length) list.textContent = 'ไม่มีรายการโต๊ะเงินสดในวันที่เลือก';
         const rows = tables.map(desk => {
           const money = amount => Number(amount).toLocaleString('th-TH');
-          return 'โต๊ะ ' + desk.table_no + ' · ยอดลง ฿' + money(desk.played)
+          const label = desk.parent_table_no
+            ? (desk.parent_table_name || 'โต๊ะ ' + desk.parent_table_no) + ' / ' + (desk.table_name || 'บิลย่อย')
+            : (desk.table_name || 'โต๊ะ ' + desk.table_no);
+          return label + ' · ยอดลง ฿' + money(desk.played)
             + ' · ยอดชนะ ฿' + money(desk.won) + ' · รับสด ฿' + money(desk.received)
             + ' · จ่ายสด ฿' + money(desk.paid) + ' · เงินสดสุทธิ ฿' + money(desk.received - desk.paid)
             + (desk.pending ? ' · รอผล ' + desk.pending + ' บิล' : '');
@@ -2703,7 +2712,7 @@
             bet ? { bet_id: bet, bet_type: expectedSide, amount: expectedAmount } : null);
         }
       } catch (error) {
-        alert(tableBetErrors[error.message] || 'ยังยืนยันผลการบันทึกบิลไม่ได้');
+        alert(tableBetErrors[error.message] || guestErrors[error.message] || 'ยังยืนยันผลการบันทึกบิลไม่ได้');
       } finally { button.disabled = false; }
     });
 
@@ -2811,13 +2820,140 @@
     });
 
     let selectedTable = null;
+    let selectedGuestBill = null;
+    let guestPanelVersion = 0;
+    let guestScanTimer;
+    const guestErrors = {
+      GUEST_BILLS_UNSETTLED: 'กรุณารอผลและเคลียร์ยอดให้ครบก่อน',
+      GUEST_BILL_REQUIRED: 'กรุณาเลือกบิลผู้เล่นก่อนลงยอด',
+      GUEST_BILL_NOT_FOUND: 'บิลนี้ปิดแล้วหรือไม่อยู่ในโต๊ะที่เลือก',
+      GUEST_SCAN_NOT_FOUND: 'รายการสแกนนี้ถูกจับคู่แล้วหรือหมดอายุ',
+      GUEST_ALREADY_LINKED: 'บิลนี้ผูก LINE ไว้แล้ว',
+      GUEST_NAME_DUPLICATE: 'ชื่อนี้มีบิลเปิดอยู่แล้ว กรุณาเลือกบิลเดิมหรือใช้เลขที่นั่งแยก',
+      GUEST_NAME_INVALID: 'กรุณาระบุชื่อไม่เกิน 40 ตัวอักษร',
+      TABLE_QR_INVALID: 'QR ของโต๊ะเปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่',
+    };
+
+    async function renderTableGuests(physical, children, button) {
+      const panel = document.getElementById('tableGuestPanel');
+      clearTimeout(guestScanTimer);
+      const version = ++guestPanelVersion;
+      panel.replaceChildren();
+      panel.hidden = !physical || physical.is_hidden || physical.cash_limit == null;
+      if (panel.hidden) return;
+      const group = () => {
+        const row = document.createElement('div');
+        row.className = 'guest-buttons';
+        panel.append(row);
+        return row;
+      };
+      const list = group();
+      for (const child of children) {
+        const item = button((child.table_name || 'บิลย่อย') + (child.guest_uid ? ' · LINE' : ''), () => {
+          selectedGuestBill = child.table_no;
+          renderTableGrid();
+        }, selectedGuestBill === child.table_no ? 'btn-blue' : 'btn-outline');
+        item.setAttribute('aria-pressed', String(selectedGuestBill === child.table_no));
+        list.append(item);
+      }
+      const tools = group();
+      const request = details => _supabase.tableGuest({ table_no: physical.table_no, ...details });
+      const selected = children.find(child => child.table_no === selectedGuestBill);
+      const shop = currentShopId;
+      const current = () => version === guestPanelVersion && selectedTable === physical.table_no && currentShopId === shop;
+      const changes = async (details, next) => {
+        if (!current()) return;
+        try {
+          const result = await request({ ...details, generation });
+          if (current()) selectedGuestBill = next === 'created' ? result.bill : next;
+          panel.dataset.key = '';
+          await loadTableList();
+          return true;
+        } catch (error) {
+          alert(guestErrors[error.message] || 'จัดการบิลย่อยไม่สำเร็จ กรุณาลองอีกครั้ง');
+        }
+      };
+      const askName = initial => prompt('ชื่อเล่นหรือเลขที่นั่ง', initial || '')?.trim();
+      const scanPanel = group();
+      scanPanel.textContent = 'กำลังโหลดผู้สแกน LINE…';
+      let generation;
+      try {
+        const data = await request({ operation: 'list' });
+        if (!current()) return;
+        generation = data.generation;
+        tools.append(button('เพิ่มชื่อ / เปิดบิล', async () => {
+          const name = askName();
+          if (name) await changes({ operation:'add', name }, 'created');
+        }));
+        if (selected) {
+          tools.append(button('แก้ชื่อบิล', async () => {
+            const name = askName(selected.table_name);
+            if (name) await changes({ operation:'edit', bill:selected.table_no, name }, selected.table_no);
+          }), button('ปิดบิลนี้', async () => {
+            if (confirm('ปิดบิล ' + selected.table_name + ' ใช่ไหม?')) {
+              await changes({ operation:'close', bill:selected.table_no }, null);
+            }
+          }));
+        }
+        if (children.length) tools.append(button(physical.is_open ? 'ปิดรับทั้งโต๊ะ' : 'เปิดรับทั้งโต๊ะ', async () => {
+          if (!current()) return;
+          await _supabase.from('tables').update({ is_open: !physical.is_open })
+            .eq('shop_id', shop).eq('table_no', physical.table_no);
+          await loadTableList();
+        }));
+        tools.append(button('ดู / พิมพ์ QR', () => showQrCode(physical.table_no, true, deskName(physical))),
+          button('เปลี่ยนลูกค้า · ออก QR ใหม่', async () => {
+            if (confirm('ยกเลิก QR เดิมของโต๊ะนี้และออก QR ใหม่?') &&
+                await changes({ operation:'rotate' }, null) && physical.is_open && selectedTable === physical.table_no && currentShopId === shop) {
+              await showQrCode(physical.table_no, true, deskName(physical));
+            }
+          }), button('โหลดผู้สแกนใหม่', () => renderTableGuests(physical, children, button)));
+        scanPanel.replaceChildren();
+        if (!data.scans.length) scanPanel.textContent = 'ยังไม่มีผู้สแกน LINE ที่รอจับคู่';
+        for (const scan of data.scans) {
+          const match = button(scan.name, async () => {
+            const target = selected && !selected.guest_uid;
+            const name = askName(target ? selected.table_name : scan.name.slice(0, 40));
+            if (name) await changes(target
+              ? { operation:'edit', bill:selected.table_no, name, guest:scan.uid }
+              : { operation:'add', name, guest:scan.uid }, target ? selected.table_no : 'created');
+          });
+          match.title = selected && !selected.guest_uid ? 'จับคู่กับบิลที่เลือก' : 'เปิดบิลจากผู้สแกน';
+          if (scan.picture) {
+            const img = document.createElement('img');
+            img.src = scan.picture;
+            img.alt = '';
+            match.prepend(img);
+          }
+          scanPanel.append(match);
+        }
+        const seen = JSON.stringify([data.generation, data.scans]);
+        const refreshScans = async () => {
+          if (!current() || !panel.isConnected) return;
+          if (!document.hidden && panel.getClientRects().length) {
+            try {
+              const latest = await request({ operation: 'list' });
+              if (!current()) return;
+              if (JSON.stringify([latest.generation, latest.scans]) !== seen) {
+                void renderTableGuests(physical, children, button);
+                return;
+              }
+            } catch { /* Retry while this table remains selected. */ }
+          }
+          guestScanTimer = setTimeout(refreshScans, 5000);
+        };
+        guestScanTimer = setTimeout(refreshScans, 5000);
+      } catch {
+        if (current()) scanPanel.replaceChildren(button('โหลดผู้สแกนใหม่', () => renderTableGuests(physical, children, button)));
+      }
+    }
     let tableRequest = 0;
     const deskName = desk => desk.table_name || 'โต๊ะ ' + desk.table_no;
     document.getElementById('tableFilter').addEventListener('change', renderTableGrid);
 
     async function loadTableList() {
       const request = ++tableRequest;
-      const { data } = await _supabase.from('tables').select('*').eq('shop_id', currentShopId);
+      const { data } = await _supabase.from('tables').select('*').eq('shop_id', currentShopId).eq('guest_bill_closed', false);
       if (request !== tableRequest) return;
       tableDesks = (data || []).sort((a, b) => a.table_no.localeCompare(b.table_no, 'th', { numeric: true }));
       renderTableGrid();
@@ -2853,13 +2989,15 @@
         document.getElementById('tableTotalPay').textContent = tableMoney(pay / 100);
       }
       document.getElementById('tableGridRound').textContent = tableRound ? 'รอบ ' + tableRound.id : 'ยังไม่มีรอบ';
+      const childrenFor = number => tableDesks.filter(row => row.parent_table_no === number && !row.guest_bill_closed);
       const shown = tableDesks.filter(desk => {
+        if (desk.parent_table_no) return false;
         if (filter === 'hidden') return desk.is_hidden;
         if (desk.is_hidden) return false;
         if (filter === 'open') return desk.is_open && desk.cash_limit != null;
         if (filter === 'closed') return !desk.is_open;
-        if (filter === 'pending') return pending.has(desk.table_no);
-        if (filter === 'receive' || filter === 'pay') return settlementState(desk) === filter;
+        if (filter === 'pending') return pending.has(desk.table_no) || childrenFor(desk.table_no).some(row => pending.has(row.table_no));
+        if (filter === 'receive' || filter === 'pay') return settlementState(desk) === filter || childrenFor(desk.table_no).some(row => settlementState(row) === filter);
         return true;
       });
       const button = (label, action, style = 'btn-outline') => {
@@ -2870,13 +3008,23 @@
         element.onclick = async () => {
           element.disabled = true;
           try { await action(); } catch (error) {
-            alert(({ ...tableBetErrors, ...cashTablePaymentErrors })[error.message] || 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง');
+            alert(({ ...tableBetErrors, ...cashTablePaymentErrors, ...guestErrors })[error.message] || 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง');
           } finally { element.disabled = false; }
         };
         return element;
       };
       grid.replaceChildren();
-      const desk = shown.find(row => row.table_no === selectedTable);
+      const physical = shown.find(row => row.table_no === selectedTable);
+      const children = physical ? childrenFor(physical.table_no) : [];
+      if (children.length === 1) selectedGuestBill = children[0].table_no;
+      if (!children.some(row => row.table_no === selectedGuestBill)) selectedGuestBill = null;
+      const desk = children.length ? children.find(row => row.table_no === selectedGuestBill) : physical;
+      const guestKey = JSON.stringify([currentShopId, physical?.table_no, physical?.cash_limit, physical?.is_open, selectedGuestBill, children]);
+      const guestPanel = document.getElementById('tableGuestPanel');
+      if (guestPanel.dataset.key !== guestKey) {
+        guestPanel.dataset.key = guestKey;
+        void renderTableGuests(physical, children, button);
+      }
       for (const row of shown) {
         const activity = pending.has(row.table_no) ? 'pending' : settlementState(row);
         const activityLabel = { pending:'รอผล', receive:'ต้องรับเงิน', pay:'ต้องจ่ายเงิน' }[activity];
@@ -2884,13 +3032,14 @@
         const state = [availability, activityLabel].filter(Boolean).join(' · ')
           || (row.cash_limit == null ? 'ยังไม่ตั้งวงเงิน' : 'เคลียร์แล้ว');
         const item = button('', () => {
+          if (selectedTable !== row.table_no) selectedGuestBill = null;
           selectedTable = row.table_no;
           renderTableGrid();
           billTitle.focus();
         }, activity ? 'table-status-' + activity : 'btn-outline');
         for (const [className, label] of [
           ['table-tile-name', deskName(row)],
-          ['table-tile-state', state],
+          ['table-tile-state', childrenFor(row.table_no).length ? childrenFor(row.table_no).length + ' บิลย่อย' : state],
           ['table-tile-amount', settlementState(row) ? tableMoney(Math.abs(Number(row.credit))) : ''],
         ]) {
           if (!label) continue;
@@ -2906,7 +3055,7 @@
       }
       if (!shown.length) grid.textContent = 'ไม่มีโต๊ะในตัวกรองนี้';
       if (!desk) {
-        status.textContent = '';
+        status.textContent = children.length ? 'เลือกบิลผู้เล่นก่อนลงยอดหรือรับ–จ่าย' : '';
         actions.replaceChildren();
         billDetails.hidden = true;
         bills.replaceChildren();
@@ -2925,12 +3074,12 @@
       if (form.dataset.table !== desk.table_no || form.dataset.round !== tableRound?.id) form.classList.add('hidden');
       if (priorDebt && form.dataset.mode !== 'edit') form.classList.add('hidden');
       const roundTotal = current.reduce((sum, bet) => sum + Number(bet.amount), 0);
-      status.textContent = deskName(desk) + ' · หมายเลข ' + desk.table_no + ' · รอบนี้ ฿' + roundTotal.toLocaleString('th-TH')
+      status.textContent = (desk.parent_table_no ? deskName(physical) + ' / ' + deskName(desk) : deskName(desk)) + ' · รอบนี้ ฿' + roundTotal.toLocaleString('th-TH')
         + (balance < 0 ? ' · ต้องรับ ฿' : balance > 0 ? ' · ต้องจ่าย ฿' : ' · สุทธิ ฿')
         + Math.abs(balance).toLocaleString('th-TH')
         + (desk.cash_limit == null ? '' : ' · วงเงิน ฿' + Number(desk.cash_limit).toLocaleString('th-TH'))
         + (priorDebt ? ' · ต้องเคลียร์ยอดรอบก่อน ' + tableMoney(-priorBalance / 100) + ' ก่อนลงยอดใหม่' : '');
-      const key = JSON.stringify([desk, current, tableRound?.id, tableRound?.status, tableRound?.locked, isRoundOpen, priorDebt]);
+      const key = JSON.stringify([desk, physical?.is_open, current, tableRound?.id, tableRound?.status, tableRound?.locked, isRoundOpen, priorDebt]);
       if (actions.dataset.key === key) return;
       actions.dataset.key = key;
       billDetails.hidden = false;
@@ -2964,20 +3113,20 @@
         await _supabase.from('tables').update(values).eq('shop_id', currentShopId).eq('table_no', desk.table_no);
         await loadTableList();
       };
-      if (owner) actions.append(button('แก้ชื่อ', async () => {
+      if (owner && !desk.parent_table_no) actions.append(button('แก้ชื่อ', async () => {
         const name = prompt('ชื่อโต๊ะ (เว้นว่างเพื่อใช้หมายเลขโต๊ะ)', desk.table_name || '');
         if (name !== null) {
           if (name.trim().length > 40) return alert('ชื่อโต๊ะต้องไม่เกิน 40 ตัวอักษร');
           await update({ table_name: name.trim() || null });
         }
       }));
-      if (owner) actions.append(button(desk.is_hidden ? 'แสดงโต๊ะ' : 'ซ่อนโต๊ะ', () =>
+      if (owner && !desk.parent_table_no) actions.append(button(desk.is_hidden ? 'แสดงโต๊ะ' : 'ซ่อนโต๊ะ', () =>
         update(desk.is_hidden ? { is_hidden: false } : { is_hidden: true, is_open: false })));
       if (!desk.is_hidden) {
         actions.append(button(desk.is_open ? 'ปิดรับยอด' : 'เปิดรับยอด', () => update({ is_open: !desk.is_open })));
-        if (owner) actions.append(button('วงเงินสด', () => setCashTableLimit(desk.table_no, desk.cash_limit)));
-        if (desk.is_open && desk.cash_limit != null) {
-          actions.append(button('QR', () => showQrCode(desk.table_no, true, deskName(desk))));
+        if (owner && !desk.parent_table_no) actions.append(button('วงเงินสด', () => setCashTableLimit(desk.table_no, desk.cash_limit)));
+        if (physical?.is_open && desk.is_open && desk.cash_limit != null) {
+
           if (isRoundOpen && !priorDebt) actions.append(button('ลงยอดให้โต๊ะ', () => openTableBetForm(desk, 'normal'), 'btn-blue'));
         }
         if (desk.cash_limit != null && !priorDebt && canCorrectTableRound()) {
