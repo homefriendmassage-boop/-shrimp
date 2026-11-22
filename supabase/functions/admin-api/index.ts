@@ -837,7 +837,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
             .eq('member_id', 'M0000').eq('status', 'Active').in('role', ['Admin', 'Superadmin']).maybeSingle(),
         ]);
         if (shop.error || owner.error) fail('SHOP_PORTAL_UNAVAILABLE', 500);
-        if (!owner.data || String(shop.data?.status).toLowerCase() !== 'active') fail('REFERRER_INVALID', 403);
+        const platformDemoInvite = !owner.data && referrer === 'SHOP_000' && await canCreateShop();
+        if ((!owner.data && !platformDemoInvite) || String(shop.data?.status).toLowerCase() !== 'active') fail('REFERRER_INVALID', 403);
         const invite = await db.from('platform_shop_invites').insert({
           created_by: claims.sub, referrer_shop_id: referrer, referral_tier: 'standard',
         })

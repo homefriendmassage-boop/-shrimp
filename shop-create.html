@@ -617,11 +617,11 @@
           customerLink.href = /^SHOP_00[012]$/.test(customerShop.shop_id)
             ? 'shops/' + customerShop.shop_id + '/' : liffLink(APP_CONFIG.LIFF_ID_PLAYER, { shop: customerShop.shop_id });
         }
-        const canRefer = selected?.can_refer_shop ??
-          (selected?.can_manage_billing && String(selected.status).toLowerCase() === 'active');
+        const canRefer = Boolean(selected?.can_refer_shop ||
+          (data.can_invite && customerShop?.shop_id === 'SHOP_000' && String(customerShop.status).toLowerCase() === 'active'));
         byId('billing-inline').hidden = !selected?.can_manage_billing;
         byId('share-panel').hidden = !canRefer;
-        byId('referrer-shop').value = canRefer ? selected.shop_id : '';
+        byId('referrer-shop').value = canRefer ? customerShop.shop_id : '';
         newInvite.disabled = !canRefer;
         if (selected?.can_manage_billing) void billing.showCatalog(selected);
         if (!selected?.can_manage_billing && !canRefer) {
@@ -731,9 +731,9 @@
       newInvite.disabled = true;
       status.textContent = 'กำลังสร้างคำเชิญ…';
       try {
-        const result = await request('issue', {
+        const result = await request('platform_issue_shop_invite', {
           referrer_shop_id: byId('referrer-shop').value,
-        }, 'shop-referrals');
+        });
         const url = new URL('https://liff.line.me/' + APP_CONFIG.LIFF_ID_ADMIN);
         url.searchParams.set('shop_invite', result.invite_id);
         link.value = url.href;
