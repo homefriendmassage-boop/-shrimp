@@ -265,6 +265,9 @@
       if (checkout) checkout.textContent = 'ดูแพ็กเกจและประวัติชำระเงิน';
     });
     const errors = {
+      PLAN_EXTENSION_INVALID: 'เพิ่มได้ครั้งละ 1–365 วันและต้องระบุเหตุผล',
+      SHOP_PLAN_NOT_EXTENDABLE: 'ร้านนี้ยังไม่มีแพ็กเกจที่เริ่มใช้งานแล้ว',
+      PLAN_EXTENSION_FAILED: 'บันทึกวันเพิ่มไม่สำเร็จ กรุณาลองส่งอีกครั้ง',
       PLATFORM_ADMIN_REQUIRED: 'บัญชี LINE นี้ไม่มีสิทธิ์ออกคำเชิญ',
       SHOP_DETAILS_INVALID: 'กรุณาตรวจสอบชื่อร้าน ชื่อเจ้าของ และเบอร์โทร',
       INVITE_INVALID: 'ลิงก์คำเชิญไม่ถูกต้อง',
@@ -479,6 +482,55 @@
       }
     });
 
+    function mountPlanExtension(row, shop) {
+      const form = document.createElement('form');
+      const days = document.createElement('input');
+      days.type = 'number';
+      days.min = '1';
+      days.max = '365';
+      days.required = true;
+      days.placeholder = 'จำนวนวันที่เพิ่ม';
+      days.setAttribute('aria-label', 'จำนวนวันที่เพิ่ม');
+      const reason = document.createElement('input');
+      reason.required = true;
+      reason.maxLength = 300;
+      reason.placeholder = 'เหตุผล เช่น โปรเปิดร้าน';
+      reason.setAttribute('aria-label', 'เหตุผลที่เพิ่มวัน');
+      const submit = document.createElement('button');
+      submit.type = 'submit';
+      submit.textContent = 'เพิ่มวันใช้งาน';
+      const status = document.createElement('p');
+      status.setAttribute('role', 'status');
+      form.append(days, reason, submit, status);
+      row.append(form);
+      let saved;
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (submit.disabled) return;
+        const payload = { target_shop_id: shop.shop_id, days: days.valueAsNumber, reason: reason.value.trim() };
+        if (!payload.reason || !Number.isInteger(payload.days) || payload.days < 1 || payload.days > 365) {
+          status.textContent = errors.PLAN_EXTENSION_INVALID;
+          return;
+        }
+        const key = JSON.stringify(payload);
+        if (saved?.key !== key) saved = { key, requestId: crypto.randomUUID() };
+        submit.disabled = true;
+        try {
+          const { expires_at } = await request('platform_extend_shop_plan', { ...payload, request_id: saved.requestId });
+          status.textContent = 'เพิ่มวันแล้ว · ใช้ได้ถึง ' + new Date(expires_at).toLocaleString('th-TH', {
+            dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok',
+          }) + ' น.';
+          days.value = '';
+          reason.value = '';
+          saved = null;
+        } catch (error) {
+          status.textContent = errors[error.message] || errors.PLAN_EXTENSION_FAILED;
+        } finally {
+          submit.disabled = false;
+        }
+      });
+    }
+
     function planSummary(shop) {
       if (shop.current_plan && shop.paid_until) {
         const names = { starter: 'Starter', basic: 'Basic', pro: 'Pro' };
@@ -569,6 +621,7 @@
           const row = appendRow(platform, shop.shop_name + ' · ' + shop.shop_id,
             (active ? 'เปิดบริการ' : 'ปิดบริการ') + ' · ' +
             (shop.oa_configured ? 'ตั้งค่า LINE OA แล้ว' : 'รอเชื่อม LINE OA') + ' · ' +
+            ((shop.membership_notice_recipient_uid || shop.admin_group_id) ? 'บันทึกผู้รับแจ้งเตือนแล้ว' : 'รอตั้งผู้รับแจ้งเตือน') + ' · ' +
             (shop.live_enabled ? 'เปิดเมนู LIVE' : 'ปิดเมนู LIVE') +
             planSummary(shop));
           const settings = document.createElement('button');
@@ -577,6 +630,9 @@
           settings.style.marginTop = '8px';
           settings.addEventListener('click', () => openOaSettings(shop));
           row.append(settings);
+          if (shop.shop_id !== 'SHOP_000' && (shop.paid_until || shop.trial_ends_at)) {
+            mountPlanExtension(row, shop);
+          }
           addControl(row, shop, 'service_enabled', !active, active ? 'ปิดบริการร้าน' : 'เปิดบริการร้าน');
           const notice = document.createElement('button');
           notice.type = 'button';
