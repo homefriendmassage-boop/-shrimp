@@ -1,3 +1,4 @@
+import { shopPlayerChannel, shopPlayerUrl } from '../_shared/shop-player-login.mjs';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = createClient }) {
@@ -121,8 +122,8 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
       const staff = ['settings', 'save_settings', 'destinations', 'billing_bank', 'wallet_review'].includes(action);
       if (!staff && !['receiver', 'withdraw_start', 'withdraw_confirm'].includes(action)) return fail('INVALID_ACTION');
       const shopLogin = input.shop_login === true;
-      if (shopLogin && (staff || shop !== 'SHOP_001')) return fail('SHOP_LOGIN_NOT_ALLOWED', 403);
-      const channel = shopLogin ? '2009043114' : env(staff ? 'LINE_CHANNEL_ID_ADMIN' : 'LINE_CHANNEL_ID_PLAYER');
+      if (shopLogin && (staff || !shopPlayerChannel(env, shop))) return fail('SHOP_LOGIN_NOT_ALLOWED', 403);
+      const channel = shopLogin ? shopPlayerChannel(env, shop) : env(staff ? 'LINE_CHANNEL_ID_ADMIN' : 'LINE_CHANNEL_ID_PLAYER');
       const url = env('SUPABASE_URL');
       const key = env('SUPABASE_SERVICE_ROLE_KEY');
       if (!channel || !url || !key) return fail('PAYMENTS_UNAVAILABLE', 503);
@@ -296,7 +297,7 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
           stored.data?.wallet_kind !== walletKind || stored.data?.destination_kind !== destination ||
           stored.data?.recipient_name !== name || stored.data?.bank_code !== bank || stored.data?.bank_number !== number ||
           !(Date.parse(stored.data.expires_at) > Date.now())) return fail('WITHDRAWAL_INVALID', 409);
-      const link = new URL('https://liff.line.me/' + (env('MEMBERSHIP_LIFF_ID_PLAYER') || '2012454809-UFGeUGbW'));
+      const link = new URL(shopPlayerUrl(env, shop));
       link.searchParams.set('shop', shop);
       link.searchParams.set('withdraw_confirm', stored.data.id);
       const total = Number(amount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Backer Dashboard - บัญชีคนรับจบ</title>
-  <script src="config.js?v=round-name-1"></script>
+  <script src="config.js?v=shop-liff-1"></script>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
@@ -127,6 +127,7 @@
     const restored = new URL(params.get('liff.state') || '/', location.origin);
     const currentShopId = params.get('shop') ||
       (restored.origin === location.origin && restored.searchParams.get('shop')) || 'SHOP_000';
+    let shopLogin = false;
     let currentUser = null;
     let withdrawalRetry = null;
 
@@ -136,7 +137,7 @@
       const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + token },
-        body: JSON.stringify({ action: 'backer_portal', shop_id: currentShopId, operation, ...details }),
+        body: JSON.stringify({ action: 'backer_portal', shop_id: currentShopId, shop_login: shopLogin, operation, ...details }),
         signal: AbortSignal.timeout(20000),
       });
       const result = await response.json().catch(() => null);
@@ -146,7 +147,12 @@
 
     async function initBacker() {
       try {
-        await liff.init({ liffId: APP_CONFIG.LIFF_ID_PLAYER }); 
+        const requested = params.get('shop_login') === '1' ||
+          (restored.origin === location.origin && restored.searchParams.get('shop_login') === '1');
+        const channel = requested ? await fetchPlayerEntry(currentShopId, AbortSignal.timeout(6000)) : null;
+        if (requested && !channel?.player_liff_id) throw new Error('SHOP_LOGIN_NOT_AVAILABLE');
+        shopLogin = requested;
+        await liff.init({ liffId: channel?.player_liff_id || APP_CONFIG.LIFF_ID_PLAYER });
         if (!liff.isLoggedIn()) { liff.login(); return; }
         
         const profile = await liff.getProfile();

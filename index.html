@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>แอปผู้เล่น - บ่อตกกุ้ง</title>
-  <script src="config.js?v=round-name-1"></script>
+  <script src="config.js?v=shop-liff-1"></script>
   <script src="accounting-day.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script src="payment-ui.js?v=1"></script>
@@ -271,10 +271,10 @@
     <!-- ปุ่มเมนูพิเศษ -->
     <div class="special-menu-container">
         <a id="switchToAdmin" class="hidden" style="display:block;color:var(--blue-main);padding:12px">สลับไปหน้า Admin</a>
-        <button id="btnBackerMenu" class="btn-special btn-backer" onclick="window.location.href='backer.html?shop=' + encodeURIComponent(currentShopId)">
+        <button id="btnBackerMenu" class="btn-special btn-backer" onclick="openPlayerRolePage('backer.html')">
             <i class="fa-solid fa-handshake-angle"></i> แดชบอร์ดรับจบ
         </button>
-        <button id="btnPromoterMenu" class="btn-special btn-promoter" onclick="window.location.href='promoter.html?shop=' + encodeURIComponent(currentShopId)">
+        <button id="btnPromoterMenu" class="btn-special btn-promoter" onclick="openPlayerRolePage('promoter.html')">
             <i class="fa-solid fa-share-nodes"></i> ระบบแนะนำเพื่อน
         </button>
     </div>
@@ -285,6 +285,9 @@
       <p id="membershipGateMessage" style="color: var(--text-muted); margin-top: 10px;">บัญชีของคุณยังไม่เปิดใช้งาน</p>
       <a id="staffAdminLink" class="hidden" style="color:var(--blue-main)">เปิดผังโต๊ะหลังบ้าน</a>
       <a id="membershipApplyLink" class="hidden" style="color:var(--blue-main)">สมัครสมาชิก</a>
+      <div><button id="nativeShopApply" class="player-entry-action" type="button" hidden>สมัครด้วย LINE ของร้าน</button></div>
+      <a id="nativeShopAddFallback" target="_blank" rel="noopener" hidden>เพิ่มเพื่อน LINE ของร้าน</a>
+      <p id="nativeShopApplyStatus" role="status"></p>
       <button id="retryOwnerNotice" type="button" class="hidden" style="margin:14px auto;padding:12px;border:0;border-radius:8px;background:var(--blue-main);color:white;font:inherit">ส่งเตือนแอดมินอีกครั้ง</button>
       <p id="retryOwnerNoticeResult" role="status"></p>
       <div style="margin-top: 20px; font-size: 1.1rem; color: var(--blue-main); font-weight: bold;">
@@ -428,6 +431,7 @@
     let currentShopId = "SHOP_000"; // ค่าเริ่มต้นร้านค้า
     let currentLineUserId = "";
     let useShopLogin = false;
+    let nativeShopLiff = null;
     let currentDisplayName = "";
     let selectedBetType = "";
     let playMode = "private"; 
@@ -456,11 +460,18 @@
       try {
         const restored = new URL(state, location.origin);
         if (restored.origin !== location.origin) return params;
-        for (const key of ['shop', 'table', 'd', 'table_token', 'ref', 'shop_login_check', 'shop_login', 'withdraw_confirm']) {
+        for (const key of ['shop', 'table', 'd', 'table_token', 'ref', 'shop_login_check', 'shop_login', 'legacy_login', 'withdraw_confirm']) {
           if (!params.has(key) && restored.searchParams.has(key)) params.set(key, restored.searchParams.get(key));
         }
       } catch { /* Explicit query values remain authoritative. */ }
       return params;
+    }
+
+    function openPlayerRolePage(page) {
+      const url = new URL(page, location.href);
+      url.searchParams.set('shop', currentShopId);
+      if (useShopLogin && nativeShopLiff) url.searchParams.set('shop_login', '1');
+      location.assign(url.href);
     }
 
     function updatePlayerPageTitle() {
@@ -472,37 +483,26 @@
       document.title = name ? 'แอปผู้เล่น - ' + name : 'แอปผู้เล่น - บ่อตกกุ้ง';
     }
 
-    async function loadPlayerEntry() {
-      const shopId = currentShopId;
+    function showPlayerEntryDetails(entry) {
+      if (!entry) return;
       const chat = document.getElementById('playerOaChat');
-      try {
-        const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/admin-api', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', apikey: APP_CONFIG.SUPABASE_ANON_KEY },
-          body: JSON.stringify({ action: 'player_entry', shop_id: shopId }),
-          signal: playerTimeoutSignal(6000)
-        });
-        if (!response.ok) return;
-        const entry = await response.json();
-        if (shopId !== currentShopId) return;
-        entryShopName = typeof entry.shop_name === 'string' ? entry.shop_name : '';
-        updatePlayerPageTitle();
-        const oa = /^https:\/\/line\.me\/R\/ti\/p\/(%40[a-zA-Z0-9._-]{1,40})$/.exec(entry.add_friend_url || '');
-        if (!oa) return;
-        const add = document.getElementById('playerOaAdd');
-        add.href = entry.add_friend_url;
-        add.textContent = 'เพิ่มเพื่อน LINE · ' + (entryShopName || 'ร้านนี้');
-        add.hidden = false;
-        chat.href = 'https://line.me/R/oaMessage/' + oa[1];
-        chat.onclick = event => {
-          if (!liff.isInClient()) return;
-          try {
-            liff.openWindow({ url: chat.href, external: false });
-            event.preventDefault();
-          } catch { /* The regular link is still available. */ }
-        };
-        chat.hidden = false;
-      } catch { /* Shop details are optional. */ }
+      entryShopName = typeof entry.shop_name === 'string' ? entry.shop_name : '';
+      updatePlayerPageTitle();
+      const oa = /^https:\/\/line\.me\/R\/ti\/p\/(%40[a-zA-Z0-9._-]{1,40})$/.exec(entry.add_friend_url || '');
+      if (!oa) return;
+      const add = document.getElementById('playerOaAdd');
+      add.href = entry.add_friend_url;
+      add.textContent = 'เพิ่มเพื่อน LINE · ' + (entryShopName || 'ร้านนี้');
+      add.hidden = Boolean(nativeShopLiff);
+      chat.href = 'https://line.me/R/oaMessage/' + oa[1];
+      chat.onclick = event => {
+        if (!liff.isInClient()) return;
+        try {
+          liff.openWindow({ url: chat.href, external: false });
+          event.preventDefault();
+        } catch { /* The regular link is still available. */ }
+      };
+      chat.hidden = false;
     }
 
     const playerShareDialog = document.getElementById('playerShareDialog');
@@ -512,7 +512,7 @@
 
     document.getElementById('playerShareOpen').onclick = () => {
       // Start with the canonical shop URL so no referral or session context is shared.
-      playerShareLink.value = playerEntryUrl(currentShopId);
+      playerShareLink.value = playerEntryUrl(currentShopId, {}, nativeShopLiff);
       playerShareStatus.textContent = '';
       const qr = document.getElementById('playerShareQr');
       qr.replaceChildren();
@@ -589,16 +589,27 @@
       }
 
       currentShopId = urlParams.get('shop') || currentShopId;
-      useShopLogin = currentShopId === 'SHOP_001' && urlParams.get('shop_login') === '1';
       updatePlayerPageTitle();
       try {
-        await liff.init({ liffId: useShopLogin ? '2009043114-jTsiIhMR' : APP_CONFIG.LIFF_ID_PLAYER });
+        const shop = await fetchPlayerEntry(currentShopId, playerTimeoutSignal(6000)).catch(() => null);
+        nativeShopLiff = shop?.player_liff_id || null;
+        const explicitShopLogin = urlParams.get('shop_login') === '1';
+        const legacy = urlParams.get('legacy_login') === '1';
+        if (nativeShopLiff && !explicitShopLogin && !legacy) {
+          const target = new URL(playerEntryUrl(currentShopId, Object.fromEntries(urlParams), nativeShopLiff));
+          if (urlParams.has('withdraw_confirm')) target.searchParams.set('withdraw_confirm', urlParams.get('withdraw_confirm'));
+          location.replace(target.href);
+          return;
+        }
+        useShopLogin = explicitShopLogin && (Boolean(nativeShopLiff) || currentShopId === 'SHOP_001');
+        if (explicitShopLogin && !useShopLogin) throw new Error('SHOP_LOGIN_NOT_AVAILABLE');
+        await liff.init({ liffId: useShopLogin ? (nativeShopLiff || '2009043114-jTsiIhMR') : APP_CONFIG.LIFF_ID_PLAYER });
         for (const [key, value] of playerEntryParams()) urlParams.set(key, value);
         currentShopId = urlParams.get('shop') || currentShopId;
 
         if (!liff.isLoggedIn()) {
           const redirect = new URL(location.pathname, location.origin);
-          for (const key of ['shop', 'table', 'd', 'table_token', 'ref', 'shop_login', 'withdraw_confirm']) {
+          for (const key of ['shop', 'table', 'd', 'table_token', 'ref', 'shop_login', 'legacy_login', 'withdraw_confirm']) {
             if (urlParams.has(key)) redirect.searchParams.set(key, urlParams.get(key));
           }
           liff.login({ redirectUri: redirect.href });
@@ -629,7 +640,7 @@
         }
         entry.hidden = true;
         document.getElementById('player-main').hidden = false;
-        void loadPlayerEntry();
+        showPlayerEntryDetails(shop);
         if (cashTableQr) void readPlayerProfile('table_guest_scan', cashTableQr).catch(() => {});
         await authenticateUser(parseMemberCode(currentShopId, urlParams.get('ref')));
         if (currentUserStatus === 'Active' && readDepositDraft()) openTopupModal();
@@ -675,6 +686,10 @@
       for (const id of ['bettingView', 'historyView', 'statsView']) document.getElementById(id).classList.add('hidden');
       document.getElementById('bottomNavMenu').style.display = 'none';
       const apply = document.getElementById('membershipApplyLink');
+      document.getElementById('nativeShopApply').hidden = true;
+      document.getElementById('nativeShopAddFallback').hidden = true;
+      document.getElementById('nativeShopApplyStatus').textContent = '';
+      apply.textContent = 'สมัครสมาชิก';
       apply.href = 'staging/member-apply.html?shop=' + encodeURIComponent(currentShopId);
       apply.classList.toggle('hidden', !canApply);
     }
@@ -683,12 +698,14 @@
       showMembershipGate(message, code);
       const link = document.getElementById('membershipApplyLink');
       const params = playerEntryParams();
-      link.href = playerEntryUrl(currentShopId, Object.fromEntries(params));
-      link.textContent = 'เปิดทางเข้าสมาชิกและสมัครสมาชิก';
+      const legacy = new URL(playerEntryUrl(currentShopId, Object.fromEntries(params)));
+      legacy.searchParams.set('legacy_login', '1');
+      link.href = legacy.href;
+      link.textContent = nativeShopLiff ? 'เข้าบัญชีสมาชิกเดิม' : 'เปิดทางเข้าสมาชิกและสมัครสมาชิก';
       link.classList.remove('hidden');
     }
 
-    async function readOwnerNotice(action) {
+    async function readOwnerNotice(action, details = {}) {
       const token = liff.getIDToken();
       if (!token) throw new Error('LINE_AUTH_INVALID');
       const response = await fetch(APP_CONFIG.SUPABASE_URL + '/functions/v1/member-approval', {
@@ -697,7 +714,7 @@
           'Content-Type': 'application/json', Authorization: 'Bearer ' + token,
           apikey: APP_CONFIG.SUPABASE_ANON_KEY
         },
-        body: JSON.stringify({ action, shop_id: currentShopId }),
+        body: JSON.stringify({ action, shop_id: currentShopId, shop_login: Boolean(useShopLogin && nativeShopLiff), ...details }),
         signal: playerTimeoutSignal(20000)
       });
       const result = await response.json();
@@ -735,6 +752,50 @@
       location.replace(url.href);
     }
 
+    function showNativeSignup(referralMemberId) {
+      showShopLoginFallback('ถ้าเคยสมัครร้านนี้แล้ว ให้เข้าบัญชีเดิมและเชื่อม LINE ของร้านก่อน');
+      document.getElementById('membershipGateTitle').textContent = 'สมัครสมาชิก';
+      const button = document.getElementById('nativeShopApply');
+      const feedback = document.getElementById('nativeShopApplyStatus');
+      button.hidden = false;
+      button.onclick = async () => {
+        button.disabled = true;
+        feedback.textContent = '';
+        try {
+          if (!(await liff.getFriendship()).friendFlag) {
+            try {
+              await liff.requestFriendship();
+            } catch {
+              const link = document.getElementById('nativeShopAddFallback');
+              const url = document.getElementById('playerOaAdd').getAttribute('href');
+              if (url) {
+                link.href = url;
+                link.hidden = false;
+              }
+              feedback.textContent = 'เปิดหน้าต่างเพิ่มเพื่อนไม่สำเร็จ เพิ่มเพื่อน LINE ของร้านแล้วกลับมาสมัครอีกครั้ง';
+              return;
+            }
+            if (!(await liff.getFriendship()).friendFlag) {
+              feedback.textContent = 'เพิ่มเพื่อน LINE ของร้านเพื่อส่งคำขอสมัคร';
+              return;
+            }
+          }
+          await readOwnerNotice('apply', {
+            line_access_token: liff.getAccessToken(), display_name: currentDisplayName,
+            referral_member_id: referralMemberId
+          });
+          await authenticateUser(referralMemberId);
+          if (cashTableQr) void readPlayerProfile('table_guest_scan', cashTableQr).catch(() => {});
+        } catch (error) {
+          feedback.textContent = error.message === 'LEGACY_MEMBERS_NOT_LINKED'
+            ? 'ร้านนี้ยังอยู่ระหว่างเชื่อมบัญชีสมาชิกเดิม กรุณาติดต่อแอดมินร้าน'
+            : 'ส่งคำขอสมัครไม่สำเร็จ กรุณาลองอีกครั้ง หรือติดต่อแอดมินร้าน';
+        } finally {
+          button.disabled = false;
+        }
+      };
+    }
+
     async function authenticateUser(referralMemberId) {
       try {
         const result = await readPlayerProfile('player_profile', referralMemberId
@@ -743,7 +804,7 @@
           openStaffWorkspace(result.shop_id);
           return;
         }
-        if (referralMemberId) {
+        if (referralMemberId && result.state !== 'NotApplied') {
           const clean = new URL(location.href);
           clean.searchParams.delete('ref');
           const liffState = clean.searchParams.get('liff.state');
@@ -762,7 +823,7 @@
           currentShopId = result.shop_id;
           updatePlayerPageTitle();
         }
-        if (useShopLogin && result.state !== 'Approved') {
+        if (useShopLogin && !nativeShopLiff && result.state !== 'Approved') {
           showShopLoginFallback('กรุณาตรวจสถานะหรือสมัครสมาชิกผ่านทางเข้าสมาชิกของร้าน', result.member_id);
           return;
         }
@@ -788,7 +849,8 @@
             ownerNoticeButton.classList.remove('hidden');
             syncOwnerNotice(ownerNoticeButton, ownerNoticeStatus, 'status');
           }
-          showMembershipGate(messages[result.state] || 'กรุณาติดต่อผู้ดูแลร้าน', result.member_id, result.state === 'NotApplied');
+          if (useShopLogin && nativeShopLiff && result.state === 'NotApplied') showNativeSignup(referralMemberId);
+          else showMembershipGate(messages[result.state] || 'กรุณาติดต่อผู้ดูแลร้าน', result.member_id, result.state === 'NotApplied');
           return;
         }
         document.getElementById('liveNav').classList.toggle('hidden', result.live_enabled === false);
@@ -824,7 +886,8 @@
         else fetchDashboard();
       } catch (error) {
         if (useShopLogin && error.message === 'OA_ACCOUNT_NOT_LINKED') {
-          showShopLoginFallback('บัญชี LINE นี้ยังไม่ได้ผูกกับสมาชิกของบ่อทดสอบ2');
+          if (nativeShopLiff) showNativeSignup(referralMemberId);
+          else showShopLoginFallback('บัญชี LINE นี้ยังไม่ได้ผูกกับสมาชิกของบ่อทดสอบ2');
           return;
         }
         showMembershipGate('ตรวจสอบบัญชีไม่สำเร็จ กรุณาเปิดหน้าใหม่ [' + error.message + ']', null);
