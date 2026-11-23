@@ -3095,11 +3095,29 @@
         void renderTableGuests(physical, children, button);
       }
       for (const row of shown) {
-        const activity = pending.has(row.table_no) ? 'pending' : settlementState(row);
-        const activityLabel = { pending:'รอผล', receive:'ต้องรับเงิน', pay:'ต้องจ่ายเงิน' }[activity];
+        const childBills = childrenFor(row.table_no);
+        const desks = [row, ...childBills];
+        const hasPending = desks.some(desk => pending.has(desk.table_no));
+        let receive = 0;
+        let pay = 0;
+        for (const desk of desks) {
+          const state = settlementState(desk);
+          if (state === 'receive') receive += Math.round(-Number(desk.credit) * 100);
+          if (state === 'pay') pay += Math.round(Number(desk.credit) * 100);
+        }
+        const activity = hasPending ? 'pending'
+          : filter === 'receive' && receive ? 'receive'
+          : filter === 'pay' && pay ? 'pay'
+          : receive ? 'receive' : pay ? 'pay' : '';
+        const activityLabel = hasPending ? 'รอผล'
+          : receive && pay ? 'ต้องรับ–จ่ายเงิน'
+          : receive ? 'ต้องรับเงิน' : pay ? 'ต้องจ่ายเงิน' : '';
         const availability = row.is_hidden ? 'ซ่อน' : !row.is_open ? 'ปิด' : '';
         const state = [availability, activityLabel].filter(Boolean).join(' · ')
           || (row.cash_limit == null ? 'ยังไม่ตั้งวงเงิน' : 'เคลียร์แล้ว');
+        const amount = activity === 'pending' ? ''
+          : [receive && 'รับ ' + tableMoney(receive / 100), pay && 'จ่าย ' + tableMoney(pay / 100)]
+            .filter(Boolean).join(' · ');
         const item = button('', () => {
           if (selectedTable !== row.table_no) selectedGuestBill = null;
           selectedTable = row.table_no;
@@ -3111,8 +3129,8 @@
         }, activity ? 'table-status-' + activity : 'btn-outline');
         for (const [className, label] of [
           ['table-tile-name', deskName(row)],
-          ['table-tile-state', childrenFor(row.table_no).length ? childrenFor(row.table_no).length + ' บิลย่อย' : state],
-          ['table-tile-amount', settlementState(row) ? tableMoney(Math.abs(Number(row.credit))) : ''],
+          ['table-tile-state', childBills.length ? state + ' · ' + childBills.length + ' บิลย่อย' : state],
+          ['table-tile-amount', amount],
         ]) {
           if (!label) continue;
           const line = document.createElement('span');
