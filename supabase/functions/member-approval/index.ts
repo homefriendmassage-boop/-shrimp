@@ -1,4 +1,4 @@
-import { shopPlayerLiff, shopPlayerUrl, hasVerifiedFriendship } from '../_shared/shop-player-login.mjs';
+import { readShopPlayerOverride, shopPlayerLiff, shopPlayerUrl, hasVerifiedFriendship } from '../_shared/shop-player-login.mjs';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const origin = Deno.env.get('WEB_ORIGIN') || 'https://homefriendmassage-boop.github.io';
@@ -63,13 +63,13 @@ async function readOaPicture(db, shop, uid) {
   } catch { return null; }
 }
 
-function membershipFlex(shop, application, kind) {
+function membershipFlex(shop, application, kind, override) {
   const submitted = kind === 'submitted';
   const title = submitted ? 'มีผู้สมัครสมาชิกใหม่' : 'อนุมัติสมาชิกแล้ว';
   const label = submitted ? 'ไปหน้าอนุมัติสมาชิก' : 'เข้าใช้งาน';
   const liffId = shop.liff_id_admin || env('MEMBERSHIP_LIFF_ID_ADMIN') || '2012454809-41EMnP1K';
   if (submitted && !/^\d+-[A-Za-z0-9]+$/.test(liffId)) throw new Error('MEMBERSHIP_LIFF_ID_INVALID');
-  const url = new URL(submitted ? 'https://liff.line.me/' + liffId : shopPlayerUrl(env, shop.shop_id));
+  const url = new URL(submitted ? 'https://liff.line.me/' + liffId : shopPlayerUrl(env, shop.shop_id, override));
   url.searchParams.set('shop', shop.shop_id);
   if (submitted) url.searchParams.set('tab', 'pending');
   const details = [
@@ -135,7 +135,7 @@ async function deliverNotification(db, shop, application, kind, manual = false) 
     const [job] = claim.data ?? [];
     if (!job) return { status: 'waiting' };
 
-    const message = membershipFlex(shop, application, kind);
+    const message = membershipFlex(shop, application, kind, kind === 'approved' ? await readShopPlayerOverride(db, shop.shop_id) : null);
     const response = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
       headers: {
@@ -179,7 +179,12 @@ Deno.serve(async req => {
   const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
   try {
     const isAdmin = action === 'queue' || action === 'decide';
-    const shopLiff = shopPlayerLiff(env, shopId);
+    const dbUrl = Deno.env.get('SUPABASE_URL');
+    if (!dbUrl) return error('SUPABASE_URL_MISSING', 503);
+    const key = getPrivilegedKey();
+    if (!key) return error('SUPABASE_SERVER_KEY_MISSING', 503);
+    const db = createClient(dbUrl, key, { auth: { persistSession: false, autoRefreshToken: false } });
+    const shopLiff = isAdmin ? null : shopPlayerLiff(env, shopId, await readShopPlayerOverride(db, shopId));
     const native = !isAdmin && input.shop_login === true;
     if (native && !shopLiff) return error('SHOP_LOGIN_NOT_ALLOWED', 403);
     const clientId = native ? shopLiff.split('-')[0] : env(isAdmin ? 'LINE_CHANNEL_ID_ADMIN' : 'LINE_CHANNEL_ID_PLAYER');
@@ -187,11 +192,6 @@ Deno.serve(async req => {
     if (!identity) return error('LINE_AUTH_INVALID', 401);
     let { uid } = identity;
     const { picture } = identity;
-    const dbUrl = Deno.env.get('SUPABASE_URL');
-    if (!dbUrl) return error('SUPABASE_URL_MISSING', 503);
-    const key = getPrivilegedKey();
-    if (!key) return error('SUPABASE_SERVER_KEY_MISSING', 503);
-    const db = createClient(dbUrl, key, { auth: { persistSession: false, autoRefreshToken: false } });
     const { data: shop, error: shopError } = await db.from('shop_oa_runtime').select('shop_id,shop_name,status,line_oa_token,liff_id_admin,line_notifications_enabled,membership_notice_recipient_uid,admin_group_id').eq('shop_id', shopId).maybeSingle();
     if (shopError) return error('DATABASE_ERROR', 500);
     if (!shop || String(shop.status).toLowerCase() !== 'active') return error('SHOP_NOT_AVAILABLE', 404);

@@ -1,6 +1,7 @@
-function mountShopRichMenu(shop, request) {
+function mountShopRichMenu(shop, request, canEditLiff = false) {
   const section = document.getElementById('shop-rich-menu');
   const field = id => section.querySelector('#rich-' + id);
+  section.dataset.shop = shop.shop_id;
   const preview = field('preview');
   const canvas = field('areas');
   const fileControl = field('file');
@@ -144,8 +145,73 @@ function mountShopRichMenu(shop, request) {
     }
   };
 
+  const activeShop = () => section.dataset.shop === shop.shop_id;
   field('player').href = playerEntryUrl(shop.shop_id);
-  void configuredPlayerEntryUrl(shop.shop_id).then(url => { field('player').href = url; });
+  if (!canEditLiff) void configuredPlayerEntryUrl(shop.shop_id).then(url => {
+    if (activeShop()) field('player').href = url;
+  });
+  const liffField = field('liff');
+  const liffSave = field('liff-save');
+  const liffStatus = field('liff-status');
+  const liffPreview = field('liff-preview');
+  field('liff-settings').hidden = !canEditLiff;
+  if (canEditLiff) {
+    const liffRequest = (operation, details = {}) => request('platform_player_liff', {
+      operation, target_shop_id: shop.shop_id, ...details
+    });
+    const liffId = () => /^(?:https:\/\/liff\.line\.me\/)?([0-9]{1,20}-[A-Za-z0-9]{1,80})\/?$/
+      .exec(liffField.value.trim())?.[1];
+    const renderLiff = result => {
+      liffField.value = result.liff_id ? 'https://liff.line.me/' + result.liff_id : '';
+      field('player').href = result.player_url;
+      liffField.oninput();
+    };
+    liffField.oninput = () => {
+      const id = liffId();
+      liffPreview.hidden = !id;
+      if (id) {
+        const url = new URL(playerEntryUrl(shop.shop_id, {}, id));
+        url.searchParams.set('shop_liff_preview', id);
+        liffPreview.href = url.href;
+      }
+    };
+    liffField.value = '';
+    liffField.oninput();
+    liffField.disabled = liffSave.disabled = true;
+    liffStatus.textContent = 'กำลังโหลดค่า LIFF…';
+    liffRequest('read').then(result => {
+      if (!activeShop()) return;
+      renderLiff(result);
+      liffField.disabled = liffSave.disabled = false;
+      liffStatus.textContent = '';
+    }).catch(() => {
+      if (activeShop()) liffStatus.textContent = 'โหลดค่า LIFF ไม่สำเร็จ กรุณาเปิดหน้านี้ใหม่';
+    });
+    liffSave.onclick = async () => {
+      const value = liffField.value.trim();
+      if (value && !liffId()) {
+        liffStatus.textContent = 'กรอก LIFF ID หรือลิงก์ https://liff.line.me/ ของร้าน';
+        return;
+      }
+      liffField.disabled = liffSave.disabled = true;
+      try {
+        const result = await liffRequest('save', { liff_url: value });
+        if (!activeShop()) return;
+        renderLiff(result);
+        liffStatus.textContent = 'บันทึกแล้ว · หากต้องการเปลี่ยนปุ่มใน LINE ให้เผยแพร่ริชเมนูสมาชิกอีกครั้ง';
+      } catch (error) {
+        if (!activeShop()) return;
+        const errors = {
+          SHOP_OA_NOT_CONFIGURED: 'เชื่อม LINE OA ของร้านก่อนเปิดใช้ LIFF',
+          SHOP_LIFF_CHANNEL_IN_USE: 'LINE Login Channel นี้ถูกใช้กับร้านอื่นแล้ว',
+          SHOP_LIFF_PLATFORM_CHANNEL: 'ใช้ LINE Login Channel ของร้านนี้',
+        };
+        liffStatus.textContent = errors[error.message] || 'บันทึก LIFF ไม่สำเร็จ กรุณาลองใหม่';
+      } finally {
+        if (activeShop()) liffField.disabled = liffSave.disabled = false;
+      }
+    };
+  }
   for (const key of ['food', 'booking']) {
     field(key).oninput = () => {
       try {

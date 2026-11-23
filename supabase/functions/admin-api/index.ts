@@ -1,4 +1,4 @@
-import { shopPlayerChannel, shopPlayerLiff, shopPlayerUrl } from '../_shared/shop-player-login.mjs';
+import { parseShopPlayerLiff, readShopPlayerOverride, shopPlayerChannel, shopPlayerLiff, shopPlayerUrl } from '../_shared/shop-player-login.mjs';
 // Separate from member-approval. Deploy with verify_jwt=false: LINE verifies tokens below.
 // Required secrets: LINE_CHANNEL_ID_ADMIN, WEB_ORIGIN (origin only), and a Supabase server key.
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -167,7 +167,7 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
     ] } };
     const uri = opensQueue
       ? 'https://liff.line.me/' + adminLiff + '?shop=' + encodeURIComponent(shopId) + '&tab=pending'
-      : shopPlayerUrl(env, shopId);
+      : shopPlayerUrl(env, shopId, await readShopPlayerOverride(db, shopId));
     if (!opensQueue || /^\d+-[a-zA-Z0-9]+$/.test(adminLiff)) {
       bubble.footer = { type: 'box', layout: 'vertical', contents: [{
         type: 'button', style: 'primary', ...(rejectedDeposit ? { color: '#B91C1C' } : {}), action: {
@@ -420,7 +420,7 @@ async function manageShopRichMenu(db, fetcher, env, input, shopId, defaultMenu =
   try {
     const info = await richMenuLine(fetcher, token, '/v2/bot/info');
     if (!info.ok || (await info.json()).userId !== bot) fail('RICH_MENU_OA_REQUIRED', 409);
-    const player = shopPlayerUrl(env, shopId);
+    const player = shopPlayerUrl(env, shopId, await readShopPlayerOverride(db, shopId));
     const created = await richMenuLine(fetcher, token, '/v2/bot/richmenu', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -519,12 +519,12 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
     if (!/^SHOP_[0-9]{3,24}$/.test(shopId)) fail('SHOP_INVALID');
     const db = database();
     const [shop, runtime] = await Promise.all([
-      db.from('shops').select('shop_name,status,line_oa_bot_uid').eq('shop_id', shopId).maybeSingle(),
+      db.from('shops').select('shop_name,status,line_oa_bot_uid,player_liff_override').eq('shop_id', shopId).maybeSingle(),
       db.from('shop_oa_runtime').select('line_oa_token').eq('shop_id', shopId).maybeSingle(),
     ]);
     if (shop.error || runtime.error) fail('DATABASE_ERROR', 500);
     if (shop.data?.status !== 'active') fail('SHOP_NOT_AVAILABLE', 404);
-    const details = { ok: true, shop_name: shop.data.shop_name, add_friend_url: null, player_liff_id: shop.data.line_oa_bot_uid ? shopPlayerLiff(env, shopId) : null };
+    const details = { ok: true, shop_name: shop.data.shop_name, add_friend_url: null, player_liff_id: shop.data.line_oa_bot_uid ? shopPlayerLiff(env, shopId, shop.data.player_liff_override) : null };
     const token = runtime.data?.line_oa_token?.trim();
     if (!token) return details;
 
@@ -588,18 +588,19 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         return reply({ ok: true, board: result.data });
       }
       if (input.action === 'player_entry') return reply(await playerEntry(shopId));
-      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'table_guest_scan', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_guest_manage', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_correct_bet', 'round_begin_settlement', 'coverage_read', 'coverage_move', 'coverage_fund', 'coverage_reserve', 'coverage_report', 'banker_payout', 'backer_portal', 'daily_staff_round_report', 'round_open', 'round_close_with_coverage', 'round_finalize', 'table_round_summary', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_extend_shop_plan', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
-      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_extend_shop_plan', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
+      if (!['access', 'query', 'membership_summary', 'promoter_profile', 'player_profile', 'player_state', 'table_guest_scan', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'wallet_approve_deposit', 'wallet_approve_withdrawal', 'round_finalize_balanced', 'table_bulk_create', 'table_qr', 'table_guest_manage', 'table_cash_payment', 'table_cash_report', 'daily_referral_commission', 'table_cash_bet', 'table_correct_bet', 'round_begin_settlement', 'coverage_read', 'coverage_move', 'coverage_fund', 'coverage_reserve', 'coverage_report', 'banker_payout', 'backer_portal', 'daily_staff_round_report', 'round_open', 'round_close_with_coverage', 'round_finalize', 'table_round_summary', 'table_send_cash_report', 'platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_extend_shop_plan', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_player_liff', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action)) fail('INVALID_ACTION');
+      if (!['platform_issue_shop_invite', 'platform_redeem_shop', 'platform_shop_invite_details', 'platform_shop_portal', 'platform_shop_control', 'platform_extend_shop_plan', 'platform_rich_menu', 'platform_save_shop_oa', 'platform_player_liff', 'platform_save_notice_recipient', 'platform_capture_notice'].includes(input.action) && !/^[\w-]{1,80}$/.test(shopId)) fail('SHOP_INVALID');
       const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       const playerRequest = ['promoter_profile', 'player_profile', 'player_state', 'table_guest_scan', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'backer_portal'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
       const shopLogin = input.shop_login === true;
-      if (shopLogin && (!playerRequest || !shopPlayerChannel(env, shopId))) fail('SHOP_LOGIN_NOT_ALLOWED', 403);
-      const clientId = shopLogin ? shopPlayerChannel(env, shopId) : env(channelKey);
+      if (shopLogin && !playerRequest) fail('SHOP_LOGIN_NOT_ALLOWED', 403);
+      const db = database();
+      const clientId = shopLogin ? shopPlayerChannel(env, shopId, await readShopPlayerOverride(db, shopId)) : env(channelKey);
+      if (shopLogin && !clientId) fail('SHOP_LOGIN_NOT_ALLOWED', 403);
       if (!clientId) fail(channelKey + '_MISSING', 503);
       if (!token || token.length > 16000) fail('LINE_AUTH_INVALID', 401);
       const identity = await verifyLineClaims(token, clientId, fetcher, input.action === 'player_state');
-      const db = database();
       let claims = identity;
       if (shopLogin) {
         if (!/^U[0-9a-f]{32}$/i.test(identity.sub)) fail('LINE_AUTH_INVALID', 401);
@@ -735,6 +736,32 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const saved = await db.from('shops').update(values).eq('shop_id', target).select('shop_id').maybeSingle();
         if (saved.error || !saved.data) fail('SHOP_PORTAL_UNAVAILABLE', 500);
         return reply({ ok: true });
+      }
+      if (input.action === 'platform_player_liff') {
+        if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
+        const target = input.target_shop_id;
+        if (typeof target !== 'string' || !/^SHOP_[0-9]{3,24}$/.test(target)) fail('SHOP_INVALID');
+        const shop = await db.from('shops').select('line_oa_bot_uid,player_liff_override')
+          .eq('shop_id', target).maybeSingle();
+        if (shop.error) fail('SHOP_LIFF_UNAVAILABLE', 500);
+        if (!shop.data) fail('SHOP_NOT_AVAILABLE', 404);
+        let override = shop.data.player_liff_override;
+        if (input.operation === 'save') {
+          override = input.liff_url === '' ? '' : parseShopPlayerLiff(input.liff_url);
+          if (override === null) fail('SHOP_LIFF_INVALID');
+          if (override && !shop.data.line_oa_bot_uid) fail('SHOP_OA_NOT_CONFIGURED', 409);
+          if (override && [env('LINE_CHANNEL_ID_PLAYER'), env('LINE_CHANNEL_ID_ADMIN')].includes(override.split('-')[0])) {
+            fail('SHOP_LIFF_PLATFORM_CHANNEL', 409);
+          }
+          const saved = await db.from('shops').update({ player_liff_override: override })
+            .eq('shop_id', target).select('shop_id').maybeSingle();
+          if (saved.error?.code === '23505') fail('SHOP_LIFF_CHANNEL_IN_USE', 409);
+          if (saved.error || !saved.data) fail('SHOP_LIFF_UNAVAILABLE', 500);
+        } else if (input.operation !== 'read') fail('INVALID_ACTION');
+        return reply({
+          ok: true, liff_id: shopPlayerLiff(env, target, override),
+          player_url: shopPlayerUrl(env, target, override),
+        });
       }
       if (input.action === 'platform_save_shop_oa') {
         if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
