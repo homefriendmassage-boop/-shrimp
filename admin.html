@@ -101,6 +101,10 @@
         .layout-slip .slip-row > :last-child { flex-shrink: 0; text-align: right; }
         #printCashTablesSlip p { break-inside: avoid; }
         .layout-slip .slip-bold { font-weight: bold; }
+        .table-qr-slip { text-align:center; break-inside:avoid; }
+        .table-qr-slip h2 { font-size:16px; margin:0 0 3mm; overflow-wrap:anywhere; }
+        .table-qr-slip h3 { font-size:15px; margin:0; overflow-wrap:anywhere; }
+        .table-qr-slip canvas { width:50mm; height:50mm; padding:5mm; image-rendering:pixelated; }
         .text-right { text-align: right !important; }
         .grand-total { font-weight: bold; background-color: #eee !important; }
     }
@@ -805,6 +809,12 @@
       </div>
   </div>
 
+  <div id="printAreaTableQr" class="print-only layout-slip table-qr-slip" style="display:none">
+    <h2 id="printQrShop"></h2>
+    <h3 id="printQrTable"></h3>
+    <canvas id="printQrImage" aria-label="QR โต๊ะเงินสด"></canvas>
+    <div id="printQrExpires"></div>
+  </div>
 
 
 
@@ -3296,7 +3306,7 @@
       openCustomerShare(adminShopName || 'บ่อตกกุ้ง', playerEntryUrl(currentShopId));
     }
 
-    async function printTableQrSlip() {
+    function printTableQrSlip() {
       const qr = printableTableQr;
       const source = document.querySelector('#qrImage canvas');
       const status = document.getElementById('tableShareStatus');
@@ -3304,52 +3314,18 @@
         status.textContent = 'กรุณาเปิด QR โต๊ะของวันบัญชีล่าสุดก่อนพิมพ์';
         return;
       }
-
+      document.getElementById('printQrShop').textContent = qr.shop;
+      document.getElementById('printQrTable').textContent = qr.table;
       const expires = qr.expires.toLocaleString('th-TH', {
         timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric',
         hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
       });
-      const preview = window.open('', '_blank', 'popup,width=420,height=530');
-      if (!preview) {
-        status.textContent = 'กรุณาอนุญาตป๊อปอัป แล้วกดพิมพ์ QR อีกครั้ง';
-        return;
-      }
-
-      try {
-        preview.opener = null;
-        const page = preview.document;
-        page.open();
-        page.write(`<!doctype html>
-<html lang="th"><head><meta charset="utf-8"><title>พิมพ์ QR โต๊ะ 80 มม.</title>
-<style>
-  @page { size: auto; margin: 2mm 5mm; }
-  body { margin: 0; background: white; color: black; font: 12px Tahoma, sans-serif; }
-  main { width: 70mm; max-width: 100%; margin: auto; text-align: center; break-inside: avoid; overflow-wrap: anywhere; }
-  h1 { font-size: 16px; margin: 0 0 3mm; }
-  h2 { font-size: 15px; margin: 0; }
-  img { display: block; width: 50mm; max-width: 100%; height: auto; margin: 5mm auto; image-rendering: pixelated; }
-  button { display: block; margin: 12px auto; }
-  @media print { button { display: none; } }
-</style></head><body>
-<main><h1></h1><h2></h2><img alt="QR โต๊ะ"><p></p></main>
-<button type="button" disabled>พิมพ์ QR</button></body></html>`);
-        page.close();
-        page.querySelector('h1').textContent = qr.shop;
-        page.querySelector('h2').textContent = qr.table;
-        page.querySelector('p').textContent = 'ใช้ได้ถึง ' + expires + ' น.';
-        const image = page.querySelector('img');
-        image.src = source.toDataURL('image/png');
-        await image.decode();
-        if (preview.closed) return;
-        const button = page.querySelector('button');
-        button.onclick = () => preview.print();
-        button.disabled = false;
-        preview.focus();
-        preview.print();
-      } catch {
-        if (!preview.closed && preview.document.querySelector('button')?.disabled) preview.close();
-        status.textContent = 'เปิดงานพิมพ์ QR ไม่สำเร็จ กรุณาลองอีกครั้ง';
-      }
+      document.getElementById('printQrExpires').textContent = 'ใช้ได้ถึง ' + expires + ' น.';
+      const image = document.getElementById('printQrImage');
+      image.width = source.width;
+      image.height = source.height;
+      image.getContext('2d').drawImage(source, 0, 0);
+      printAdminArea('printAreaTableQr', 'Slip');
     }
 
     document.getElementById('copyTableLink').onclick = async () => {
