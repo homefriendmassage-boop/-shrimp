@@ -1,4 +1,4 @@
-import { shopPlayerChannel, shopPlayerUrl } from '../_shared/shop-player-login.mjs';
+import { readShopPlayerOverride, shopPlayerChannel, shopPlayerUrl } from '../_shared/shop-player-login.mjs';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = createClient }) {
@@ -122,11 +122,14 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
       const staff = ['settings', 'save_settings', 'destinations', 'billing_bank', 'wallet_review'].includes(action);
       if (!staff && !['receiver', 'withdraw_start', 'withdraw_confirm'].includes(action)) return fail('INVALID_ACTION');
       const shopLogin = input.shop_login === true;
-      if (shopLogin && (staff || !shopPlayerChannel(env, shop))) return fail('SHOP_LOGIN_NOT_ALLOWED', 403);
-      const channel = shopLogin ? shopPlayerChannel(env, shop) : env(staff ? 'LINE_CHANNEL_ID_ADMIN' : 'LINE_CHANNEL_ID_PLAYER');
+      if (shopLogin && staff) return fail('SHOP_LOGIN_NOT_ALLOWED', 403);
       const url = env('SUPABASE_URL');
       const key = env('SUPABASE_SERVICE_ROLE_KEY');
-      if (!channel || !url || !key) return fail('PAYMENTS_UNAVAILABLE', 503);
+      if (!url || !key) return fail('PAYMENTS_UNAVAILABLE', 503);
+      const db = createDb(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+      const override = shopLogin || action === 'withdraw_start' ? await readShopPlayerOverride(db, shop) : null;
+      const channel = shopLogin ? shopPlayerChannel(env, shop, override) : env(staff ? 'LINE_CHANNEL_ID_ADMIN' : 'LINE_CHANNEL_ID_PLAYER');
+      if (!channel) return fail('SHOP_LOGIN_NOT_ALLOWED', 403);
       const verified = await fetcher('https://api.line.me/oauth2/v2.1/verify', {
         method: 'POST', body: new URLSearchParams({ id_token: token, client_id: channel }),
         signal: AbortSignal.timeout(8000),
@@ -134,7 +137,6 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
       if (!verified.ok) return fail('LINE_AUTH_INVALID', 401);
       const claims = await verified.json();
       if (!uidPattern.test(claims.sub) || claims.aud !== channel || !(Number(claims.exp) * 1000 > Date.now())) return fail('LINE_AUTH_INVALID', 401);
-      const db = createDb(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
       let uid = claims.sub;
       if (shopLogin) {
         const mapped = await db.rpc('resolve_shop_oa_member', { p_shop: shop, p_oa_uid: uid });
@@ -297,7 +299,7 @@ export function createShopPaymentsHandler({ env, fetcher = fetch, createDb = cre
           stored.data?.wallet_kind !== walletKind || stored.data?.destination_kind !== destination ||
           stored.data?.recipient_name !== name || stored.data?.bank_code !== bank || stored.data?.bank_number !== number ||
           !(Date.parse(stored.data.expires_at) > Date.now())) return fail('WITHDRAWAL_INVALID', 409);
-      const link = new URL(shopPlayerUrl(env, shop));
+      const link = new URL(shopPlayerUrl(env, shop, override));
       link.searchParams.set('shop', shop);
       link.searchParams.set('withdraw_confirm', stored.data.id);
       const total = Number(amount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

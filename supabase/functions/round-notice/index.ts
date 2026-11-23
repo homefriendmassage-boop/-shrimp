@@ -1,4 +1,4 @@
-import { shopPlayerUrl } from '../_shared/shop-player-login.mjs';
+import { readShopPlayerOverride, shopPlayerUrl } from '../_shared/shop-player-login.mjs';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const origin = Deno.env.get('WEB_ORIGIN') || 'https://homefriendmassage-boop.github.io';
@@ -133,7 +133,7 @@ const flexButton = (label, uri, color) => ({ type: 'button', style: 'primary', h
 const money = value => '฿' + Number(value).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 
 function playerLink(shop) {
-  return shopPlayerUrl(name => Deno.env.get(name), shop.shop_id);
+  return shopPlayerUrl(name => Deno.env.get(name), shop.shop_id, shop.player_liff_override);
 }
 
 function roundFlex(shop, round, kind) {
@@ -307,6 +307,7 @@ Deno.serve(async req => {
     if (staff.data?.status !== 'Active' || !allowedRoles.includes(staff.data.role)) return fail('ADMIN_REQUIRED', 403);
     const shop = await db.from('shop_oa_runtime').select('shop_id,shop_name,status,line_oa_token,line_notifications_enabled').eq('shop_id', input.shop_id).maybeSingle();
     if (shop.error) return fail('DATABASE_ERROR', 500);
+    if (shop.data?.status === 'active') shop.data.player_liff_override = await readShopPlayerOverride(db, input.shop_id);
     if (shop.data?.line_notifications_enabled === false) return reply({ ok: true, skipped: true, eligible: 0, accepted: 0, failed: 0 });
     if (shop.data?.status !== 'active') return fail('SHOP_NOT_AVAILABLE', 403);
     if (creditRequest) return await creditNotice(db, shop.data, input.transaction_id);

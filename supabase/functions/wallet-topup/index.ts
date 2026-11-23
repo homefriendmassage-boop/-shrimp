@@ -1,4 +1,4 @@
-import { shopPlayerChannel, shopPlayerUrl } from '../_shared/shop-player-login.mjs';
+import { readShopPlayerOverride, shopPlayerChannel, shopPlayerUrl } from '../_shared/shop-player-login.mjs';
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const env = (name: string) => Deno.env.get(name) ?? "";
@@ -89,7 +89,8 @@ Deno.serve(async (req) => {
     const amount = input.get("amount");
     const image = input.get("image");
     if (typeof shop !== "string" || !/^SHOP_[0-9]{3,}$/.test(shop)) return reply("SHOP_INVALID", 400);
-    const channel = shopLogin ? shopPlayerChannel(env, shop) : env("LINE_CHANNEL_ID_PLAYER");
+    const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+    const channel = shopLogin ? shopPlayerChannel(env, shop, await readShopPlayerOverride(db, shop)) : env("LINE_CHANNEL_ID_PLAYER");
     if (!channel) return reply("LINE_AUTH_INVALID", 401);
     const identity = await fetch("https://api.line.me/oauth2/v2.1/verify", {
       method: "POST",
@@ -108,7 +109,6 @@ Deno.serve(async (req) => {
       return reply("IMAGE_INVALID", 400);
     }
 
-    const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
     if (shopLogin) {
       const mapping = await db.rpc("resolve_shop_oa_member", { p_shop: shop, p_oa_uid: uid });
       if (mapping.error) return reply("WALLET_UNAVAILABLE", 503);
@@ -229,7 +229,7 @@ Deno.serve(async (req) => {
             const flex = to === uid ? {
               ...message, contents: { ...message.contents, footer: { type: "box", layout: "vertical", contents: [{
                 type: "button", style: "primary", action: {
-                  type: "uri", label: "เข้าหน้าใช้งาน", uri: shopPlayerUrl(env, shop),
+                  type: "uri", label: "เข้าหน้าใช้งาน", uri: shopPlayerUrl(env, shop, await readShopPlayerOverride(db, shop)),
                 },
               }] } },
             } : message;

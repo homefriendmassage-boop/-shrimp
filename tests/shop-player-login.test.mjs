@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hasVerifiedFriendship, shopPlayerChannel, shopPlayerUrl } from '../supabase/functions/_shared/shop-player-login.mjs';
+import { parseShopPlayerLiff, hasVerifiedFriendship, shopPlayerChannel, shopPlayerUrl } from '../supabase/functions/_shared/shop-player-login.mjs';
 
 const env = name => ({ SHOP_PLAYER_LIFF_IDS: 'SHOP_005=12345-AbC, SHOP_006=98765-Fz9' })[name];
 
@@ -27,4 +27,15 @@ test('requires the same LINE channel and user for friendship proof', async () =>
   assert.equal(await hasVerifiedFriendship('access', '12345', 'U123', line({ client: '98765' })), false);
   assert.equal(await hasVerifiedFriendship('access', '12345', 'U123', line({ userId: 'U999' })), false);
   assert.equal(await hasVerifiedFriendship('access', '12345', 'U123', line({ friendFlag: false })), false);
+});
+
+test('shop configuration overrides legacy routing and can restore the central LIFF', () => {
+  const candidate = '2012751848-tDnRbagq';
+  assert.equal(parseShopPlayerLiff('https://liff.line.me/' + candidate), candidate);
+  for (const url of ['https://liff.line.me.example/' + candidate, 'https://liff.line.me/' + candidate + '?shop=SHOP_006']) {
+    assert.equal(parseShopPlayerLiff(url), null);
+  }
+  assert.equal(shopPlayerChannel(env, 'SHOP_005', candidate), '2012751848');
+  assert.equal(shopPlayerChannel(env, 'SHOP_005', ''), null);
+  assert.equal(shopPlayerUrl(env, 'SHOP_005', ''), 'https://liff.line.me/2012454809-UFGeUGbW?shop=SHOP_005');
 });

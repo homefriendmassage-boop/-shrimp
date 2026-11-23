@@ -10,7 +10,7 @@
   <script src="./config.js?v=shop-liff-1"></script>
   <script src="./payment-ui.js?v=1"></script>
   <script src="./platform-billing.js?v=qr-1"></script>
-  <script src="./shop-rich-menu.js?v=shop-liff-1"></script>
+  <script src="./shop-rich-menu.js?v=shop-liff-settings-1"></script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #131620; color: #f8fafc; font: 16px/1.5 system-ui, sans-serif; }
@@ -92,6 +92,15 @@
       <small>ช่องที่ยังไม่ใส่ลิงก์จะแจ้งว่าร้านยังไม่เปิดบริการส่วนนี้</small>
       <a id="rich-booking-test" target="_blank" rel="noopener noreferrer" hidden>ทดลองเปิดหน้าจองโต๊ะ / ที่นั่ง</a>
       <a id="rich-food-test" target="_blank" rel="noopener noreferrer" hidden>ทดลองเปิดหน้าสั่งอาหาร</a>
+      <div id="rich-liff-settings" hidden>
+        <label>ลิงก์ LINE LIFF สำหรับผู้เล่น
+          <input id="rich-liff" type="text" inputmode="url" placeholder="https://liff.line.me/…" autocomplete="off">
+        </label>
+        <small>ใช้ LIFF ที่ผูกกับ LINE OA ของร้าน เว้นว่างแล้วบันทึกเพื่อกลับไปใช้ LIFF กลาง</small>
+        <a id="rich-liff-preview" target="_blank" rel="noopener noreferrer" hidden>ทดลองเปิด LIFF ที่กรอก</a>
+        <button id="rich-liff-save" class="secondary" type="button">บันทึกและเปิดใช้ลิงก์ผู้เล่น</button>
+        <p id="rich-liff-status" role="status"></p>
+      </div>
       <a id="rich-player" target="_blank" rel="noopener noreferrer">ทดลองเปิดหน้าเล่นกุ้งของร้านนี้</a>
       <div id="rich-workspace" hidden>
         <label>เลือกช่องแล้วลากกรอบบนภาพ
@@ -610,7 +619,7 @@
         if (customerShop) oaStatus.textContent = customerShop.oa_configured
           ? 'บันทึกการเชื่อม LINE OA แล้ว · ทดสอบการแจ้งเตือนก่อนส่งลิงก์ให้ลูกค้า'
           : 'รอเชื่อม LINE OA · ติดต่อผู้ดูแลแพลตฟอร์มเพื่อตั้งค่าก่อนใช้งานกับลูกค้า';
-        if (customerShop && (selected?.can_manage_rich_menu || data.can_invite)) mountShopRichMenu(customerShop, request);
+        if (customerShop && (selected?.can_manage_rich_menu || data.can_invite)) mountShopRichMenu(customerShop, request, data.can_invite);
         if (customerShop) {
           document.title = 'จัดการร้าน · ' + customerShop.shop_name;
           customerLink.textContent = 'ลิงก์ลูกค้า · ' + customerShop.shop_name;
@@ -653,7 +662,7 @@
         const matching = (data.platform_shops ?? []).filter(shop => shop.shop_id === saasShop);
         if (!matching.length) platform.textContent = 'ไม่พบร้านนี้';
         for (const shop of matching) {
-          mountShopRichMenu(shop, request);
+          mountShopRichMenu(shop, request, true);
           const active = String(shop.status).toLowerCase() === 'active';
           const row = appendRow(platform, shop.shop_name + ' · ' + shop.shop_id,
             (active ? 'เปิดบริการ' : 'ปิดบริการ') + ' · ' +

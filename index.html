@@ -460,7 +460,7 @@
       try {
         const restored = new URL(state, location.origin);
         if (restored.origin !== location.origin) return params;
-        for (const key of ['shop', 'table', 'd', 'table_token', 'ref', 'shop_login_check', 'shop_login', 'legacy_login', 'withdraw_confirm']) {
+        for (const key of ['shop', 'table', 'd', 'table_token', 'ref', 'shop_login_check', 'shop_login', 'shop_liff_preview', 'legacy_login', 'withdraw_confirm']) {
           if (!params.has(key) && restored.searchParams.has(key)) params.set(key, restored.searchParams.get(key));
         }
       } catch { /* Explicit query values remain authoritative. */ }
@@ -579,6 +579,34 @@
       }
     };
 
+    async function previewShopLiff(params) {
+      const status = document.getElementById('playerEntryStatus');
+      const previewId = params.get('shop_liff_preview');
+      try {
+        if (!/^\d{1,20}-[A-Za-z0-9]{1,80}$/.test(previewId) || !/^SHOP_\d{3,24}$/.test(currentShopId)) {
+          throw new Error('SHOP_LIFF_INVALID');
+        }
+        const entry = await fetchPlayerEntry(currentShopId, playerTimeoutSignal(6000));
+        if (!entry) throw new Error('SHOP_NOT_AVAILABLE');
+        document.getElementById('playerEntryTitle').textContent = 'ทดลอง LIFF · ' + entry.shop_name;
+        await liff.init({ liffId: previewId });
+        if (!liff.isLoggedIn()) {
+          const redirect = new URL(location.pathname, location.origin);
+          redirect.searchParams.set('shop', currentShopId);
+          redirect.searchParams.set('shop_liff_preview', previewId);
+          liff.login({ redirectUri: redirect.href });
+          return;
+        }
+        if (!liff.getIDToken()) throw new Error('LINE_TOKEN_MISSING');
+        const friendship = await liff.getFriendship();
+        status.textContent = friendship.friendFlag
+          ? 'เข้าสู่ระบบสำเร็จ · บัญชีนี้เป็นเพื่อนกับ OA ที่ผูกกับ LIFF'
+          : 'เข้าสู่ระบบสำเร็จ · บัญชีนี้ยังไม่ได้เป็นเพื่อนกับ OA ที่ผูกกับ LIFF';
+      } catch {
+        status.textContent = 'ทดสอบไม่สำเร็จ กรุณาตรวจ Endpoint URL, Linked OA และสิทธิ์ openid กับ profile';
+      }
+    }
+
     async function initializeApp() {
       const urlParams = playerEntryParams();
       const entry = document.getElementById('playerEntry');
@@ -589,6 +617,10 @@
       }
 
       currentShopId = urlParams.get('shop') || currentShopId;
+      if (urlParams.has('shop_liff_preview')) {
+        await previewShopLiff(urlParams);
+        return;
+      }
       updatePlayerPageTitle();
       try {
         const shop = await fetchPlayerEntry(currentShopId, playerTimeoutSignal(6000)).catch(() => null);
