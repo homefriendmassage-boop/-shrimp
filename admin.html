@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Admin Panel - บ่อตกกุ้ง</title>
-  <script src="config.js?v=round-name-1"></script>
+  <script src="config.js?v=shop-liff-1"></script>
   <script src="payment-ui.js?v=1"></script>
   <script src="admin-api-client.js?v=guest-bills-1"></script>
   <script src="accounting-day.js?v=1"></script>
@@ -1027,7 +1027,7 @@
           if (['Superadmin', 'Admin'].includes(currentUserRole)) {
             roleBadge = "แอดมินบ่อ · " + formatMemberCode(currentShopId, 'M0000');
             const playerLink = document.getElementById('switchToPlayer');
-            playerLink.href = playerEntryUrl(currentShopId);
+            playerLink.href = await configuredPlayerEntryUrl(currentShopId);
             playerLink.classList.remove('hidden');
             shopPortalLink.classList.remove('hidden');
           }
@@ -3270,7 +3270,7 @@
         document.getElementById('printTableQr').classList.add('hidden');
         const { day, token } = await _supabase.tableQr(table);
         if (generation !== tableQrGeneration) return;
-        const playerUrl = playerEntryUrl(currentShopId, { table, d: day, table_token: token });
+        const playerUrl = await configuredPlayerEntryUrl(currentShopId, { table, d: day, table_token: token });
         const [, end] = shopAccountingWindow(day);
         openCustomerShare([adminShopName, name].filter(Boolean).join(' · '), playerUrl);
         if (document.querySelector('#qrImage canvas')) {
@@ -3301,9 +3301,9 @@
       document.getElementById('qrModal').classList.remove('hidden');
     }
 
-    function shareShopFromTables() {
+    async function shareShopFromTables() {
       closeQrModal();
-      openCustomerShare(adminShopName || 'บ่อตกกุ้ง', playerEntryUrl(currentShopId));
+      openCustomerShare(adminShopName || 'บ่อตกกุ้ง', await configuredPlayerEntryUrl(currentShopId));
     }
 
     function printTableQrSlip() {

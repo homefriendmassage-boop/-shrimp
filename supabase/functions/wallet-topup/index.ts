@@ -1,3 +1,4 @@
+import { shopPlayerChannel, shopPlayerUrl } from '../_shared/shop-player-login.mjs';
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const env = (name: string) => Deno.env.get(name) ?? "";
@@ -73,15 +74,23 @@ Deno.serve(async (req) => {
   if (req.headers.get("origin") && req.headers.get("origin") !== origin) return reply("ORIGIN_INVALID", 403);
 
   const shopLogin = new URL(req.url).searchParams.get("shop_login") === "1";
-  const channel = shopLogin ? "2009043114" : env("LINE_CHANNEL_ID_PLAYER");
   const thunder = env("THUNDER_API_KEY");
   const url = env("SUPABASE_URL");
   const key = env("SUPABASE_SERVICE_ROLE_KEY");
-  if (!channel || !thunder || !url || !key) return reply("AUTO_CREDIT_DISABLED", 503);
+  if (!thunder || !url || !key) return reply("AUTO_CREDIT_DISABLED", 503);
   const token = req.headers.get("authorization")?.match(/^Bearer (\S+)$/i)?.[1];
   if (!token || token.length > 16000) return reply("LINE_AUTH_INVALID", 401);
 
   try {
+    if (!req.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) return reply("FORM_REQUIRED", 415);
+    if (Number(req.headers.get("content-length")) > 4_250_000) return reply("IMAGE_INVALID", 413);
+    const input = await req.formData();
+    const shop = input.get("shop_id");
+    const amount = input.get("amount");
+    const image = input.get("image");
+    if (typeof shop !== "string" || !/^SHOP_[0-9]{3,}$/.test(shop)) return reply("SHOP_INVALID", 400);
+    const channel = shopLogin ? shopPlayerChannel(env, shop) : env("LINE_CHANNEL_ID_PLAYER");
+    if (!channel) return reply("LINE_AUTH_INVALID", 401);
     const identity = await fetch("https://api.line.me/oauth2/v2.1/verify", {
       method: "POST",
       body: new URLSearchParams({ id_token: token, client_id: channel }),
@@ -92,15 +101,6 @@ Deno.serve(async (req) => {
     let uid = claims.sub;
     if (typeof uid !== "string" || !/^U[0-9a-f]{32}$/i.test(uid) ||
         claims.aud !== channel || !(Number(claims.exp) * 1000 > Date.now())) return reply("LINE_AUTH_INVALID", 401);
-
-    if (!req.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) return reply("FORM_REQUIRED", 415);
-    if (Number(req.headers.get("content-length")) > 4_250_000) return reply("IMAGE_INVALID", 413);
-    const input = await req.formData();
-    const shop = input.get("shop_id");
-    const amount = input.get("amount");
-    const image = input.get("image");
-    if (typeof shop !== "string" || !/^SHOP_[0-9]{3,}$/.test(shop)) return reply("SHOP_INVALID", 400);
-    if (shopLogin && shop !== "SHOP_001") return reply("SHOP_LOGIN_NOT_ALLOWED", 403);
     if (typeof amount !== "string" || !/^\d{1,9}(?:\.\d{1,2})?$/.test(amount) || Number(amount) < 100) {
       return reply("AMOUNT_INVALID", 400);
     }
@@ -229,7 +229,7 @@ Deno.serve(async (req) => {
             const flex = to === uid ? {
               ...message, contents: { ...message.contents, footer: { type: "box", layout: "vertical", contents: [{
                 type: "button", style: "primary", action: {
-                  type: "uri", label: "เข้าหน้าใช้งาน", uri: "https://liff.line.me/2012454809-UFGeUGbW?shop=" + encodeURIComponent(shop),
+                  type: "uri", label: "เข้าหน้าใช้งาน", uri: shopPlayerUrl(env, shop),
                 },
               }] } },
             } : message;

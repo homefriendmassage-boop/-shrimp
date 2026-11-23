@@ -7,10 +7,10 @@
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <title>หน้าจัดการร้านค้า · บ่อกุ้ง</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script src="./config.js?v=player-entry-1"></script>
+  <script src="./config.js?v=shop-liff-1"></script>
   <script src="./payment-ui.js?v=1"></script>
   <script src="./platform-billing.js?v=qr-1"></script>
-  <script src="./shop-rich-menu.js?v=3"></script>
+  <script src="./shop-rich-menu.js?v=shop-liff-1"></script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #131620; color: #f8fafc; font: 16px/1.5 system-ui, sans-serif; }
@@ -614,8 +614,7 @@
         if (customerShop) {
           document.title = 'จัดการร้าน · ' + customerShop.shop_name;
           customerLink.textContent = 'ลิงก์ลูกค้า · ' + customerShop.shop_name;
-          customerLink.href = /^SHOP_00[012]$/.test(customerShop.shop_id)
-            ? 'shops/' + customerShop.shop_id + '/' : liffLink(APP_CONFIG.LIFF_ID_PLAYER, { shop: customerShop.shop_id });
+          customerLink.href = await configuredPlayerEntryUrl(customerShop.shop_id);
         }
         const canRefer = Boolean(selected?.can_refer_shop ||
           (data.can_invite && customerShop?.shop_id === 'SHOP_000' && String(customerShop.status).toLowerCase() === 'active'));

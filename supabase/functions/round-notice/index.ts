@@ -1,3 +1,4 @@
+import { shopPlayerUrl } from '../_shared/shop-player-login.mjs';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const origin = Deno.env.get('WEB_ORIGIN') || 'https://homefriendmassage-boop.github.io';
@@ -132,7 +133,7 @@ const flexButton = (label, uri, color) => ({ type: 'button', style: 'primary', h
 const money = value => '฿' + Number(value).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 
 function playerLink(shop) {
-  return 'https://liff.line.me/2012454809-UFGeUGbW?shop=' + encodeURIComponent(shop.shop_id);
+  return shopPlayerUrl(name => Deno.env.get(name), shop.shop_id);
 }
 
 function roundFlex(shop, round, kind) {

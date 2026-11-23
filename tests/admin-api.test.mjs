@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
+const shopLoginModule = new URL('../supabase/functions/_shared/shop-player-login.mjs', import.meta.url);
 const source = fs.readFileSync(new URL('../supabase/functions/admin-api/index.ts', import.meta.url), 'utf8')
   .replace(/^import .*createClient.*;$/m, '')
+  .replace('../_shared/shop-player-login.mjs', shopLoginModule.href)
   .replace(/^Deno\.serve.*;$/m, '');
 const { validateQuery, makeHandler } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
 const base = { table: 'users', columns: 'uid,role', filters: [], orders: [] };
@@ -157,7 +159,7 @@ test('player entry exposes only the requested active shop name and verified add-
   };
   const lookedUp = [];
   const handler = makeHandler({
-    env: name => ({ SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'server-only' })[name],
+    env: name => ({ SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'server-only', SHOP_PLAYER_LIFF_IDS: 'SHOP_001=12345-AbC' })[name],
     createDb: () => ({ from(table) {
       let shop;
       return {
@@ -177,10 +179,10 @@ test('player entry exposes only the requested active shop name and verified add-
   });
   const entry = shop_id => handler(request({ action: 'player_entry', shop_id }, { authorization: '' }));
   assert.deepEqual(await (await entry('SHOP_000')).json(), {
-    ok: true, shop_name: 'Demo', add_friend_url: 'https://line.me/R/ti/p/%40demo',
+    ok: true, shop_name: 'Demo', add_friend_url: 'https://line.me/R/ti/p/%40demo', player_liff_id: null,
   });
   assert.deepEqual(await (await entry('SHOP_001')).json(), {
-    ok: true, shop_name: 'One', add_friend_url: 'https://line.me/R/ti/p/%40one',
+    ok: true, shop_name: 'One', add_friend_url: 'https://line.me/R/ti/p/%40one', player_liff_id: '12345-AbC',
   });
   assert.equal((await (await entry('SHOP_002')).json()).add_friend_url, null);
   assert.equal((await entry('SHOP_003')).status, 404);

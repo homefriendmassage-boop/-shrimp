@@ -145,6 +145,7 @@ function mountShopRichMenu(shop, request) {
   };
 
   field('player').href = playerEntryUrl(shop.shop_id);
+  void configuredPlayerEntryUrl(shop.shop_id).then(url => { field('player').href = url; });
   for (const key of ['food', 'booking']) {
     field(key).oninput = () => {
       try {

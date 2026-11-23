@@ -1,3 +1,4 @@
+import { shopPlayerLiff, shopPlayerUrl, hasVerifiedFriendship } from '../_shared/shop-player-login.mjs';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const origin = Deno.env.get('WEB_ORIGIN') || 'https://homefriendmassage-boop.github.io';
@@ -20,8 +21,9 @@ function getPrivilegedKey() {
   return Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 }
 
-async function verifyToken(token, channel) {
-  const clientId = Deno.env.get('LINE_CHANNEL_ID_' + channel);
+const env = name => Deno.env.get(name);
+
+async function verifyToken(token, clientId) {
   if (!clientId || !token) return null;
   let response;
   try {
@@ -36,7 +38,7 @@ async function verifyToken(token, channel) {
   }
   if (!response.ok) return null;
   const claims = await response.json();
-  return typeof claims.sub === 'string' && claims.aud === clientId && Number(claims.exp) * 1000 > Date.now()
+  return /^U[0-9a-f]{32}$/i.test(claims.sub) && claims.aud === clientId && Number(claims.exp) * 1000 > Date.now()
     ? { uid: claims.sub, picture: linePicture(claims.picture) } : null;
 }
 
@@ -65,11 +67,9 @@ function membershipFlex(shop, application, kind) {
   const submitted = kind === 'submitted';
   const title = submitted ? 'มีผู้สมัครสมาชิกใหม่' : 'อนุมัติสมาชิกแล้ว';
   const label = submitted ? 'ไปหน้าอนุมัติสมาชิก' : 'เข้าใช้งาน';
-  const liffId = submitted
-    ? (shop.liff_id_admin || Deno.env.get('MEMBERSHIP_LIFF_ID_ADMIN') || '2012454809-41EMnP1K')
-    : '2012454809-UFGeUGbW';
-  if (!/^\d+-[A-Za-z0-9]+$/.test(liffId)) throw new Error('MEMBERSHIP_LIFF_ID_INVALID');
-  const url = new URL('https://liff.line.me/' + liffId);
+  const liffId = shop.liff_id_admin || env('MEMBERSHIP_LIFF_ID_ADMIN') || '2012454809-41EMnP1K';
+  if (submitted && !/^\d+-[A-Za-z0-9]+$/.test(liffId)) throw new Error('MEMBERSHIP_LIFF_ID_INVALID');
+  const url = new URL(submitted ? 'https://liff.line.me/' + liffId : shopPlayerUrl(env, shop.shop_id));
   url.searchParams.set('shop', shop.shop_id);
   if (submitted) url.searchParams.set('tab', 'pending');
   const details = [
@@ -179,9 +179,14 @@ Deno.serve(async req => {
   const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
   try {
     const isAdmin = action === 'queue' || action === 'decide';
-    const identity = await verifyToken(token, isAdmin ? 'ADMIN' : 'PLAYER');
+    const shopLiff = shopPlayerLiff(env, shopId);
+    const native = !isAdmin && input.shop_login === true;
+    if (native && !shopLiff) return error('SHOP_LOGIN_NOT_ALLOWED', 403);
+    const clientId = native ? shopLiff.split('-')[0] : env(isAdmin ? 'LINE_CHANNEL_ID_ADMIN' : 'LINE_CHANNEL_ID_PLAYER');
+    const identity = await verifyToken(token, clientId);
     if (!identity) return error('LINE_AUTH_INVALID', 401);
-    const { uid, picture } = identity;
+    let { uid } = identity;
+    const { picture } = identity;
     const dbUrl = Deno.env.get('SUPABASE_URL');
     if (!dbUrl) return error('SUPABASE_URL_MISSING', 503);
     const key = getPrivilegedKey();
@@ -231,6 +236,14 @@ Deno.serve(async req => {
       if (decision === 'Approved') await deliverNotification(db, shop, result.data, 'approved');
       return reply({ ok: true, application });
     }
+    let mapped = null;
+    if (native) {
+      const mapping = await db.rpc('resolve_shop_oa_member', { p_shop: shopId, p_oa_uid: uid });
+      if (mapping.error) return error('DATABASE_ERROR', 500);
+      mapped = mapping.data;
+      if (mapped) uid = mapped;
+      else if (action !== 'apply') return reply({ ok: true, application: null });
+    }
     const ownApplication = () => db.from('membership_applications')
       .select('id,member_id,state,requested_at,decided_at,line_uid,display_name,profile_pic')
       .eq('shop_id', shopId).eq('line_uid', uid).maybeSingle();
@@ -244,11 +257,37 @@ Deno.serve(async req => {
         if (referral.error) return error('DATABASE_ERROR', 500);
         referralMemberId = referral.data?.member_id ?? null;
       }
-      const result = await db.from('membership_applications').upsert({
-        shop_id: shopId, line_uid: uid, display_name: displayName, profile_pic: picture, state: 'Pending',
-        ...(referralMemberId ? { referral_member_id: referralMemberId } : {})
-      }, { onConflict: 'shop_id,line_uid', ignoreDuplicates: true });
-      if (result.error) return error('DATABASE_ERROR', 500);
+      if (native && !mapped) {
+        if (!await hasVerifiedFriendship(input.line_access_token, clientId, uid)) {
+          return error('LINE_FRIEND_REQUIRED', 403);
+        }
+        const registered = await db.rpc('register_shop_liff_member', {
+          p_shop: shopId, p_oa_uid: uid, p_name: displayName, p_picture: picture, p_referrer: referralMemberId
+        });
+        if (registered.error) return error('DATABASE_ERROR', 500);
+        if (registered.data !== 'LINKED') return error(registered.data || 'SIGNUP_UNAVAILABLE', 409);
+        const mapping = await db.rpc('resolve_shop_oa_member', { p_shop: shopId, p_oa_uid: uid });
+        if (mapping.error || !mapping.data) return error('DATABASE_ERROR', 500);
+        uid = mapping.data;
+      } else {
+        if (native) {
+          const existing = await ownApplication();
+          if (existing.error) return error('DATABASE_ERROR', 500);
+          if (!existing.data && !await hasVerifiedFriendship(input.line_access_token, clientId, identity.uid)) {
+            return error('LINE_FRIEND_REQUIRED', 403);
+          }
+        }
+        if (shopLiff && !native) {
+          const existing = await ownApplication();
+          if (existing.error) return error('DATABASE_ERROR', 500);
+          if (!existing.data) return error('SHOP_LIFF_REQUIRED', 409);
+        }
+        const result = await db.from('membership_applications').upsert({
+          shop_id: shopId, line_uid: uid, display_name: displayName, profile_pic: picture, state: 'Pending',
+          ...(referralMemberId ? { referral_member_id: referralMemberId } : {})
+        }, { onConflict: 'shop_id,line_uid', ignoreDuplicates: true });
+        if (result.error) return error('DATABASE_ERROR', 500);
+      }
     }
     const result = await ownApplication();
     if (result.error) return error('DATABASE_ERROR', 500);

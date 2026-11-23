@@ -1,3 +1,4 @@
+import { shopPlayerChannel, shopPlayerLiff, shopPlayerUrl } from '../_shared/shop-player-login.mjs';
 // Separate from member-approval. Deploy with verify_jwt=false: LINE verifies tokens below.
 // Required secrets: LINE_CHANNEL_ID_ADMIN, WEB_ORIGIN (origin only), and a Supabase server key.
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -166,7 +167,7 @@ async function notifyWalletPlayer(db, fetcher, env, shopId, request) {
     ] } };
     const uri = opensQueue
       ? 'https://liff.line.me/' + adminLiff + '?shop=' + encodeURIComponent(shopId) + '&tab=pending'
-      : 'https://liff.line.me/2012454809-UFGeUGbW?shop=' + encodeURIComponent(shopId);
+      : shopPlayerUrl(env, shopId);
     if (!opensQueue || /^\d+-[a-zA-Z0-9]+$/.test(adminLiff)) {
       bubble.footer = { type: 'box', layout: 'vertical', contents: [{
         type: 'button', style: 'primary', ...(rejectedDeposit ? { color: '#B91C1C' } : {}), action: {
@@ -370,7 +371,7 @@ function richMenuLine(fetcher, token, path, options = {}, data = false) {
   });
 }
 
-async function manageShopRichMenu(db, fetcher, input, shopId, defaultMenu = false) {
+async function manageShopRichMenu(db, fetcher, env, input, shopId, defaultMenu = false) {
   const table = 'shop_rich_menus';
   if (input.operation === 'load') {
     const result = await db.from(table).select('draft,published_id').eq('shop_id', shopId).maybeSingle();
@@ -419,7 +420,7 @@ async function manageShopRichMenu(db, fetcher, input, shopId, defaultMenu = fals
   try {
     const info = await richMenuLine(fetcher, token, '/v2/bot/info');
     if (!info.ok || (await info.json()).userId !== bot) fail('RICH_MENU_OA_REQUIRED', 409);
-    const player = 'https://liff.line.me/2012454809-UFGeUGbW?shop=' + encodeURIComponent(shopId);
+    const player = shopPlayerUrl(env, shopId);
     const created = await richMenuLine(fetcher, token, '/v2/bot/richmenu', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -452,7 +453,7 @@ async function manageShopRichMenu(db, fetcher, input, shopId, defaultMenu = fals
   }
 }
 
-async function syncShopRichMenus(db, fetcher) {
+async function syncShopRichMenus(db, fetcher, env) {
   const defaults = await db.rpc('next_default_shop_rich_menu');
   if (!defaults.error && defaults.data) {
     try {
@@ -462,7 +463,7 @@ async function syncShopRichMenus(db, fetcher) {
         const bytes = new Uint8Array(await response.arrayBuffer());
         let binary = '';
         for (const byte of bytes) binary += String.fromCharCode(byte);
-        await manageShopRichMenu(db, fetcher, { operation: 'publish', draft: {
+        await manageShopRichMenu(db, fetcher, env, { operation: 'publish', draft: {
           mime: 'image/jpeg', data: btoa(binary), height: 843, food_url: '', booking_url: '',
           areas: [0, 833, 1667].map((x, i) => ({ x, y: 0, width: [833, 834, 833][i], height: 843 })),
         } }, defaults.data, true);
@@ -523,7 +524,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
     ]);
     if (shop.error || runtime.error) fail('DATABASE_ERROR', 500);
     if (shop.data?.status !== 'active') fail('SHOP_NOT_AVAILABLE', 404);
-    const details = { ok: true, shop_name: shop.data.shop_name, add_friend_url: null };
+    const details = { ok: true, shop_name: shop.data.shop_name, add_friend_url: null, player_liff_id: shop.data.line_oa_bot_uid ? shopPlayerLiff(env, shopId) : null };
     const token = runtime.data?.line_oa_token?.trim();
     if (!token) return details;
 
@@ -575,7 +576,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
         const db = database();
         const authorized = await db.rpc('authorize_shop_rich_menu_worker', { p_secret: secret });
         if (authorized.error || authorized.data !== true) fail('ADMIN_REQUIRED', 403);
-        await syncShopRichMenus(db, fetcher);
+        await syncShopRichMenus(db, fetcher, env);
         return reply({ ok: true });
       }
       const shopId = typeof input.shop_id === 'string' ? input.shop_id.trim() : '';
@@ -593,8 +594,8 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
       const playerRequest = ['promoter_profile', 'player_profile', 'player_state', 'table_guest_scan', 'player_place_bet', 'player_cancel_bet', 'player_bet_history', 'wallet_request', 'backer_portal'].includes(input.action);
       const channelKey = playerRequest ? 'LINE_CHANNEL_ID_PLAYER' : 'LINE_CHANNEL_ID_ADMIN';
       const shopLogin = input.shop_login === true;
-      if (shopLogin && (!playerRequest || shopId !== 'SHOP_001')) fail('SHOP_LOGIN_NOT_ALLOWED', 403);
-      const clientId = shopLogin ? '2009043114' : env(channelKey);
+      if (shopLogin && (!playerRequest || !shopPlayerChannel(env, shopId))) fail('SHOP_LOGIN_NOT_ALLOWED', 403);
+      const clientId = shopLogin ? shopPlayerChannel(env, shopId) : env(channelKey);
       if (!clientId) fail(channelKey + '_MISSING', 503);
       if (!token || token.length > 16000) fail('LINE_AUTH_INVALID', 401);
       const identity = await verifyLineClaims(token, clientId, fetcher, input.action === 'player_state');
@@ -768,7 +769,7 @@ export function makeHandler({ env, fetcher = fetch, createDb = createClient }) {
           .eq('status', 'Active').eq('member_id', 'M0000').in('role', ['Admin', 'Superadmin']).maybeSingle();
         if (member.error) fail('RICH_MENU_UNAVAILABLE', 500);
         if (!member.data && !await canCreateShop()) fail('ADMIN_REQUIRED', 403);
-        return reply({ ok: true, ...await manageShopRichMenu(db, fetcher, input, target) });
+        return reply({ ok: true, ...await manageShopRichMenu(db, fetcher, env, input, target) });
       }
       if (input.action === 'platform_extend_shop_plan') {
         if (!await canCreateShop()) fail('PLATFORM_ADMIN_REQUIRED', 403);
