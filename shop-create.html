@@ -125,6 +125,23 @@
     <section id="billing-inline" hidden aria-label="แพ็กเกจและโควตาตรวจสลิป">
       <p id="billing-inline-status" role="status"></p>
     </section>
+    <section id="owner-tools" hidden>
+      <h2>จัดการสาขาและแอดมิน</h2>
+      <button id="open-branch" type="button">เปิดสาขาเพิ่ม</button>
+      <form id="staff-invite-form">
+        <label>รหัสสมาชิกของร้านนี้ <input id="staff-member-code" required maxlength="40" autocomplete="off"></label>
+        <button type="submit" class="secondary">เชิญแอดมินเข้าร้าน</button>
+        <label id="staff-invite-result" hidden>ลิงก์สำหรับสมาชิกที่ระบุ
+          <input id="staff-invite-link" readonly>
+          <small id="staff-invite-expiry"></small>
+        </label>
+        <button id="copy-staff-invite" type="button" class="secondary" hidden>คัดลอกลิงก์</button>
+      </form>
+    </section>
+    <section id="staff-invite-accept" hidden>
+      <h2 id="staff-invite-shop"></h2>
+      <button id="accept-staff-invite" type="button">รับสิทธิ์แอดมิน</button>
+    </section>
     <section id="share-panel" hidden>
       <h2>แนะนำร้าน</h2>
       <label>รหัสร้านผู้แนะนำ
@@ -248,6 +265,8 @@
     const byId = id => document.getElementById(id);
     const entryParams = new URLSearchParams(location.search);
     const invite = entryParams.get('invite');
+    const staffInvite = entryParams.get('staff_invite');
+    let ownerShop = null;
     const sourceShop = entryParams.get('shop');
     const saasShop = entryParams.get('saas_shop');
     const plan = byId('plan-code');
@@ -279,6 +298,8 @@
       PLAN_EXTENSION_FAILED: 'บันทึกวันเพิ่มไม่สำเร็จ กรุณาลองส่งอีกครั้ง',
       PLATFORM_ADMIN_REQUIRED: 'บัญชี LINE นี้ไม่มีสิทธิ์ออกคำเชิญ',
       SHOP_DETAILS_INVALID: 'กรุณาตรวจสอบชื่อร้าน ชื่อเจ้าของ และเบอร์โทร',
+      ADMIN_INVITEE_UNAVAILABLE: 'ใช้รหัสสมาชิกที่ยัง Active ในร้านนี้และยังไม่ได้เป็นแอดมิน',
+      ADMIN_INVITE_UNAVAILABLE: 'ร้านหรือเจ้าของร้านไม่มีสิทธิ์ออกคำเชิญนี้แล้ว',
       INVITE_INVALID: 'ลิงก์คำเชิญไม่ถูกต้อง',
       INVITE_EXPIRED: 'คำเชิญหมดอายุแล้ว กรุณาขอลิงก์ใหม่',
       INVITE_USED: 'คำเชิญนี้ถูกใช้แล้ว กรุณาขอลิงก์ใหม่',
@@ -627,6 +648,8 @@
         }
         const canRefer = Boolean(selected?.can_refer_shop ||
           (data.can_invite && customerShop?.shop_id === 'SHOP_000' && String(customerShop.status).toLowerCase() === 'active'));
+        ownerShop = selected?.can_refer_shop ? selected.shop_id : null;
+        byId('owner-tools').hidden = !ownerShop;
         byId('billing-inline').hidden = !selected?.can_manage_billing;
         byId('share-panel').hidden = !canRefer;
         byId('referrer-shop').value = canRefer ? customerShop.shop_id : '';
@@ -705,6 +728,18 @@
           return;
         }
         if (!liff.getIDToken()) throw new Error('LINE login required');
+        if (staffInvite !== null) {
+          document.title = 'คำเชิญแอดมิน · บ่อกุ้ง';
+          byId('title').textContent = 'คำเชิญแอดมิน';
+          try {
+            const result = await request('platform_accept_admin_invite', { invite_id: staffInvite, preview: true });
+            byId('staff-invite-shop').textContent = result.shop_name;
+            byId('staff-invite-accept').hidden = false;
+          } catch (error) {
+            status.textContent = errors[error.message] || 'ตรวจคำเชิญแอดมินไม่สำเร็จ';
+          }
+          return;
+        }
         if (invite !== null) {
           let details;
           try {
@@ -734,6 +769,58 @@
         status.textContent = 'เข้าสู่ระบบ LINE ไม่สำเร็จ กรุณาเปิดลิงก์ใหม่ใน LINE';
       }
     }
+
+    byId('open-branch').onclick = async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        const result = await request('platform_issue_shop_invite', { referrer_shop_id: ownerShop, own_branch: true });
+        location.assign('shop-create.html?invite=' + encodeURIComponent(result.invite_id));
+      } catch (error) {
+        status.textContent = errors[error.message] || 'เปิดแบบฟอร์มสมัครสาขาไม่สำเร็จ';
+        button.disabled = false;
+      }
+    };
+    byId('staff-invite-form').onsubmit = async event => {
+      event.preventDefault();
+      const button = event.submitter;
+      button.disabled = true;
+      try {
+        const result = await request('platform_issue_admin_invite', {
+          shop_id: ownerShop, member_id: byId('staff-member-code').value
+        });
+        byId('staff-invite-link').value = liffLink(APP_CONFIG.LIFF_ID_ADMIN, { staff_invite: result.invite_id });
+        byId('staff-invite-expiry').textContent = 'หมดอายุ ' + new Date(result.expires_at).toLocaleString('th-TH');
+        byId('staff-invite-result').hidden = false;
+        byId('copy-staff-invite').hidden = false;
+        status.textContent = 'สร้างลิงก์คำเชิญแอดมินแล้ว';
+      } catch (error) {
+        status.textContent = errors[error.message] || 'สร้างลิงก์คำเชิญแอดมินไม่สำเร็จ';
+      } finally {
+        button.disabled = false;
+      }
+    };
+    byId('copy-staff-invite').onclick = async () => {
+      const link = byId('staff-invite-link');
+      try {
+        await navigator.clipboard.writeText(link.value);
+        status.textContent = 'คัดลอกลิงก์แล้ว';
+      } catch {
+        link.select();
+        status.textContent = 'เลือกลิงก์แล้ว กรุณาคัดลอก';
+      }
+    };
+    byId('accept-staff-invite').onclick = async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        const result = await request('platform_accept_admin_invite', { invite_id: staffInvite });
+        location.replace(liffLink(APP_CONFIG.LIFF_ID_ADMIN, { shop: result.shop_id }));
+      } catch (error) {
+        status.textContent = errors[error.message] || 'รับคำเชิญแอดมินไม่สำเร็จ';
+        button.disabled = false;
+      }
+    };
 
     newInvite.addEventListener('click', async () => {
       newInvite.disabled = true;
