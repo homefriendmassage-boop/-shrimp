@@ -880,7 +880,7 @@
       } catch { /* A shop name lookup must not delay sign-in. */ }
     }
 
-    const adminLoginParams = ['shop', 'tab', 'shop_invite', 'shop_portal', 'saas'];
+    const adminLoginParams = ['shop', 'tab', 'shop_invite', 'staff_invite', 'shop_portal', 'saas'];
 
     function adminLoginTarget(params) {
       const target = new URL(location.pathname, location.origin);
@@ -929,7 +929,7 @@
           currentShopId = urlParams.get('shop');
       }
 
-      if (!urlParams.has('saas') && !urlParams.has('shop_invite') && !urlParams.has('shop_portal')) {
+      if (!urlParams.has('saas') && !urlParams.has('shop_invite') && !urlParams.has('staff_invite') && !urlParams.has('shop_portal')) {
         void loadAdminShopName(currentShopId);
       }
 
@@ -940,6 +940,11 @@
       try {
         await liff.init({ liffId: APP_CONFIG.LIFF_ID_ADMIN });
         if (liff.isLoggedIn()) {
+          const staffInvite = new URLSearchParams(location.search).get('staff_invite') || urlParams.get('staff_invite');
+          if (staffInvite) {
+            location.replace('shop-create.html?staff_invite=' + encodeURIComponent(staffInvite));
+            return;
+          }
           const invite = new URLSearchParams(location.search).get('shop_invite') || urlParams.get('shop_invite');
           if (invite) {
             location.replace('shop-create.html?invite=' + encodeURIComponent(invite));
