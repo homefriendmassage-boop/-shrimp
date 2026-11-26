@@ -264,6 +264,8 @@
     #tableGuestPanel[hidden] { display:none; }
     #tableGuestPanel .guest-buttons { display:flex; flex-wrap:wrap; gap:6px; }
     #tableGuestPanel .guest-buttons .btn { flex:0 1 auto; min-height:38px; }
+    #tableGuestPanel .guest-buttons .btn[aria-pressed="true"] { outline:2px solid #fff; outline-offset:2px; }
+    #tableGuestPanel .guest-buttons .btn:focus-visible { outline:2px solid #9bc5ff; outline-offset:3px; }
     #tableGuestPanel .guest-buttons img { width:22px; height:22px; border-radius:50%; vertical-align:middle; margin-right:6px; }
     #selectedTableActions { display:flex; flex-wrap:wrap; gap:8px; }
   </style>
@@ -2910,11 +2912,11 @@
       const list = group();
       for (const child of children) {
         const billStatus = billStatuses.get(child.table_no);
-        const item = button([child.table_name || 'บิลย่อย', child.guest_uid ? 'LINE' : '', billStatus]
+        const item = button([child.table_name || 'บิลย่อย', child.guest_uid ? 'LINE' : '', billStatus.label]
           .filter(Boolean).join(' · '), () => {
           selectedGuestBill = child.table_no;
           renderTableGrid();
-        }, selectedGuestBill === child.table_no ? 'btn-blue' : 'btn-outline');
+        }, billStatus.color || (selectedGuestBill === child.table_no ? 'btn-blue' : 'btn-outline'));
         item.setAttribute('aria-pressed', String(selectedGuestBill === child.table_no));
         list.append(item);
       }
@@ -3107,7 +3109,7 @@
           : action === 'receive' ? 'เก็บจากผู้เล่น ' + tableMoney(-Number(child.credit))
           : action === 'pay' ? 'จ่ายให้ผู้เล่น ' + tableMoney(Number(child.credit))
           : 'ไม่มียอดค้าง';
-        return [child.table_no, label];
+        return [child.table_no, { label, color: action ? 'table-status-' + action : '' }];
       }));
       const guestKey = JSON.stringify([currentShopId, physical?.table_no, physical?.cash_limit, physical?.is_open,
         selectedGuestBill, children, [...billStatuses]]);
