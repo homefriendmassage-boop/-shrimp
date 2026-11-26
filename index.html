@@ -284,7 +284,7 @@
       <p id="membershipGateMessage" style="color: var(--text-muted); margin-top: 10px;">บัญชีของคุณยังไม่เปิดใช้งาน</p>
       <a id="staffAdminLink" class="hidden" style="color:var(--blue-main)">เปิดผังโต๊ะหลังบ้าน</a>
       <a id="membershipApplyLink" class="hidden" style="color:var(--blue-main)">สมัครสมาชิก</a>
-      <div><button id="nativeShopApply" class="player-entry-action" type="button" hidden>สมัครด้วย LINE ของร้าน</button></div>
+      <div><button id="nativeShopApply" class="player-entry-action" type="button" hidden>สมัครสมาชิก</button></div>
       <a id="nativeShopAddFallback" target="_blank" rel="noopener" hidden>เพิ่มเพื่อน LINE ของร้าน</a>
       <p id="nativeShopApplyStatus" role="status"></p>
       <button id="retryOwnerNotice" type="button" class="hidden" style="margin:14px auto;padding:12px;border:0;border-radius:8px;background:var(--blue-main);color:white;font:inherit">ส่งเตือนแอดมินอีกครั้ง</button>
@@ -719,7 +719,9 @@
       document.getElementById('nativeShopAddFallback').hidden = true;
       document.getElementById('nativeShopApplyStatus').textContent = '';
       apply.textContent = 'สมัครสมาชิก';
-      apply.href = 'staging/member-apply.html?shop=' + encodeURIComponent(currentShopId);
+      apply.href = nativeShopLiff
+        ? playerEntryUrl(currentShopId, Object.fromEntries(playerEntryParams()), nativeShopLiff)
+        : 'staging/member-apply.html?shop=' + encodeURIComponent(currentShopId);
       apply.classList.toggle('hidden', !canApply);
     }
 
@@ -730,7 +732,7 @@
       const legacy = new URL(playerEntryUrl(currentShopId, Object.fromEntries(params)));
       legacy.searchParams.set('legacy_login', '1');
       link.href = legacy.href;
-      link.textContent = nativeShopLiff ? 'เข้าบัญชีสมาชิกเดิม' : 'เปิดทางเข้าสมาชิกและสมัครสมาชิก';
+      link.textContent = 'สมัครสมาชิก';
       link.classList.remove('hidden');
     }
 
@@ -782,7 +784,7 @@
     }
 
     function showNativeSignup(referralMemberId) {
-      showShopLoginFallback('ถ้าเคยสมัครร้านนี้แล้ว ให้เข้าบัญชีเดิมและเชื่อม LINE ของร้านก่อน');
+      showMembershipGate('สมัครด้วยบัญชี LINE ที่คุณใช้กับร้านนี้');
       document.getElementById('membershipGateTitle').textContent = 'สมัครสมาชิก';
       const button = document.getElementById('nativeShopApply');
       const feedback = document.getElementById('nativeShopApplyStatus');
